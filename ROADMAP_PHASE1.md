@@ -1,7 +1,7 @@
 # Phase 1 Roadmap – MVP of Basic Isolation
 
 ## BPF API
-- [ ] Define structs for exec allowlist and network control.
+- [x] Define structs for exec allowlist and network control.
 - [ ] Document ABI for event logs (pid, unit, action, path/address, verdict).
 
 ## BPF Core
