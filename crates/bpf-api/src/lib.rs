@@ -15,6 +15,24 @@ pub struct NetRule {
     pub reserved: u8,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+/// Event emitted by BPF programs.
+pub struct Event {
+    /// Process identifier.
+    pub pid: u32,
+    /// Workload category that produced the event.
+    pub unit: u8,
+    /// Operation being monitored.
+    pub action: u8,
+    /// Allow (0) or deny (1).
+    pub verdict: u8,
+    /// Reserved for future use.
+    pub reserved: u8,
+    /// Null-terminated path or network address.
+    pub path_or_addr: [u8; 256],
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -28,5 +46,10 @@ mod tests {
     #[test]
     fn net_rule_size() {
         assert_eq!(size_of::<NetRule>(), 20);
+    }
+
+    #[test]
+    fn event_size() {
+        assert_eq!(size_of::<Event>(), 264);
     }
 }
