@@ -2,7 +2,7 @@
 
 ## BPF API
 - [x] Define structs for exec allowlist and network control.
-- [ ] Document ABI for event logs (pid, unit, action, path/address, verdict).
+- [x] Document ABI for event logs (pid, unit, action, path/address, verdict).
 
 ## BPF Core
 - [ ] Implement cgroup hooks (`connect4`, `connect6`, `sendmsg4`, `sendmsg6`) denying all network by default.
