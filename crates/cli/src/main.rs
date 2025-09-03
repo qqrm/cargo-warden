@@ -36,7 +36,10 @@ fn main() {
             }
         }
         Commands::Run { cmd } => {
-            println!("run not implemented: {:?}", cmd);
+            if let Err(e) = handle_run(cmd) {
+                eprintln!("run failed: {e}");
+                exit(1);
+            }
         }
     }
 }
@@ -60,9 +63,32 @@ fn build_command(args: &[String]) -> Command {
     cmd
 }
 
+fn handle_run(cmd: Vec<String>) -> io::Result<()> {
+    if cmd.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "missing command",
+        ));
+    }
+    setup_isolation()?;
+    let status = run_command(&cmd).status()?;
+    if !status.success() {
+        exit(status.code().unwrap_or(1));
+    }
+    Ok(())
+}
+
+fn run_command(cmd: &[String]) -> Command {
+    let mut command = Command::new(&cmd[0]);
+    if cmd.len() > 1 {
+        command.args(&cmd[1..]);
+    }
+    command
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Cli, build_command};
+    use super::{Cli, build_command, run_command};
     use clap::CommandFactory;
     use std::ffi::OsStr;
 
@@ -81,5 +107,17 @@ mod tests {
             .map(|s| s.to_string_lossy().into_owned())
             .collect();
         assert_eq!(collected, ["build", "--release", "--verbose"]);
+    }
+
+    #[test]
+    fn run_command_forms_expected_command() {
+        let args = vec!["echo".to_string(), "hello".to_string()];
+        let cmd = run_command(&args);
+        assert_eq!(cmd.get_program(), OsStr::new("echo"));
+        let collected: Vec<String> = cmd
+            .get_args()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(collected, ["hello"]);
     }
 }

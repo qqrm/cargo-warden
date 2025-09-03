@@ -13,7 +13,7 @@
 ## CLI
 - [x] Scaffold cargo subcommand `cargo warden`.
 - [x] Implement `build` wrapper that sets up cgroup, loads eBPF programs, and invokes Cargo.
-- [ ] Implement `run -- <cmd>` wrapper for arbitrary commands.
+- [x] Implement `run -- <cmd>` wrapper for arbitrary commands.
 - [ ] Add allowlist CLI option or config stub.
 
 ## Agent-lite
