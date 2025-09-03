@@ -17,8 +17,8 @@
 - [x] Add allowlist CLI option or config stub.
 
 ## Agent-lite
-- [ ] Collect events from BPF maps and output text and JSON logs.
-- [ ] Include fields: pid, unit, action, path/address, verdict.
+- [x] Collect events from BPF maps and output text and JSON logs.
+- [x] Include fields: pid, unit, action, path/address, verdict.
 - [ ] Provide basic diagnostics for denied exec or network.
 
 ## Examples
