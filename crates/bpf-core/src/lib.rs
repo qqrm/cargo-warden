@@ -41,7 +41,14 @@ fn path_matches(a: &[u8; 256], b: &[u8; 256]) -> bool {
 #[cfg(target_arch = "bpf")]
 extern "C" {
     fn bpf_probe_read_user_str(dst: *mut u8, size: u32, src: *const u8) -> i32;
+    fn bpf_ringbuf_output(ringbuf: *mut c_void, data: *const c_void, len: u64, flags: u64) -> i64;
+    fn bpf_get_current_pid_tgid() -> u64;
 }
+
+#[cfg(target_arch = "bpf")]
+#[no_mangle]
+#[link_section = "maps/events"]
+pub static mut EVENTS: [u8; 0] = [];
 
 #[cfg(target_arch = "bpf")]
 #[no_mangle]
@@ -88,4 +95,27 @@ pub extern "C" fn sendmsg4(_ctx: *mut c_void) -> i32 {
 #[link_section = "cgroup/sendmsg6"]
 pub extern "C" fn sendmsg6(_ctx: *mut c_void) -> i32 {
     deny()
+}
+
+#[cfg(target_arch = "bpf")]
+#[no_mangle]
+#[link_section = "lsm/file_open"]
+pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
+    let event = Event {
+        pid: unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 },
+        unit: 0,
+        action: 0,
+        verdict: 0,
+        reserved: 0,
+        path_or_addr: [0; 256],
+    };
+    unsafe {
+        bpf_ringbuf_output(
+            EVENTS.as_ptr() as *mut c_void,
+            &event as *const _ as *const c_void,
+            size_of::<Event>() as u64,
+            0,
+        );
+    }
+    0
 }
