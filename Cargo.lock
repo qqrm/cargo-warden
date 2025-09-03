@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "bpf-api"
 version = "0.1.0"
+
+[[package]]
+name = "bpf-core"
+version = "0.1.0"
+dependencies = [
+ "bpf-api",
+]

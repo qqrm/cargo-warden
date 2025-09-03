@@ -5,7 +5,7 @@
 - [x] Document ABI for event logs (pid, unit, action, path/address, verdict).
 
 ## BPF Core
-- [ ] Implement cgroup hooks (`connect4`, `connect6`, `sendmsg4`, `sendmsg6`) denying all network by default.
+- [x] Implement cgroup hooks (`connect4`, `connect6`, `sendmsg4`, `sendmsg6`) denying all network by default.
 - [ ] Implement `bprm_check_security` exec restriction based on allowlist map.
 - [ ] Add `file_open` probe capturing read/write attempts (observation only).
 - [ ] Provide minimal tests verifying expected events.
