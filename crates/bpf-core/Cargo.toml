@@ -10,3 +10,6 @@ crate-type = ["cdylib"]
 
 [target.'cfg(target_arch = "bpf")'.dependencies]
 bpf-api = { path = "../bpf-api" }
+
+[dev-dependencies]
+bpf-api = { path = "../bpf-api" }

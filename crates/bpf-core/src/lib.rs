@@ -1,12 +1,12 @@
 #![cfg_attr(target_arch = "bpf", no_std)]
 #![cfg_attr(not(target_arch = "bpf"), allow(dead_code))]
 
-#[cfg(target_arch = "bpf")]
+#[cfg(any(target_arch = "bpf", test))]
 use bpf_api::Event;
-#[cfg(target_arch = "bpf")]
+#[cfg(any(target_arch = "bpf", test))]
 use core::{ffi::c_void, mem::size_of};
 
-#[cfg(target_arch = "bpf")]
+#[cfg(any(target_arch = "bpf", test))]
 const _EVENT_SIZE: usize = size_of::<Event>();
 
 #[cfg(target_arch = "bpf")]
@@ -38,14 +38,14 @@ fn path_matches(a: &[u8; 256], b: &[u8; 256]) -> bool {
     true
 }
 
-#[cfg(target_arch = "bpf")]
+#[cfg(any(target_arch = "bpf", test))]
 extern "C" {
     fn bpf_probe_read_user_str(dst: *mut u8, size: u32, src: *const u8) -> i32;
     fn bpf_ringbuf_output(ringbuf: *mut c_void, data: *const c_void, len: u64, flags: u64) -> i64;
     fn bpf_get_current_pid_tgid() -> u64;
 }
 
-#[cfg(target_arch = "bpf")]
+#[cfg(any(target_arch = "bpf", test))]
 #[no_mangle]
 #[link_section = "maps/events"]
 pub static mut EVENTS: [u8; 0] = [];
@@ -97,7 +97,7 @@ pub extern "C" fn sendmsg6(_ctx: *mut c_void) -> i32 {
     deny()
 }
 
-#[cfg(target_arch = "bpf")]
+#[cfg(any(target_arch = "bpf", test))]
 #[no_mangle]
 #[link_section = "lsm/file_open"]
 pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
@@ -111,11 +111,55 @@ pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
     };
     unsafe {
         bpf_ringbuf_output(
-            EVENTS.as_ptr() as *mut c_void,
+            core::ptr::addr_of_mut!(EVENTS) as *mut c_void,
             &event as *const _ as *const c_void,
             size_of::<Event>() as u64,
             0,
         );
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::ffi::c_void;
+    use std::ptr;
+    use std::sync::Mutex;
+
+    static LAST_EVENT: Mutex<Option<Event>> = Mutex::new(None);
+
+    #[no_mangle]
+    extern "C" fn bpf_ringbuf_output(
+        _ringbuf: *mut c_void,
+        data: *const c_void,
+        len: u64,
+        _flags: u64,
+    ) -> i64 {
+        assert_eq!(len as usize, core::mem::size_of::<Event>());
+        let event = unsafe { *(data as *const Event) };
+        *LAST_EVENT.lock().unwrap() = Some(event);
+        0
+    }
+
+    #[no_mangle]
+    extern "C" fn bpf_get_current_pid_tgid() -> u64 {
+        1234u64 << 32
+    }
+
+    #[no_mangle]
+    extern "C" fn bpf_probe_read_user_str(_dst: *mut u8, _size: u32, _src: *const u8) -> i32 {
+        0
+    }
+
+    #[test]
+    fn file_open_emits_event() {
+        file_open(ptr::null_mut(), ptr::null_mut());
+        let event = LAST_EVENT.lock().unwrap().expect("event");
+        assert_eq!(event.pid, 1234);
+        assert_eq!(event.unit, 0);
+        assert_eq!(event.action, 0);
+        assert_eq!(event.verdict, 0);
+        assert_eq!(event.path_or_addr[0], 0);
+    }
 }
