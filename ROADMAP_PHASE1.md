@@ -8,7 +8,7 @@
 - [x] Implement cgroup hooks (`connect4`, `connect6`, `sendmsg4`, `sendmsg6`) denying all network by default.
 - [x] Implement `bprm_check_security` exec restriction based on allowlist map.
 - [x] Add `file_open` probe capturing read/write attempts (observation only).
-- [ ] Provide minimal tests verifying expected events.
+- [x] Provide minimal tests verifying expected events.
 
 ## CLI
 - [ ] Scaffold cargo subcommand `cargo warden`.
