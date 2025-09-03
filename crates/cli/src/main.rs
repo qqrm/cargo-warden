@@ -6,6 +6,9 @@ use std::process::{Command, exit};
 #[derive(Parser)]
 #[command(name = "cargo-warden", version, about = "Cargo Warden CLI")]
 struct Cli {
+    /// Allowed executables passed directly via CLI.
+    #[arg(long = "allow", value_name = "PATH", global = true)]
+    allow: Vec<String>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -30,13 +33,13 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Commands::Build { args } => {
-            if let Err(e) = handle_build(args) {
+            if let Err(e) = handle_build(args, &cli.allow) {
                 eprintln!("build failed: {e}");
                 exit(1);
             }
         }
         Commands::Run { cmd } => {
-            if let Err(e) = handle_run(cmd) {
+            if let Err(e) = handle_run(cmd, &cli.allow) {
                 eprintln!("run failed: {e}");
                 exit(1);
             }
@@ -44,8 +47,8 @@ fn main() {
     }
 }
 
-fn handle_build(args: Vec<String>) -> io::Result<()> {
-    setup_isolation()?;
+fn handle_build(args: Vec<String>, allow: &[String]) -> io::Result<()> {
+    setup_isolation(allow)?;
     let status = build_command(&args).status()?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
@@ -53,7 +56,7 @@ fn handle_build(args: Vec<String>) -> io::Result<()> {
     Ok(())
 }
 
-fn setup_isolation() -> io::Result<()> {
+fn setup_isolation(_allow: &[String]) -> io::Result<()> {
     Ok(())
 }
 
@@ -63,14 +66,14 @@ fn build_command(args: &[String]) -> Command {
     cmd
 }
 
-fn handle_run(cmd: Vec<String>) -> io::Result<()> {
+fn handle_run(cmd: Vec<String>, allow: &[String]) -> io::Result<()> {
     if cmd.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "missing command",
         ));
     }
-    setup_isolation()?;
+    setup_isolation(allow)?;
     let status = run_command(&cmd).status()?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
@@ -88,13 +91,32 @@ fn run_command(cmd: &[String]) -> Command {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, build_command, run_command};
-    use clap::CommandFactory;
+    use super::{Cli, Commands, build_command, run_command};
+    use clap::{CommandFactory, Parser};
     use std::ffi::OsStr;
 
     #[test]
     fn verify_cli() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn parse_allow_for_build() {
+        let cli = Cli::parse_from([
+            "cargo-warden",
+            "build",
+            "--allow",
+            "/bin/bash",
+            "--",
+            "--release",
+        ]);
+        assert_eq!(cli.allow, vec!["/bin/bash".to_string()]);
+        match cli.command {
+            Commands::Build { args } => {
+                assert_eq!(args, vec!["--release".to_string()]);
+            }
+            _ => panic!("expected build command"),
+        }
     }
 
     #[test]
