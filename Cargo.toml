@@ -1,3 +1,6 @@
 [workspace]
-members = ["crates/bpf-api"]
+members = [
+    "crates/bpf-api",
+    "crates/bpf-core",
+]
 resolver = "2"
