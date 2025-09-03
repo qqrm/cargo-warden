@@ -3,5 +3,6 @@ members = [
     "crates/bpf-api",
     "crates/bpf-core",
     "crates/cli",
+    "crates/agent-lite",
 ]
 resolver = "2"
