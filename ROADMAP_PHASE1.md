@@ -29,3 +29,4 @@
 ## Cross-cutting
 - [ ] Provide script or Makefile to run examples under `cargo warden`.
 - [ ] Document setup requirements (BPF LSM, cgroup v2).
+- [x] Update code and docs to Rust 2024 edition.

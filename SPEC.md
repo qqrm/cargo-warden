@@ -472,7 +472,7 @@ jobs:
 
 ### C. Code Conventions
 
-* Rust 2021, `clippy` strict, deny warnings
+* Rust 2024, `clippy` strict, deny warnings
 * Format with stable `rustfmt`
 * Public API only in `bpf-api` and `policy-core`; everything else `pub(crate)`
 
