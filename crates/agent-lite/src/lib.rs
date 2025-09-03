@@ -4,6 +4,10 @@ use serde::Serialize;
 use std::thread;
 use std::time::Duration;
 
+const ACTION_EXEC: u8 = 3;
+const ACTION_CONNECT: u8 = 4;
+const VERDICT_DENIED: u8 = 1;
+
 /// User-facing representation of an event.
 #[derive(Debug, Serialize)]
 pub struct EventRecord {
@@ -42,6 +46,17 @@ impl std::fmt::Display for EventRecord {
     }
 }
 
+fn diagnostic(record: &EventRecord) -> Option<String> {
+    if record.verdict != VERDICT_DENIED {
+        return None;
+    }
+    match record.action {
+        ACTION_EXEC => Some(format!("Execution denied: {}", record.path_or_addr)),
+        ACTION_CONNECT => Some(format!("Network denied: {}", record.path_or_addr)),
+        _ => None,
+    }
+}
+
 /// Polls a ring buffer map and prints logs for each record.
 pub fn run(mut ring: RingBuf<MapData>) -> Result<(), anyhow::Error> {
     loop {
@@ -53,6 +68,9 @@ pub fn run(mut ring: RingBuf<MapData>) -> Result<(), anyhow::Error> {
             let record: EventRecord = event.into();
             println!("{}", record);
             println!("{}", serde_json::to_string(&record)?);
+            if let Some(msg) = diagnostic(&record) {
+                eprintln!("{}", msg);
+            }
         }
         thread::sleep(Duration::from_millis(100));
     }
@@ -84,5 +102,39 @@ mod tests {
         assert!(text.contains("pid=42"));
         let json = serde_json::to_string(&record).unwrap();
         assert!(json.contains("\"pid\":42"));
+    }
+
+    #[test]
+    fn diagnostics_for_denied_actions() {
+        let exec = EventRecord {
+            pid: 1,
+            unit: 0,
+            action: ACTION_EXEC,
+            verdict: VERDICT_DENIED,
+            path_or_addr: "/bin/bash".into(),
+        };
+        assert_eq!(
+            diagnostic(&exec),
+            Some("Execution denied: /bin/bash".to_string())
+        );
+        let net = EventRecord {
+            pid: 1,
+            unit: 0,
+            action: ACTION_CONNECT,
+            verdict: VERDICT_DENIED,
+            path_or_addr: "1.2.3.4:80".into(),
+        };
+        assert_eq!(
+            diagnostic(&net),
+            Some("Network denied: 1.2.3.4:80".to_string())
+        );
+        let allow = EventRecord {
+            pid: 1,
+            unit: 0,
+            action: ACTION_EXEC,
+            verdict: 0,
+            path_or_addr: "/bin/bash".into(),
+        };
+        assert!(diagnostic(&allow).is_none());
     }
 }

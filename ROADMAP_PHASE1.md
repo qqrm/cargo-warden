@@ -19,7 +19,7 @@
 ## Agent-lite
 - [x] Collect events from BPF maps and output text and JSON logs.
 - [x] Include fields: pid, unit, action, path/address, verdict.
-- [ ] Provide basic diagnostics for denied exec or network.
+- [x] Provide basic diagnostics for denied exec or network.
 
 ## Examples
 - [ ] Example crate with `build.rs` making a network request blocked by default.
