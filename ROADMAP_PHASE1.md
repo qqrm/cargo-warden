@@ -14,7 +14,7 @@
 - [x] Scaffold cargo subcommand `cargo warden`.
 - [x] Implement `build` wrapper that sets up cgroup, loads eBPF programs, and invokes Cargo.
 - [x] Implement `run -- <cmd>` wrapper for arbitrary commands.
-- [ ] Add allowlist CLI option or config stub.
+- [x] Add allowlist CLI option or config stub.
 
 ## Agent-lite
 - [ ] Collect events from BPF maps and output text and JSON logs.
