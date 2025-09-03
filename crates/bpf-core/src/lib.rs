@@ -18,8 +18,8 @@ fn deny() -> i32 {
 }
 
 #[cfg(target_arch = "bpf")]
-#[no_mangle]
-#[link_section = "maps/exec_allowlist"]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "maps/exec_allowlist")]
 pub static mut EXEC_ALLOWLIST: [bpf_api::ExecAllowEntry; 1] =
     [bpf_api::ExecAllowEntry { path: [0; 256] }];
 
@@ -39,20 +39,20 @@ fn path_matches(a: &[u8; 256], b: &[u8; 256]) -> bool {
 }
 
 #[cfg(any(target_arch = "bpf", test))]
-extern "C" {
+unsafe extern "C" {
     fn bpf_probe_read_user_str(dst: *mut u8, size: u32, src: *const u8) -> i32;
     fn bpf_ringbuf_output(ringbuf: *mut c_void, data: *const c_void, len: u64, flags: u64) -> i64;
     fn bpf_get_current_pid_tgid() -> u64;
 }
 
 #[cfg(any(target_arch = "bpf", test))]
-#[no_mangle]
-#[link_section = "maps/events"]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "maps/events")]
 pub static mut EVENTS: [u8; 0] = [];
 
 #[cfg(target_arch = "bpf")]
-#[no_mangle]
-#[link_section = "lsm/bprm_check_security"]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "lsm/bprm_check_security")]
 pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
     let filename_ptr = unsafe { *(ctx as *const *const u8) };
     let mut buf = [0u8; 256];
@@ -70,36 +70,36 @@ pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
 }
 
 #[cfg(target_arch = "bpf")]
-#[no_mangle]
-#[link_section = "cgroup/connect4"]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "cgroup/connect4")]
 pub extern "C" fn connect4(_ctx: *mut c_void) -> i32 {
     deny()
 }
 
 #[cfg(target_arch = "bpf")]
-#[no_mangle]
-#[link_section = "cgroup/connect6"]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "cgroup/connect6")]
 pub extern "C" fn connect6(_ctx: *mut c_void) -> i32 {
     deny()
 }
 
 #[cfg(target_arch = "bpf")]
-#[no_mangle]
-#[link_section = "cgroup/sendmsg4"]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "cgroup/sendmsg4")]
 pub extern "C" fn sendmsg4(_ctx: *mut c_void) -> i32 {
     deny()
 }
 
 #[cfg(target_arch = "bpf")]
-#[no_mangle]
-#[link_section = "cgroup/sendmsg6"]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "cgroup/sendmsg6")]
 pub extern "C" fn sendmsg6(_ctx: *mut c_void) -> i32 {
     deny()
 }
 
 #[cfg(any(target_arch = "bpf", test))]
-#[no_mangle]
-#[link_section = "lsm/file_open"]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "lsm/file_open")]
 pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
     let event = Event {
         pid: unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 },
@@ -129,7 +129,7 @@ mod tests {
 
     static LAST_EVENT: Mutex<Option<Event>> = Mutex::new(None);
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     extern "C" fn bpf_ringbuf_output(
         _ringbuf: *mut c_void,
         data: *const c_void,
@@ -142,12 +142,12 @@ mod tests {
         0
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     extern "C" fn bpf_get_current_pid_tgid() -> u64 {
         1234u64 << 32
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     extern "C" fn bpf_probe_read_user_str(_dst: *mut u8, _size: u32, _src: *const u8) -> i32 {
         0
     }
