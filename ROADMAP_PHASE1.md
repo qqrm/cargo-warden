@@ -22,7 +22,7 @@
 - [x] Provide basic diagnostics for denied exec or network.
 
 ## Examples
-- [ ] Example crate with `build.rs` making a network request blocked by default.
+- [x] Example crate with `build.rs` making a network request blocked by default.
 - [ ] Example crate attempting to spawn `/bin/bash`.
 - [ ] Document expected `EPERM` results and hints.
 
