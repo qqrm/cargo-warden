@@ -27,6 +27,8 @@ enum Commands {
         #[arg(trailing_var_arg = true)]
         cmd: Vec<String>,
     },
+    /// Show active policy and recent events.
+    Status,
 }
 
 fn main() {
@@ -41,6 +43,12 @@ fn main() {
         Commands::Run { cmd } => {
             if let Err(e) = handle_run(cmd, &cli.allow) {
                 eprintln!("run failed: {e}");
+                exit(1);
+            }
+        }
+        Commands::Status => {
+            if let Err(e) = handle_status() {
+                eprintln!("status failed: {e}");
                 exit(1);
             }
         }
@@ -87,6 +95,12 @@ fn run_command(cmd: &[String]) -> Command {
         command.args(&cmd[1..]);
     }
     command
+}
+
+fn handle_status() -> io::Result<()> {
+    println!("active policy: none");
+    println!("recent events: none");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -141,5 +155,14 @@ mod tests {
             .map(|s| s.to_string_lossy().into_owned())
             .collect();
         assert_eq!(collected, ["hello"]);
+    }
+
+    #[test]
+    fn parse_status_command() {
+        let cli = Cli::parse_from(["cargo-warden", "status"]);
+        match cli.command {
+            Commands::Status => {}
+            _ => panic!("expected status command"),
+        }
     }
 }
