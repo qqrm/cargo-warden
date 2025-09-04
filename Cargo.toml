@@ -4,5 +4,6 @@ members = [
     "crates/bpf-core",
     "crates/cli",
     "crates/agent-lite",
+    "examples/network-build",
 ]
 resolver = "2"
