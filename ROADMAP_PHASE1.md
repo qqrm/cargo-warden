@@ -23,8 +23,8 @@
 
 ## Examples
 - [x] Example crate with `build.rs` making a network request blocked by default.
-- [ ] Example crate attempting to spawn `/bin/bash`.
-- [ ] Document expected `EPERM` results and hints.
+- [x] Example crate attempting to spawn `/bin/bash`.
+- [x] Document expected `EPERM` results and hints.
 
 ## Cross-cutting
 - [ ] Provide script or Makefile to run examples under `cargo warden`.
