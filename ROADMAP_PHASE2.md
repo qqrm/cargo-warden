@@ -15,7 +15,7 @@
 - [ ] Implement `init` subcommand to bootstrap project configuration.
 - [ ] Add interactive prompts for generating allowlists.
 - [ ] Support `--policy` flag referencing external policy files.
-- [ ] Provide `status` command displaying active policy and recent events.
+- [x] Provide `status` command displaying active policy and recent events.
 
 ## Policy Engine
 - [ ] Design declarative policy schema in TOML.

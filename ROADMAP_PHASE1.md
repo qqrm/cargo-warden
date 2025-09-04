@@ -32,3 +32,6 @@
 - [x] Update code and docs to Rust 2024 edition.
 - [x] Add GitHub CI pipeline for formatting, linting, and tests.
 - [x] Draft roadmap for Phase 2.
+
+## Phase 2 progress
+- [x] Provide `status` command displaying active policy and recent events.
