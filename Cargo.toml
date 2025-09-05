@@ -4,6 +4,7 @@ members = [
     "crates/bpf-core",
     "crates/cli",
     "crates/agent-lite",
+    "crates/policy-core",
     "examples/network-build",
     "examples/spawn-bash",
 ]
