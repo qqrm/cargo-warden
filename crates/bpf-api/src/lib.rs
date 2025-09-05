@@ -1,5 +1,10 @@
 #![no_std]
 
+/// Bit flag for read access.
+pub const FS_READ: u8 = 1;
+/// Bit flag for write access.
+pub const FS_WRITE: u8 = 2;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct ExecAllowEntry {
@@ -27,6 +32,21 @@ pub struct NetRuleEntry {
 pub struct NetParentEntry {
     pub child: u32,
     pub parent: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FsRule {
+    pub access: u8,
+    pub reserved: [u8; 3],
+    pub path: [u8; 256],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FsRuleEntry {
+    pub unit: u32,
+    pub rule: FsRule,
 }
 
 #[repr(C)]
@@ -70,6 +90,16 @@ mod tests {
     #[test]
     fn net_parent_entry_size() {
         assert_eq!(size_of::<NetParentEntry>(), 8);
+    }
+
+    #[test]
+    fn fs_rule_size() {
+        assert_eq!(size_of::<FsRule>(), 260);
+    }
+
+    #[test]
+    fn fs_rule_entry_size() {
+        assert_eq!(size_of::<FsRuleEntry>(), 264);
     }
 
     #[test]
