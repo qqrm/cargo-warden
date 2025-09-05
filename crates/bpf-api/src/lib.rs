@@ -63,6 +63,10 @@ pub struct Event {
     pub verdict: u8,
     /// Reserved for future use.
     pub reserved: u8,
+    /// Identifier of the container or sandbox.
+    pub container_id: u64,
+    /// Bitmask of Linux capabilities held by the process.
+    pub caps: u64,
     /// Null-terminated path or network address.
     pub path_or_addr: [u8; 256],
 }
@@ -104,6 +108,6 @@ mod tests {
 
     #[test]
     fn event_size() {
-        assert_eq!(size_of::<Event>(), 264);
+        assert_eq!(size_of::<Event>(), 280);
     }
 }

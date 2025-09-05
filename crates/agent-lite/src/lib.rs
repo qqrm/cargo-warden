@@ -15,6 +15,8 @@ pub struct EventRecord {
     pub unit: u8,
     pub action: u8,
     pub verdict: u8,
+    pub container_id: u64,
+    pub caps: u64,
     pub path_or_addr: String,
 }
 
@@ -31,6 +33,8 @@ impl From<Event> for EventRecord {
             unit: e.unit,
             action: e.action,
             verdict: e.verdict,
+            container_id: e.container_id,
+            caps: e.caps,
             path_or_addr,
         }
     }
@@ -40,8 +44,14 @@ impl std::fmt::Display for EventRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "pid={} unit={} action={} verdict={} path_or_addr={}",
-            self.pid, self.unit, self.action, self.verdict, self.path_or_addr
+            "pid={} unit={} action={} verdict={} container_id={} caps={} path_or_addr={}",
+            self.pid,
+            self.unit,
+            self.action,
+            self.verdict,
+            self.container_id,
+            self.caps,
+            self.path_or_addr
         )
     }
 }
@@ -90,6 +100,8 @@ mod tests {
             action: 2,
             verdict: 0,
             reserved: 0,
+            container_id: 7,
+            caps: 1,
             path_or_addr: path,
         };
         let record: EventRecord = event.into();
@@ -97,6 +109,8 @@ mod tests {
         assert_eq!(record.unit, 1);
         assert_eq!(record.action, 2);
         assert_eq!(record.verdict, 0);
+        assert_eq!(record.container_id, 7);
+        assert_eq!(record.caps, 1);
         assert_eq!(record.path_or_addr, "/bin");
         let text = format!("{}", record);
         assert!(text.contains("pid=42"));
@@ -111,6 +125,8 @@ mod tests {
             unit: 0,
             action: ACTION_EXEC,
             verdict: VERDICT_DENIED,
+            container_id: 0,
+            caps: 0,
             path_or_addr: "/bin/bash".into(),
         };
         assert_eq!(
@@ -122,6 +138,8 @@ mod tests {
             unit: 0,
             action: ACTION_CONNECT,
             verdict: VERDICT_DENIED,
+            container_id: 0,
+            caps: 0,
             path_or_addr: "1.2.3.4:80".into(),
         };
         assert_eq!(
@@ -133,6 +151,8 @@ mod tests {
             unit: 0,
             action: ACTION_EXEC,
             verdict: 0,
+            container_id: 0,
+            caps: 0,
             path_or_addr: "/bin/bash".into(),
         };
         assert!(diagnostic(&allow).is_none());
