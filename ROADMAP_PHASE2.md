@@ -3,7 +3,7 @@
 ## BPF API
 - [x] Support per-package network rules via hierarchical maps.
 - [x] Expose control for filesystem read/write policies.
-- [ ] Document enriched event metadata such as container ID and capability bits.
+ - [x] Document enriched event metadata such as container ID and capability bits.
 
 ## BPF Core
 - [x] Enforce network allowlists with CIDR matching and DNS resolution.

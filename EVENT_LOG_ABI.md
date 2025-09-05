@@ -11,6 +11,8 @@ pub struct Event {
     pub action: u8,      // 0 Open, 1 Rename, 2 Unlink, 3 Exec, 4 Connect
     pub verdict: u8,     // 0 Allowed, 1 Denied
     pub reserved: u8,    // padding for alignment, reserved for future use
+    pub container_id: u64,
+    pub caps: u64,       // Linux capability bitmask
     pub path_or_addr: [u8; 256], // null-terminated path or network address
 }
 ```
@@ -20,4 +22,6 @@ pub struct Event {
 - **action** – operation being audited.
 - **path_or_addr** – associated filesystem path or network address.
 - **verdict** – allow (`0`) or deny (`1`).
+- **container_id** – identifier of the container or sandbox.
+- **caps** – Linux capability bitmask held by the process.
 
