@@ -249,6 +249,8 @@ pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
         action: 0,
         verdict: 0,
         reserved: 0,
+        container_id: 0,
+        caps: 0,
         path_or_addr: [0; 256],
     };
     unsafe {
