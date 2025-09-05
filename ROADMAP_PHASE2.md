@@ -2,7 +2,7 @@
 
 ## BPF API
 - [x] Support per-package network rules via hierarchical maps.
-- [ ] Expose control for filesystem read/write policies.
+- [x] Expose control for filesystem read/write policies.
 - [ ] Document enriched event metadata such as container ID and capability bits.
 
 ## BPF Core

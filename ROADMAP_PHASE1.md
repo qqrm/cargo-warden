@@ -33,3 +33,6 @@
 - [x] Add GitHub CI pipeline for formatting, linting, and tests.
 - [x] Draft roadmap for Phase 2.
 
+## Phase 2 Progress
+- [x] Expose control for filesystem read/write policies in BPF API.
+
