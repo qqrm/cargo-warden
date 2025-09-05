@@ -33,7 +33,3 @@
 - [x] Add GitHub CI pipeline for formatting, linting, and tests.
 - [x] Draft roadmap for Phase 2.
 
-## Phase 2 progress
-- [x] Provide `status` command displaying active policy and recent events.
-- [x] Design declarative policy schema in TOML.
-- [x] Emit warnings for unused or contradictory rules.
