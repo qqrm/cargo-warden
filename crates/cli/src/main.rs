@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
-use std::io;
+use std::fs::File;
+use std::io::{self, BufRead, Write};
+use std::path::Path;
 use std::process::{Command, exit};
 
 /// Cargo subcommand providing warden functionality.
@@ -27,6 +29,8 @@ enum Commands {
         #[arg(trailing_var_arg = true)]
         cmd: Vec<String>,
     },
+    /// Initialize warden configuration.
+    Init,
     /// Show active policy and recent events.
     Status,
 }
@@ -43,6 +47,12 @@ fn main() {
         Commands::Run { cmd } => {
             if let Err(e) = handle_run(cmd, &cli.allow) {
                 eprintln!("run failed: {e}");
+                exit(1);
+            }
+        }
+        Commands::Init => {
+            if let Err(e) = handle_init() {
+                eprintln!("init failed: {e}");
                 exit(1);
             }
         }
@@ -103,11 +113,50 @@ fn handle_status() -> io::Result<()> {
     Ok(())
 }
 
+fn handle_init() -> io::Result<()> {
+    let mut input = io::stdin().lock();
+    let mut output = io::stdout();
+    handle_init_with(&mut input, &mut output)
+}
+
+fn handle_init_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> io::Result<()> {
+    let path = Path::new("warden.toml");
+    if path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "warden.toml already exists",
+        ));
+    }
+    writeln!(output, "Enter allowlist entries (comma separated):")?;
+    let mut line = String::new();
+    input.read_line(&mut line)?;
+    let entries: Vec<String> = line
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut file = File::create(path)?;
+    writeln!(file, "[allowlist]")?;
+    writeln!(file, "paths = [")?;
+    for (i, entry) in entries.iter().enumerate() {
+        if i + 1 == entries.len() {
+            writeln!(file, "    \"{}\"", entry)?;
+        } else {
+            writeln!(file, "    \"{}\",", entry)?;
+        }
+    }
+    writeln!(file, "]")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, build_command, run_command};
+    use super::{Cli, Commands, build_command, handle_init_with, run_command};
     use clap::{CommandFactory, Parser};
     use std::ffi::OsStr;
+    use std::io::Cursor;
+
+    use tempfile::tempdir;
 
     #[test]
     fn verify_cli() {
@@ -164,5 +213,36 @@ mod tests {
             Commands::Status => {}
             _ => panic!("expected status command"),
         }
+    }
+
+    #[test]
+    fn parse_init_command() {
+        let cli = Cli::parse_from(["cargo-warden", "init"]);
+        match cli.command {
+            Commands::Init => {}
+            _ => panic!("expected init command"),
+        }
+    }
+
+    #[test]
+    fn handle_init_creates_file_and_prompts() {
+        let dir = tempdir().unwrap();
+        let old_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let input_data = "foo, bar\n";
+        let mut input = Cursor::new(input_data.as_bytes());
+        let mut output = Vec::new();
+
+        handle_init_with(&mut input, &mut output).unwrap();
+
+        std::env::set_current_dir(old_dir).unwrap();
+
+        let out_str = String::from_utf8(output).unwrap();
+        assert!(out_str.contains("Enter allowlist entries"));
+
+        let config = std::fs::read_to_string(dir.path().join("warden.toml")).unwrap();
+        assert!(config.contains("foo"));
+        assert!(config.contains("bar"));
     }
 }
