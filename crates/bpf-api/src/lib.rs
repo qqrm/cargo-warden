@@ -24,6 +24,13 @@ pub struct NetRuleEntry {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
+pub struct NetParentEntry {
+    pub child: u32,
+    pub parent: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
 /// Event emitted by BPF programs.
 pub struct Event {
     /// Process identifier.
@@ -58,6 +65,11 @@ mod tests {
     #[test]
     fn net_rule_entry_size() {
         assert_eq!(size_of::<NetRuleEntry>(), 24);
+    }
+
+    #[test]
+    fn net_parent_entry_size() {
+        assert_eq!(size_of::<NetParentEntry>(), 8);
     }
 
     #[test]

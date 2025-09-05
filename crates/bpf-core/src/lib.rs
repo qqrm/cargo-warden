@@ -52,8 +52,19 @@ pub static mut NET_RULES: [bpf_api::NetRuleEntry; 1] = [bpf_api::NetRuleEntry {
 }];
 
 #[cfg(any(target_arch = "bpf", test))]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "maps/net_parents")]
+pub static mut NET_PARENTS: [bpf_api::NetParentEntry; 1] = [bpf_api::NetParentEntry {
+    child: 0,
+    parent: 0,
+}];
+
+#[cfg(any(target_arch = "bpf", test))]
+static mut CURRENT_UNIT: u32 = 0;
+
+#[cfg(any(target_arch = "bpf", test))]
 fn current_unit() -> u32 {
-    0
+    unsafe { CURRENT_UNIT }
 }
 
 #[cfg(any(target_arch = "bpf", test))]
@@ -81,16 +92,41 @@ fn rule_matches(rule: &bpf_api::NetRule, addr: &[u8; 16], port: u16, protocol: u
 }
 
 #[cfg(any(target_arch = "bpf", test))]
-fn net_allowed(addr: &[u8; 16], port: u16, protocol: u8) -> bool {
-    let unit = current_unit();
+fn get_parent(unit: u32) -> Option<u32> {
     unsafe {
         let mut i = 0;
         while i < 1 {
-            let entry = core::ptr::read(core::ptr::addr_of!(NET_RULES[i]));
-            if entry.unit == unit && rule_matches(&entry.rule, addr, port, protocol) {
-                return true;
+            let entry = core::ptr::read(core::ptr::addr_of!(NET_PARENTS[i]));
+            if entry.child == unit {
+                if entry.parent != unit {
+                    return Some(entry.parent);
+                } else {
+                    return None;
+                }
             }
             i += 1;
+        }
+    }
+    None
+}
+
+#[cfg(any(target_arch = "bpf", test))]
+fn net_allowed(addr: &[u8; 16], port: u16, protocol: u8) -> bool {
+    let mut unit = current_unit();
+    loop {
+        unsafe {
+            let mut i = 0;
+            while i < 1 {
+                let entry = core::ptr::read(core::ptr::addr_of!(NET_RULES[i]));
+                if entry.unit == unit && rule_matches(&entry.rule, addr, port, protocol) {
+                    return true;
+                }
+                i += 1;
+            }
+        }
+        match get_parent(unit) {
+            Some(p) => unit = p,
+            None => break,
         }
     }
     false
@@ -234,6 +270,7 @@ mod tests {
     use std::sync::Mutex;
 
     static LAST_EVENT: Mutex<Option<Event>> = Mutex::new(None);
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[unsafe(no_mangle)]
     extern "C" fn bpf_ringbuf_output(
@@ -294,14 +331,22 @@ mod tests {
         }
     }
 
+    fn set_parent(child: u32, parent: u32) {
+        unsafe {
+            NET_PARENTS[0] = bpf_api::NetParentEntry { child, parent };
+        }
+    }
+
     #[test]
     fn connect4_respects_rules() {
+        let _g = TEST_LOCK.lock().unwrap();
         let ip = resolve_host("localhost")
             .unwrap()
             .into_iter()
             .find(|i| i.is_ipv4())
             .unwrap();
         set_rule(ip, 80, 6);
+        set_parent(1, 0);
         let allowed = SockAddr {
             user_ip4: match ip {
                 std::net::IpAddr::V4(v4) => u32::from_be_bytes(v4.octets()),
@@ -312,27 +357,37 @@ mod tests {
             family: 2,
             protocol: 6,
         };
-        let denied = SockAddr {
+        let other = SockAddr {
             user_ip4: u32::from_be_bytes([1, 1, 1, 1]),
             user_ip6: [0; 4],
             user_port: 80u16.to_be(),
             family: 2,
             protocol: 6,
         };
+        unsafe {
+            CURRENT_UNIT = 1;
+        }
         assert_eq!(connect4(&allowed as *const _ as *mut c_void), 0);
-        assert_ne!(connect4(&denied as *const _ as *mut c_void), 0);
+        assert_ne!(connect4(&other as *const _ as *mut c_void), 0);
         assert_eq!(sendmsg4(&allowed as *const _ as *mut c_void), 0);
-        assert_ne!(sendmsg4(&denied as *const _ as *mut c_void), 0);
+        assert_ne!(sendmsg4(&other as *const _ as *mut c_void), 0);
+        unsafe {
+            CURRENT_UNIT = 2;
+        }
+        assert_ne!(connect4(&allowed as *const _ as *mut c_void), 0);
+        assert_ne!(sendmsg4(&allowed as *const _ as *mut c_void), 0);
     }
 
     #[test]
     fn connect6_respects_rules() {
+        let _g = TEST_LOCK.lock().unwrap();
         let ip = resolve_host("localhost")
             .unwrap()
             .into_iter()
             .find(|i| i.is_ipv6())
             .unwrap();
         set_rule(ip, 80, 6);
+        set_parent(1, 0);
         let mut ip6_words = [0u32; 4];
         if let std::net::IpAddr::V6(v6) = ip {
             let octets = v6.octets();
@@ -352,16 +407,24 @@ mod tests {
             family: 10,
             protocol: 6,
         };
-        let denied = SockAddr {
+        let other = SockAddr {
             user_ip4: 0,
             user_ip6: [0; 4],
             user_port: 80u16.to_be(),
             family: 10,
             protocol: 6,
         };
+        unsafe {
+            CURRENT_UNIT = 1;
+        }
         assert_eq!(connect6(&allowed as *const _ as *mut c_void), 0);
-        assert_ne!(connect6(&denied as *const _ as *mut c_void), 0);
+        assert_ne!(connect6(&other as *const _ as *mut c_void), 0);
         assert_eq!(sendmsg6(&allowed as *const _ as *mut c_void), 0);
-        assert_ne!(sendmsg6(&denied as *const _ as *mut c_void), 0);
+        assert_ne!(sendmsg6(&other as *const _ as *mut c_void), 0);
+        unsafe {
+            CURRENT_UNIT = 2;
+        }
+        assert_ne!(connect6(&allowed as *const _ as *mut c_void), 0);
+        assert_ne!(sendmsg6(&allowed as *const _ as *mut c_void), 0);
     }
 }
