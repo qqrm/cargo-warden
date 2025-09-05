@@ -10,9 +10,16 @@ pub struct ExecAllowEntry {
 #[derive(Clone, Copy, Debug)]
 pub struct NetRule {
     pub addr: [u8; 16],
-    pub port: u16,
     pub protocol: u8,
-    pub reserved: u8,
+    pub prefix_len: u8,
+    pub port: u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct NetRuleEntry {
+    pub unit: u32,
+    pub rule: NetRule,
 }
 
 #[repr(C)]
@@ -46,6 +53,11 @@ mod tests {
     #[test]
     fn net_rule_size() {
         assert_eq!(size_of::<NetRule>(), 20);
+    }
+
+    #[test]
+    fn net_rule_entry_size() {
+        assert_eq!(size_of::<NetRuleEntry>(), 24);
     }
 
     #[test]

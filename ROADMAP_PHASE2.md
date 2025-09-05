@@ -1,12 +1,12 @@
 # Phase 2 Roadmap – Expanded Isolation and Policy Control
 
 ## BPF API
-- [ ] Support per-package network rules via hierarchical maps.
+- [x] Support per-package network rules via hierarchical maps.
 - [ ] Expose control for filesystem read/write policies.
 - [ ] Document enriched event metadata such as container ID and capability bits.
 
 ## BPF Core
-- [ ] Enforce network allowlists with CIDR matching and DNS resolution.
+- [x] Enforce network allowlists with CIDR matching and DNS resolution.
 - [ ] Add hooks for file write and delete operations with deny by default.
 - [ ] Implement configurable syscall filtering via seccomp integration.
 - [ ] Provide metrics maps for event counters.
