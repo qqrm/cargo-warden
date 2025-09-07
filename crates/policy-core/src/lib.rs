@@ -1,5 +1,9 @@
 use serde::Deserialize;
-use std::{collections::HashSet, hash::Hash, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+    path::PathBuf,
+};
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -47,7 +51,7 @@ impl Default for ExecDefault {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Policy {
     pub mode: Mode,
     #[serde(default)]
@@ -62,31 +66,31 @@ pub struct Policy {
     pub allow: AllowSection,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct FsPolicy {
     #[serde(default)]
     pub default: FsDefault,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct NetPolicy {
     #[serde(default)]
     pub default: NetDefault,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct ExecPolicy {
     #[serde(default)]
     pub default: ExecDefault,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct SyscallPolicy {
     #[serde(default)]
     pub deny: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct AllowSection {
     #[serde(default)]
     pub exec: ExecAllow,
@@ -96,24 +100,65 @@ pub struct AllowSection {
     pub fs: FsAllow,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct ExecAllow {
     #[serde(default)]
     pub allowed: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct NetAllow {
     #[serde(default)]
     pub hosts: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, Clone)]
 pub struct FsAllow {
     #[serde(default)]
     pub write_extra: Vec<PathBuf>,
     #[serde(default)]
     pub read_extra: Vec<PathBuf>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct PolicyOverride {
+    pub fs: Option<FsPolicy>,
+    pub net: Option<NetPolicy>,
+    pub exec: Option<ExecPolicy>,
+    pub syscall: Option<SyscallPolicy>,
+    #[serde(default)]
+    pub allow: Option<AllowSection>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct WorkspacePolicy {
+    pub root: Policy,
+    #[serde(default)]
+    pub members: HashMap<String, PolicyOverride>,
+}
+
+impl WorkspacePolicy {
+    pub fn policy_for(&self, member: &str) -> Policy {
+        let mut policy = self.root.clone();
+        if let Some(ovr) = self.members.get(member) {
+            if let Some(fs) = &ovr.fs {
+                policy.fs = fs.clone();
+            }
+            if let Some(net) = &ovr.net {
+                policy.net = net.clone();
+            }
+            if let Some(exec) = &ovr.exec {
+                policy.exec = exec.clone();
+            }
+            if let Some(sys) = &ovr.syscall {
+                policy.syscall = sys.clone();
+            }
+            if let Some(allow) = &ovr.allow {
+                policy.allow = allow.clone();
+            }
+        }
+        policy
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -332,5 +377,33 @@ read_extra = ["/tmp/path"]
                 .iter()
                 .any(|e| matches!(e, ValidationError::FsReadWriteConflict(_)))
         );
+    }
+
+    const WORKSPACE: &str = r#"
+[root]
+mode = "enforce"
+
+[root.exec]
+default = "allowlist"
+
+[root.allow.exec]
+allowed = ["rustc"]
+
+[members.pkg.exec]
+default = "allow"
+
+[members.pkg.allow.exec]
+allowed = ["bash"]
+"#;
+
+    #[test]
+    fn workspace_member_overrides() {
+        let ws: WorkspacePolicy = toml::from_str(WORKSPACE).unwrap();
+        let pkg = ws.policy_for("pkg");
+        assert_eq!(pkg.exec.default, ExecDefault::Allow);
+        assert_eq!(pkg.allow.exec.allowed, vec!["bash".to_string()]);
+        let other = ws.policy_for("other");
+        assert_eq!(other.exec.default, ExecDefault::Allowlist);
+        assert_eq!(other.allow.exec.allowed, vec!["rustc".to_string()]);
     }
 }

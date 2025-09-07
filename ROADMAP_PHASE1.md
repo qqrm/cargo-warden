@@ -41,4 +41,6 @@
 - [x] Design declarative policy schema in TOML.
 - [x] Validate policies against schema during CLI commands.
 - [x] Emit warnings for unused or contradictory rules.
+- [x] Support policy inheritance and overrides per workspace member.
+- [x] Stream events to JSONL file and systemd journal simultaneously.
 
