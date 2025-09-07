@@ -5,6 +5,8 @@ members = [
     "crates/cli",
     "crates/agent-lite",
     "crates/policy-core",
+    "crates/policy-compiler",
+    "crates/testkits",
     "examples/network-build",
     "examples/spawn-bash",
 ]
