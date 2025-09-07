@@ -9,7 +9,7 @@
 - [x] Enforce network allowlists with CIDR matching and DNS resolution.
 - [x] Add hooks for file write and delete operations with deny by default.
 - [x] Implement configurable syscall filtering via seccomp integration.
-- [ ] Provide metrics maps for event counters.
+- [x] Provide metrics maps for event counters.
 
 ## CLI
 - [x] Implement `init` subcommand to bootstrap project configuration.
