@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package agent;
+
+message Empty {}
+
+message EventRecord {
+  uint32 pid = 1;
+  uint32 unit = 2;
+  uint32 action = 3;
+  uint32 verdict = 4;
+  uint64 container_id = 5;
+  uint64 caps = 6;
+  string path_or_addr = 7;
+}
+
+service Agent {
+  rpc WatchEvents(Empty) returns (stream EventRecord);
+}
