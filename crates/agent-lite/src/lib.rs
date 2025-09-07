@@ -1,6 +1,10 @@
 use aya::maps::{MapData, ring_buf::RingBuf};
 use bpf_api::Event;
+use log::{info, warn};
 use serde::Serialize;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
@@ -67,8 +71,12 @@ fn diagnostic(record: &EventRecord) -> Option<String> {
     }
 }
 
-/// Polls a ring buffer map and prints logs for each record.
-pub fn run(mut ring: RingBuf<MapData>) -> Result<(), anyhow::Error> {
+/// Polls a ring buffer map and streams logs to JSONL file and systemd journal.
+pub fn run(mut ring: RingBuf<MapData>, jsonl: &Path) -> Result<(), anyhow::Error> {
+    if let Ok(j) = systemd_journal_logger::JournalLog::new() {
+        let _ = j.install();
+    }
+    let mut file = OpenOptions::new().create(true).append(true).open(jsonl)?;
     loop {
         while let Some(item) = ring.next() {
             if item.len() < core::mem::size_of::<Event>() {
@@ -76,19 +84,27 @@ pub fn run(mut ring: RingBuf<MapData>) -> Result<(), anyhow::Error> {
             }
             let event = unsafe { *(item.as_ptr() as *const Event) };
             let record: EventRecord = event.into();
-            println!("{}", record);
-            println!("{}", serde_json::to_string(&record)?);
-            if let Some(msg) = diagnostic(&record) {
-                eprintln!("{}", msg);
-            }
+            write_outputs(&record, &mut file)?;
         }
         thread::sleep(Duration::from_millis(100));
     }
 }
 
+fn write_outputs(record: &EventRecord, file: &mut File) -> Result<(), anyhow::Error> {
+    let json = serde_json::to_string(record)?;
+    writeln!(file, "{}", json)?;
+    info!("{}", json);
+    if let Some(msg) = diagnostic(record) {
+        warn!("{}", msg);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Seek};
+    use tempfile::NamedTempFile;
 
     #[test]
     fn event_record_formats() {
@@ -156,5 +172,24 @@ mod tests {
             path_or_addr: "/bin/bash".into(),
         };
         assert!(diagnostic(&allow).is_none());
+    }
+
+    #[test]
+    fn writes_jsonl_line() {
+        let record = EventRecord {
+            pid: 1,
+            unit: 0,
+            action: ACTION_EXEC,
+            verdict: 0,
+            container_id: 0,
+            caps: 0,
+            path_or_addr: "/bin/echo".into(),
+        };
+        let mut tmp = NamedTempFile::new().unwrap();
+        write_outputs(&record, tmp.as_file_mut()).unwrap();
+        tmp.as_file_mut().rewind().unwrap();
+        let mut content = String::new();
+        tmp.as_file_mut().read_to_string(&mut content).unwrap();
+        assert!(content.contains("\"pid\":1"));
     }
 }

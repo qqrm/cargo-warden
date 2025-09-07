@@ -20,11 +20,11 @@
 ## Policy Engine
 - [x] Design declarative policy schema in TOML.
 - [x] Validate policies against schema during CLI commands.
-- [ ] Support policy inheritance and overrides per workspace member.
+ - [x] Support policy inheritance and overrides per workspace member.
 - [x] Emit warnings for unused or contradictory rules.
 
 ## Agent
-- [ ] Stream events to JSONL file and systemd journal simultaneously.
+ - [x] Stream events to JSONL file and systemd journal simultaneously.
 - [ ] Offer configurable log rotation and retention settings.
 - [ ] Provide optional gRPC endpoint for remote monitoring.
 
