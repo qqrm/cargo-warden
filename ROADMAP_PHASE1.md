@@ -35,4 +35,6 @@
 
 ## Phase 2 Progress
 - [x] Design declarative policy schema in TOML.
+- [x] Validate policies against schema during CLI commands.
+- [x] Emit warnings for unused or contradictory rules.
 

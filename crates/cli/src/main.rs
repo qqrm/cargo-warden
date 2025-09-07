@@ -87,11 +87,15 @@ fn setup_isolation(_allow: &[String], policy: &[String]) -> io::Result<Vec<Strin
         let text = std::fs::read_to_string(path)?;
         let policy = policy_core::Policy::from_toml_str(&text)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        if let Err(errs) = policy.validate() {
+        let report = policy.validate();
+        if !report.errors.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("{:?}", errs),
+                format!("{:?}", report.errors),
             ));
+        }
+        for warn in report.warnings {
+            eprintln!("warning: {warn}");
         }
         Ok(policy.syscall.deny)
     } else {
