@@ -18,7 +18,7 @@
 - [x] Provide `status` command displaying active policy and recent events.
 
 ## Policy Engine
-- [ ] Design declarative policy schema in TOML.
+- [x] Design declarative policy schema in TOML.
 - [ ] Validate policies against schema during CLI commands.
 - [ ] Support policy inheritance and overrides per workspace member.
 - [ ] Emit warnings for unused or contradictory rules.
