@@ -1,0 +1,64 @@
+# Policy Schema
+
+The `warden.toml` file defines permissions for builds.
+
+```toml
+mode = "enforce"
+fs.default = "strict"
+net.default = "deny"
+exec.default = "allowlist"
+
+[allow.exec]
+allowed = ["rustc", "rustdoc"]
+
+[allow.net]
+hosts = ["127.0.0.1:1080"]
+
+[allow.fs]
+write_extra = ["/tmp/warden-scratch"]
+read_extra = ["/usr/include"]
+
+[syscall]
+deny = ["clone"]
+```
+
+## Fields
+
+### `mode`
+Operating mode of the sandbox.
+
+- `"observe"` – collect events without blocking.
+- `"enforce"` – deny actions not permitted.
+
+### `fs.default`
+Filesystem access policy.
+
+- `"strict"` – restrict writes to `target` and `OUT_DIR`; restrict reads to the workspace.
+- `"unrestricted"` – no filesystem restrictions.
+
+### `net.default`
+Network policy.
+
+- `"deny"` – block outbound network by default.
+- `"allow"` – allow outbound network.
+
+### `exec.default`
+Executable policy.
+
+- `"allowlist"` – allow only explicitly listed executables.
+- `"allow"` – permit all executions.
+
+### `allow.exec.allowed`
+List of executables permitted when `exec.default = "allowlist"`.
+
+### `allow.net.hosts`
+List of hosts allowed when `net.default = "deny"`. Each entry uses `host:port` form.
+
+### `allow.fs.write_extra`
+Additional paths allowed for writing when `fs.default = "strict"`.
+
+### `allow.fs.read_extra`
+Additional paths allowed for reading when `fs.default = "strict"`.
+
+### `syscall.deny`
+System calls blocked via seccomp.
