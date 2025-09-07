@@ -128,14 +128,23 @@ pub enum ValidationError {
     DuplicateFsRead(String),
     #[error("path {0} present in both read and write allowlists")]
     FsReadWriteConflict(String),
+    #[error("duplicate syscall deny rule: {0}")]
+    DuplicateSyscall(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ValidationWarning {
     #[error("exec allowlist is unused because exec.default is 'allow'")]
     UnusedExecAllow,
     #[error("network host allowlist is unused because net.default is 'allow'")]
     UnusedNetAllow,
     #[error("filesystem allowlists are unused because fs.default is 'unrestricted'")]
     UnusedFsAllow,
-    #[error("duplicate syscall deny rule: {0}")]
-    DuplicateSyscall(String),
+}
+
+pub struct ValidationReport {
+    pub errors: Vec<ValidationError>,
+    pub warnings: Vec<ValidationWarning>,
 }
 
 impl Policy {
@@ -143,9 +152,11 @@ impl Policy {
         toml::from_str(toml_str)
     }
 
-    pub fn validate(&self) -> Result<(), Vec<ValidationError>> {
+    pub fn validate(&self) -> ValidationReport {
         use ValidationError::*;
+        use ValidationWarning::*;
         let mut errors = Vec::new();
+        let mut warnings = Vec::new();
 
         if let Some(dup) = find_first_duplicate(&self.allow.exec.allowed) {
             errors.push(DuplicateExec(dup));
@@ -171,22 +182,18 @@ impl Policy {
         }
 
         if self.exec.default == ExecDefault::Allow && !self.allow.exec.allowed.is_empty() {
-            errors.push(UnusedExecAllow);
+            warnings.push(UnusedExecAllow);
         }
         if self.net.default == NetDefault::Allow && !self.allow.net.hosts.is_empty() {
-            errors.push(UnusedNetAllow);
+            warnings.push(UnusedNetAllow);
         }
         if self.fs.default == FsDefault::Unrestricted
             && (!self.allow.fs.read_extra.is_empty() || !self.allow.fs.write_extra.is_empty())
         {
-            errors.push(UnusedFsAllow);
+            warnings.push(UnusedFsAllow);
         }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+        ValidationReport { errors, warnings }
     }
 }
 
@@ -227,7 +234,9 @@ read_extra = ["/usr/include"]
     #[test]
     fn parse_and_validate() {
         let policy = Policy::from_toml_str(VALID).unwrap();
-        policy.validate().unwrap();
+        let report = policy.validate();
+        assert!(report.errors.is_empty());
+        assert!(report.warnings.is_empty());
         assert_eq!(policy.mode, Mode::Enforce);
     }
 
@@ -240,8 +249,11 @@ deny = ["clone", "clone"]
     #[test]
     fn duplicate_syscall_detected() {
         let policy = Policy::from_toml_str(SYSCALL_DUP).unwrap();
-        let errs = policy.validate().unwrap_err();
-        assert!(matches!(errs[0], ValidationError::DuplicateSyscall(_)));
+        let report = policy.validate();
+        assert!(matches!(
+            report.errors[0],
+            ValidationError::DuplicateSyscall(_)
+        ));
     }
 
     #[test]
@@ -256,8 +268,11 @@ exec.default = "allowlist"
 allowed = ["bash", "bash"]
 "#;
         let policy = Policy::from_toml_str(text).unwrap();
-        let errs = policy.validate().unwrap_err();
-        assert!(matches!(errs[0], ValidationError::DuplicateExec(_)));
+        let report = policy.validate();
+        assert!(matches!(
+            report.errors[0],
+            ValidationError::DuplicateExec(_)
+        ));
     }
 
     #[test]
@@ -275,14 +290,19 @@ hosts = ["1.2.3.4:80"]
 allowed = ["bash"]
 "#;
         let policy = Policy::from_toml_str(text).unwrap();
-        let errs = policy.validate().unwrap_err();
+        let report = policy.validate();
+        assert!(report.errors.is_empty());
         assert!(
-            errs.iter()
-                .any(|e| matches!(e, ValidationError::UnusedNetAllow))
+            report
+                .warnings
+                .iter()
+                .any(|e| matches!(e, ValidationWarning::UnusedNetAllow))
         );
         assert!(
-            errs.iter()
-                .any(|e| matches!(e, ValidationError::UnusedExecAllow))
+            report
+                .warnings
+                .iter()
+                .any(|e| matches!(e, ValidationWarning::UnusedExecAllow))
         );
     }
 
@@ -299,13 +319,17 @@ write_extra = ["/tmp/path", "/tmp/path"]
 read_extra = ["/tmp/path"]
 "#;
         let policy = Policy::from_toml_str(text).unwrap();
-        let errs = policy.validate().unwrap_err();
+        let report = policy.validate();
         assert!(
-            errs.iter()
+            report
+                .errors
+                .iter()
                 .any(|e| matches!(e, ValidationError::DuplicateFsWrite(_)))
         );
         assert!(
-            errs.iter()
+            report
+                .errors
+                .iter()
                 .any(|e| matches!(e, ValidationError::FsReadWriteConflict(_)))
         );
     }

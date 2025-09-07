@@ -19,9 +19,9 @@
 
 ## Policy Engine
 - [x] Design declarative policy schema in TOML.
-- [ ] Validate policies against schema during CLI commands.
+- [x] Validate policies against schema during CLI commands.
 - [ ] Support policy inheritance and overrides per workspace member.
-- [ ] Emit warnings for unused or contradictory rules.
+- [x] Emit warnings for unused or contradictory rules.
 
 ## Agent
 - [ ] Stream events to JSONL file and systemd journal simultaneously.
