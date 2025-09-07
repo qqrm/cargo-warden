@@ -4,9 +4,8 @@ use log::{info, warn};
 use serde::Serialize;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::thread;
-use std::time::Duration;
 
 #[cfg(feature = "grpc")]
 use tokio::sync::broadcast;
@@ -110,6 +109,15 @@ pub fn run(mut ring: RingBuf<MapData>, jsonl: &Path, cfg: Config) -> Result<(), 
     }
 
     loop {
+        let mut fds = [libc::pollfd {
+            fd: ring.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        }];
+        let ret = unsafe { libc::poll(fds.as_mut_ptr(), 1, -1) };
+        if ret < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
         while let Some(item) = ring.next() {
             if item.len() < core::mem::size_of::<Event>() {
                 continue;
@@ -125,7 +133,6 @@ pub fn run(mut ring: RingBuf<MapData>, jsonl: &Path, cfg: Config) -> Result<(), 
                 write_outputs(&record, &mut file, &path, cfg.rotation.as_ref())?;
             }
         }
-        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -211,6 +218,7 @@ mod grpc {
     use futures_core::Stream;
     use futures_util::StreamExt;
     use std::pin::Pin;
+    use std::thread;
     use tokio::sync::broadcast;
     use tokio_stream::wrappers::BroadcastStream;
     use tonic::{Request, Response, Status, transport::Server};
