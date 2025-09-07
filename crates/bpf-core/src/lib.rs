@@ -192,6 +192,11 @@ pub fn resolve_host(host: &str) -> std::io::Result<Vec<std::net::IpAddr>> {
 #[unsafe(link_section = "maps/events")]
 pub static mut EVENTS: [u8; 0] = [];
 
+#[cfg(any(target_arch = "bpf", test))]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "maps/event_counts")]
+pub static mut EVENT_COUNTS: [u64; 1] = [0];
+
 #[cfg(target_arch = "bpf")]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/bprm_check_security")]
@@ -260,6 +265,7 @@ pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
             size_of::<Event>() as u64,
             0,
         );
+        EVENT_COUNTS[0] += 1;
     }
     0
 }
@@ -315,6 +321,9 @@ mod tests {
 
     #[test]
     fn file_open_emits_event() {
+        unsafe {
+            EVENT_COUNTS[0] = 0;
+        }
         file_open(ptr::null_mut(), ptr::null_mut());
         let event = LAST_EVENT.lock().unwrap().expect("event");
         assert_eq!(event.pid, 1234);
@@ -322,6 +331,9 @@ mod tests {
         assert_eq!(event.action, 0);
         assert_eq!(event.verdict, 0);
         assert_eq!(event.path_or_addr[0], 0);
+        unsafe {
+            assert_eq!(EVENT_COUNTS[0], 1);
+        }
     }
 
     #[test]
