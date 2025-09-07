@@ -32,6 +32,7 @@
 - [x] Update code and docs to Rust 2024 edition.
 - [x] Add GitHub CI pipeline for formatting, linting, and tests.
 - [x] Draft roadmap for Phase 2.
+- [x] Draft roadmap for Phase 3.
 
 ## Phase 2 Progress
 - [x] Expose control for filesystem read/write policies in BPF API.
