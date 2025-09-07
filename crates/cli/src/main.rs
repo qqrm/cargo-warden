@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::fs::File;
 use std::io::{self, BufRead, Write};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, exit};
 
@@ -69,16 +70,33 @@ fn main() {
 }
 
 fn handle_build(args: Vec<String>, allow: &[String], policy: &[String]) -> io::Result<()> {
-    setup_isolation(allow, policy)?;
-    let status = build_command(&args).status()?;
+    let deny = setup_isolation(allow, policy)?;
+    let mut cmd = build_command(&args);
+    if !deny.is_empty() {
+        apply_seccomp_to_command(&mut cmd, &deny)?;
+    }
+    let status = cmd.status()?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
     Ok(())
 }
 
-fn setup_isolation(_allow: &[String], _policy: &[String]) -> io::Result<()> {
-    Ok(())
+fn setup_isolation(_allow: &[String], policy: &[String]) -> io::Result<Vec<String>> {
+    if let Some(path) = policy.first() {
+        let text = std::fs::read_to_string(path)?;
+        let policy = policy_core::Policy::from_toml_str(&text)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        if let Err(errs) = policy.validate() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{:?}", errs),
+            ));
+        }
+        Ok(policy.syscall.deny)
+    } else {
+        Ok(Vec::new())
+    }
 }
 
 fn build_command(args: &[String]) -> Command {
@@ -94,8 +112,12 @@ fn handle_run(cmd: Vec<String>, allow: &[String], policy: &[String]) -> io::Resu
             "missing command",
         ));
     }
-    setup_isolation(allow, policy)?;
-    let status = run_command(&cmd).status()?;
+    let deny = setup_isolation(allow, policy)?;
+    let mut command = run_command(&cmd);
+    if !deny.is_empty() {
+        apply_seccomp_to_command(&mut command, &deny)?;
+    }
+    let status = command.status()?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
@@ -108,6 +130,36 @@ fn run_command(cmd: &[String]) -> Command {
         command.args(&cmd[1..]);
     }
     command
+}
+
+fn apply_seccomp_to_command(cmd: &mut Command, deny: &[String]) -> io::Result<()> {
+    let rules = deny.to_owned();
+    unsafe {
+        cmd.pre_exec(move || {
+            apply_seccomp(&rules)?;
+            Ok(())
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn apply_seccomp(deny: &[String]) -> io::Result<()> {
+    use libseccomp::{ScmpAction, ScmpFilterContext, ScmpSyscall};
+    let mut filter = ScmpFilterContext::new_filter(ScmpAction::Allow).map_err(io::Error::other)?;
+    for name in deny {
+        if let Ok(sys) = ScmpSyscall::from_name(name) {
+            filter
+                .add_rule(ScmpAction::Errno(libc::EPERM), sys)
+                .map_err(io::Error::other)?;
+        }
+    }
+    filter.load().map_err(io::Error::other)
+}
+
+#[cfg(test)]
+fn apply_seccomp(_deny: &[String]) -> io::Result<()> {
+    Ok(())
 }
 
 fn handle_status() -> io::Result<()> {
