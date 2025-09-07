@@ -62,3 +62,17 @@ Additional paths allowed for reading when `fs.default = "strict"`.
 
 ### `syscall.deny`
 System calls blocked via seccomp.
+
+## Workspace Policy
+`workspace.warden.toml` allows per-package overrides.
+
+```toml
+[root]
+mode = "enforce"
+
+[members.pkg.exec]
+default = "allow"
+```
+
+The `root` table defines the base policy applied to all workspace members.
+Entries under `members.<name>` override fields for that specific package.
