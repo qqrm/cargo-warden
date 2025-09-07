@@ -43,4 +43,7 @@
 - [x] Emit warnings for unused or contradictory rules.
 - [x] Support policy inheritance and overrides per workspace member.
 - [x] Stream events to JSONL file and systemd journal simultaneously.
+- [x] Offer configurable log rotation and retention settings.
+- [x] Provide optional gRPC endpoint for remote monitoring.
+- [x] Provide Docker image with runtime dependencies preinstalled.
 
