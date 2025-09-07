@@ -11,6 +11,9 @@ struct Cli {
     /// Allowed executables passed directly via CLI.
     #[arg(long = "allow", value_name = "PATH", global = true)]
     allow: Vec<String>,
+    /// Policy files referenced via CLI.
+    #[arg(long = "policy", value_name = "FILE", global = true)]
+    policy: Vec<String>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -39,13 +42,13 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Commands::Build { args } => {
-            if let Err(e) = handle_build(args, &cli.allow) {
+            if let Err(e) = handle_build(args, &cli.allow, &cli.policy) {
                 eprintln!("build failed: {e}");
                 exit(1);
             }
         }
         Commands::Run { cmd } => {
-            if let Err(e) = handle_run(cmd, &cli.allow) {
+            if let Err(e) = handle_run(cmd, &cli.allow, &cli.policy) {
                 eprintln!("run failed: {e}");
                 exit(1);
             }
@@ -65,8 +68,8 @@ fn main() {
     }
 }
 
-fn handle_build(args: Vec<String>, allow: &[String]) -> io::Result<()> {
-    setup_isolation(allow)?;
+fn handle_build(args: Vec<String>, allow: &[String], policy: &[String]) -> io::Result<()> {
+    setup_isolation(allow, policy)?;
     let status = build_command(&args).status()?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
@@ -74,7 +77,7 @@ fn handle_build(args: Vec<String>, allow: &[String]) -> io::Result<()> {
     Ok(())
 }
 
-fn setup_isolation(_allow: &[String]) -> io::Result<()> {
+fn setup_isolation(_allow: &[String], _policy: &[String]) -> io::Result<()> {
     Ok(())
 }
 
@@ -84,14 +87,14 @@ fn build_command(args: &[String]) -> Command {
     cmd
 }
 
-fn handle_run(cmd: Vec<String>, allow: &[String]) -> io::Result<()> {
+fn handle_run(cmd: Vec<String>, allow: &[String], policy: &[String]) -> io::Result<()> {
     if cmd.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "missing command",
         ));
     }
-    setup_isolation(allow)?;
+    setup_isolation(allow, policy)?;
     let status = run_command(&cmd).status()?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
@@ -177,6 +180,25 @@ mod tests {
         match cli.command {
             Commands::Build { args } => {
                 assert_eq!(args, vec!["--release".to_string()]);
+            }
+            _ => panic!("expected build command"),
+        }
+    }
+
+    #[test]
+    fn parse_policy_for_build() {
+        let cli = Cli::parse_from([
+            "cargo-warden",
+            "build",
+            "--policy",
+            "policy.toml",
+            "--",
+            "--verbose",
+        ]);
+        assert_eq!(cli.policy, vec!["policy.toml".to_string()]);
+        match cli.command {
+            Commands::Build { args } => {
+                assert_eq!(args, vec!["--verbose".to_string()]);
             }
             _ => panic!("expected build command"),
         }
