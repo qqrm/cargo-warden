@@ -25,12 +25,12 @@
 
 ## Agent
  - [x] Stream events to JSONL file and systemd journal simultaneously.
-- [ ] Offer configurable log rotation and retention settings.
-- [ ] Provide optional gRPC endpoint for remote monitoring.
+- [x] Offer configurable log rotation and retention settings.
+- [x] Provide optional gRPC endpoint for remote monitoring.
 
 ## Packaging and Distribution
 - [ ] Publish prebuilt BPF artifacts for common architectures.
-- [ ] Provide Docker image with runtime dependencies preinstalled.
+- [x] Provide Docker image with runtime dependencies preinstalled.
 - [ ] Generate distributable archive with CLI and agent binaries.
 
 ## CI and Tooling
