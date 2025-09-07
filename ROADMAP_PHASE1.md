@@ -33,9 +33,3 @@
 - [x] Add GitHub CI pipeline for formatting, linting, and tests.
 - [x] Draft roadmap for Phase 2.
 
-## Phase 2 Progress
-- [x] Expose control for filesystem read/write policies in BPF API.
-- [x] Document enriched event metadata such as container ID and capability bits.
-- [x] Support `--policy` flag referencing external policy files.
-- [x] Add hooks for file write and delete operations with deny by default.
-
