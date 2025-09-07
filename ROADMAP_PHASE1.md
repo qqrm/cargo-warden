@@ -46,4 +46,6 @@
 - [x] Offer configurable log rotation and retention settings.
 - [x] Provide optional gRPC endpoint for remote monitoring.
 - [x] Provide Docker image with runtime dependencies preinstalled.
+- [x] Merge multiple policy files referenced via CLI.
+- [x] Replace polling with blocking ring buffer reads in agent.
 

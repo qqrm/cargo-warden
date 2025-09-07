@@ -26,6 +26,7 @@ dependencies = [
  "bpf-api",
  "futures-core",
  "futures-util",
+ "libc",
  "log",
  "prost",
  "serde",
@@ -815,6 +816,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "policy-compiler"
+version = "0.1.0"
+dependencies = [
+ "policy-core",
+]
+
+[[package]]
 name = "policy-core"
 version = "0.1.0"
 dependencies = [
@@ -1125,6 +1133,10 @@ dependencies = [
  "rustix",
  "windows-sys 0.60.2",
 ]
+
+[[package]]
+name = "testkits"
+version = "0.1.0"
 
 [[package]]
 name = "thiserror"

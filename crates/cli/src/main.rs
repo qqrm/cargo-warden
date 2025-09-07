@@ -83,7 +83,9 @@ fn handle_build(args: Vec<String>, allow: &[String], policy: &[String]) -> io::R
 }
 
 fn setup_isolation(_allow: &[String], policy: &[String]) -> io::Result<Vec<String>> {
-    if let Some(path) = policy.first() {
+    use std::collections::HashSet;
+    let mut deny = HashSet::new();
+    for path in policy {
         let text = std::fs::read_to_string(path)?;
         let policy = policy_core::Policy::from_toml_str(&text)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
@@ -97,10 +99,9 @@ fn setup_isolation(_allow: &[String], policy: &[String]) -> io::Result<Vec<Strin
         for warn in report.warnings {
             eprintln!("warning: {warn}");
         }
-        Ok(policy.syscall.deny)
-    } else {
-        Ok(Vec::new())
+        deny.extend(policy.syscall.deny);
     }
+    Ok(deny.into_iter().collect())
 }
 
 fn build_command(args: &[String]) -> Command {
@@ -210,7 +211,7 @@ fn handle_init_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> io::
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, build_command, handle_init_with, run_command};
+    use super::{Cli, Commands, build_command, handle_init_with, run_command, setup_isolation};
     use clap::{CommandFactory, Parser};
     use std::ffi::OsStr;
     use std::io::Cursor;
@@ -255,6 +256,25 @@ mod tests {
         match cli.command {
             Commands::Build { args } => {
                 assert_eq!(args, vec!["--verbose".to_string()]);
+            }
+            _ => panic!("expected build command"),
+        }
+    }
+
+    #[test]
+    fn parse_multiple_policies_for_build() {
+        let cli = Cli::parse_from([
+            "cargo-warden",
+            "build",
+            "--policy",
+            "a.toml",
+            "--policy",
+            "b.toml",
+        ]);
+        assert_eq!(cli.policy, vec!["a.toml".to_string(), "b.toml".to_string()]);
+        match cli.command {
+            Commands::Build { args } => {
+                assert!(args.is_empty());
             }
             _ => panic!("expected build command"),
         }
@@ -322,5 +342,20 @@ mod tests {
         let config = std::fs::read_to_string(dir.path().join("warden.toml")).unwrap();
         assert!(config.contains("foo"));
         assert!(config.contains("bar"));
+    }
+
+    #[test]
+    fn setup_isolation_merges_syscalls() {
+        use std::fs::write;
+        let dir = tempdir().unwrap();
+        let p1 = dir.path().join("p1.toml");
+        let p2 = dir.path().join("p2.toml");
+        write(&p1, "mode = \"enforce\"\n[syscall]\ndeny = [\"clone\"]").unwrap();
+        write(&p2, "mode = \"enforce\"\n[syscall]\ndeny = [\"execve\"]").unwrap();
+        let paths = [p1.to_str().unwrap().into(), p2.to_str().unwrap().into()];
+        let deny = setup_isolation(&[], &paths).unwrap();
+        assert!(deny.contains(&"clone".to_string()));
+        assert!(deny.contains(&"execve".to_string()));
+        assert_eq!(deny.len(), 2);
     }
 }
