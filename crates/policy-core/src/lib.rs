@@ -57,6 +57,8 @@ pub struct Policy {
     #[serde(default)]
     pub exec: ExecPolicy,
     #[serde(default)]
+    pub syscall: SyscallPolicy,
+    #[serde(default)]
     pub allow: AllowSection,
 }
 
@@ -76,6 +78,12 @@ pub struct NetPolicy {
 pub struct ExecPolicy {
     #[serde(default)]
     pub default: ExecDefault,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SyscallPolicy {
+    #[serde(default)]
+    pub deny: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -126,6 +134,8 @@ pub enum ValidationError {
     UnusedNetAllow,
     #[error("filesystem allowlists are unused because fs.default is 'unrestricted'")]
     UnusedFsAllow,
+    #[error("duplicate syscall deny rule: {0}")]
+    DuplicateSyscall(String),
 }
 
 impl Policy {
@@ -148,6 +158,9 @@ impl Policy {
         }
         if let Some(dup) = find_first_duplicate(&self.allow.fs.read_extra) {
             errors.push(DuplicateFsRead(dup.to_string_lossy().into()));
+        }
+        if let Some(dup) = find_first_duplicate(&self.syscall.deny) {
+            errors.push(DuplicateSyscall(dup));
         }
 
         let read_set: HashSet<_> = self.allow.fs.read_extra.iter().collect();
@@ -216,6 +229,19 @@ read_extra = ["/usr/include"]
         let policy = Policy::from_toml_str(VALID).unwrap();
         policy.validate().unwrap();
         assert_eq!(policy.mode, Mode::Enforce);
+    }
+
+    const SYSCALL_DUP: &str = r#"
+mode = "enforce"
+[syscall]
+deny = ["clone", "clone"]
+"#;
+
+    #[test]
+    fn duplicate_syscall_detected() {
+        let policy = Policy::from_toml_str(SYSCALL_DUP).unwrap();
+        let errs = policy.validate().unwrap_err();
+        assert!(matches!(errs[0], ValidationError::DuplicateSyscall(_)));
     }
 
     #[test]

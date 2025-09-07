@@ -8,7 +8,7 @@
 ## BPF Core
 - [x] Enforce network allowlists with CIDR matching and DNS resolution.
 - [x] Add hooks for file write and delete operations with deny by default.
-- [ ] Implement configurable syscall filtering via seccomp integration.
+- [x] Implement configurable syscall filtering via seccomp integration.
 - [ ] Provide metrics maps for event counters.
 
 ## CLI
