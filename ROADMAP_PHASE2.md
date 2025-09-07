@@ -36,7 +36,7 @@
 ## CI and Tooling
 - [ ] Expand CI to test examples under multiple kernel versions.
 - [ ] Add fuzzing harness for BPF programs.
-- [ ] Integrate `cargo-deny` for dependency auditing.
+ - [x] Integrate `cargo-deny` for dependency auditing.
 
 ## Cross-cutting
 - [ ] Write end-to-end tutorial covering policy creation and enforcement.

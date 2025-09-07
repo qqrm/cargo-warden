@@ -48,4 +48,5 @@
 - [x] Provide Docker image with runtime dependencies preinstalled.
 - [x] Merge multiple policy files referenced via CLI.
 - [x] Replace polling with blocking ring buffer reads in agent.
+- [x] Integrate `cargo-deny` for dependency auditing.
 
