@@ -264,9 +264,25 @@ pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
     0
 }
 
+#[cfg(any(target_arch = "bpf", test))]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "lsm/file_permission")]
+pub extern "C" fn file_permission(_file: *mut c_void, mask: i32) -> i32 {
+    const MAY_WRITE: i32 = 2;
+    if (mask & MAY_WRITE) != 0 { deny() } else { 0 }
+}
+
+#[cfg(any(target_arch = "bpf", test))]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "lsm/inode_unlink")]
+pub extern "C" fn inode_unlink(_dir: *mut c_void, _dentry: *mut c_void) -> i32 {
+    deny()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bpf_api::FS_WRITE;
     use core::ffi::c_void;
     use std::ptr;
     use std::sync::Mutex;
@@ -306,6 +322,17 @@ mod tests {
         assert_eq!(event.action, 0);
         assert_eq!(event.verdict, 0);
         assert_eq!(event.path_or_addr[0], 0);
+    }
+
+    #[test]
+    fn file_permission_denies_writes() {
+        assert_ne!(file_permission(ptr::null_mut(), FS_WRITE as i32), 0);
+        assert_eq!(file_permission(ptr::null_mut(), 0), 0);
+    }
+
+    #[test]
+    fn inode_unlink_denies() {
+        assert_ne!(inode_unlink(ptr::null_mut(), ptr::null_mut()), 0);
     }
 
     fn set_rule(addr: std::net::IpAddr, port: u16, proto: u8) {
