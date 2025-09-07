@@ -36,4 +36,5 @@
 ## Phase 2 Progress
 - [x] Expose control for filesystem read/write policies in BPF API.
 - [x] Document enriched event metadata such as container ID and capability bits.
+- [x] Support `--policy` flag referencing external policy files.
 

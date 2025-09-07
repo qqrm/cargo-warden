@@ -14,7 +14,7 @@
 ## CLI
 - [x] Implement `init` subcommand to bootstrap project configuration.
 - [x] Add interactive prompts for generating allowlists.
-- [ ] Support `--policy` flag referencing external policy files.
+- [x] Support `--policy` flag referencing external policy files.
 - [x] Provide `status` command displaying active policy and recent events.
 
 ## Policy Engine
