@@ -7,7 +7,12 @@ use std::process::{Command, exit};
 
 /// Cargo subcommand providing warden functionality.
 #[derive(Parser)]
-#[command(name = "cargo-warden", version, about = "Cargo Warden CLI")]
+#[command(
+    name = "cargo-warden",
+    bin_name = "cargo warden",
+    version,
+    about = "Cargo Warden CLI"
+)]
 struct Cli {
     /// Allowed executables passed directly via CLI.
     #[arg(long = "allow", value_name = "PATH", global = true)]
@@ -40,7 +45,11 @@ enum Commands {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let mut args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s == "warden").unwrap_or(false) {
+        args.remove(1);
+    }
+    let cli = Cli::parse_from(args);
     match cli.command {
         Commands::Build { args } => {
             if let Err(e) = handle_build(args, &cli.allow, &cli.policy) {
