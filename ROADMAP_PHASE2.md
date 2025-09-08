@@ -39,6 +39,6 @@
  - [x] Integrate `cargo-deny` for dependency auditing.
 
 ## Cross-cutting
-- [ ] Write end-to-end tutorial covering policy creation and enforcement.
+- [x] Write end-to-end tutorial covering policy creation and enforcement.
 - [x] Document security model and threat considerations.
 - [ ] Solicit community feedback and iterate on design.
