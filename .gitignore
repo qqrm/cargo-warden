@@ -21,3 +21,6 @@ target
 #.idea/
 
 AGENTS.md
+
+# Prebuilt BPF artifacts
+prebuilt/
