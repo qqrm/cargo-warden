@@ -18,6 +18,12 @@ fn deny() -> i32 {
 }
 
 #[cfg(target_arch = "bpf")]
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+
+#[cfg(target_arch = "bpf")]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "maps/exec_allowlist")]
 pub static mut EXEC_ALLOWLIST: [bpf_api::ExecAllowEntry; 1] =
@@ -207,10 +213,13 @@ pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
         if bpf_probe_read_user_str(buf.as_mut_ptr(), buf.len() as u32, filename_ptr) < 0 {
             return deny();
         }
-        for entry in &EXEC_ALLOWLIST {
+        let mut i = 0;
+        while i < 1 {
+            let entry = core::ptr::read(core::ptr::addr_of!(EXEC_ALLOWLIST[i]));
             if path_matches(&entry.path, &buf) {
                 return 0;
             }
+            i += 1;
         }
         deny()
     }
