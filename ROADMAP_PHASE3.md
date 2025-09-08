@@ -10,7 +10,7 @@
 
 ## GitHub Action
 - [ ] Publish `warden-ci` GitHub Action with minimal workflow.
-- [ ] Document usage in `.github/workflows/warden-ci.yml`.
+- [x] Document usage in `.github/workflows/warden-ci.yml`.
 
 ## Cross-cutting
 - [ ] PR with violation displays SARIF annotations.
