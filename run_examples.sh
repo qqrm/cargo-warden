@@ -5,7 +5,7 @@ set -euo pipefail
 printf '== network-build ==\n'
 (
     cd examples/network-build
-    cargo run -p cargo-warden -- build
+    WARDEN_OFFLINE=1 cargo run -p cargo-warden -- build
 )
 
 printf '\n== spawn-bash ==\n'
