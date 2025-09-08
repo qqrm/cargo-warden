@@ -25,7 +25,7 @@ jobs:
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test
       - name: Fetch advisory DB
-        run: DB_DIR="$HOME/.cargo/advisory-dbs/advisory-db-3157b0e258782691"; rm -rf "$DB_DIR"; git clone --depth 1 https://github.com/RustSec/advisory-db "$DB_DIR"
+        run: DB_BASE="$HOME/.cargo/advisory-dbs"; rm -rf "$DB_BASE/advisory-db"; mkdir -p "$DB_BASE"; git clone --depth 1 https://github.com/RustSec/advisory-db "$DB_BASE/advisory-db"
       - run: cargo deny check --disable-fetch
       - run: cargo machete
         continue-on-error: true
