@@ -7,6 +7,8 @@ STACK_SIZE=4096
 
 rustup target add "$TARGET" --toolchain nightly >/dev/null 2>&1 || true
 rustup component add rust-src --toolchain nightly >/dev/null 2>&1 || true
+LLVM_LIB="$(rustc +nightly --print sysroot)/lib"
+export LD_LIBRARY_PATH="$LLVM_LIB:${LD_LIBRARY_PATH:-}"
 command -v bpf-linker >/dev/null 2>&1 || cargo install bpf-linker >/dev/null 2>&1
 
 for arch in "${ARCHES[@]}"; do
