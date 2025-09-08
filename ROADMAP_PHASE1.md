@@ -52,4 +52,5 @@
 - [x] Replace polling with blocking ring buffer reads in agent.
 - [x] Integrate `cargo-deny` for dependency auditing.
 - [x] Document security model and threat considerations.
+- [x] Write end-to-end tutorial covering policy creation and enforcement.
 
