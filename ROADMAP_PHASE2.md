@@ -40,5 +40,5 @@
 
 ## Cross-cutting
 - [ ] Write end-to-end tutorial covering policy creation and enforcement.
-- [ ] Document security model and threat considerations.
+- [x] Document security model and threat considerations.
 - [ ] Solicit community feedback and iterate on design.
