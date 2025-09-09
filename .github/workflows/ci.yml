@@ -23,3 +23,16 @@ jobs:
       - run: cargo test
       - run: cargo machete
         continue-on-error: true
+
+  examples:
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libseccomp-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: ./run_examples.sh
