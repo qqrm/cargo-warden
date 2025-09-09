@@ -1,7 +1,7 @@
 # Phase 3 Roadmap – Reports and CI Integration
 
 ## Reporting
-- [ ] Export violation events to SARIF for PR annotations.
+- [x] Export violation events to SARIF for PR annotations.
 - [ ] Upload SARIF reports in GitHub workflow.
 
 ## Metrics
