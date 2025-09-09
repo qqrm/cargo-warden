@@ -34,7 +34,7 @@
 - [x] Generate distributable archive with CLI and agent binaries.
 
 ## CI and Tooling
-- [ ] Expand CI to test examples under multiple kernel versions.
+- [x] Expand CI to test examples under multiple kernel versions.
 - [ ] Add fuzzing harness for BPF programs.
 - [x] Integrate `cargo-deny` for dependency auditing.
 
