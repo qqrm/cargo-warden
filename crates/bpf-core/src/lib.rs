@@ -1,18 +1,18 @@
 #![cfg_attr(target_arch = "bpf", no_std)]
 #![cfg_attr(not(target_arch = "bpf"), allow(dead_code))]
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 use bpf_api::Event;
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 use core::{ffi::c_void, mem::size_of};
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const _EVENT_SIZE: usize = size_of::<Event>();
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const EPERM: i32 = 1;
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn deny() -> i32 {
     -EPERM
 }
@@ -44,7 +44,7 @@ fn path_matches(a: &[u8; 256], b: &[u8; 256]) -> bool {
     true
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "maps/net_rules")]
 pub static mut NET_RULES: [bpf_api::NetRuleEntry; 1] = [bpf_api::NetRuleEntry {
@@ -57,7 +57,7 @@ pub static mut NET_RULES: [bpf_api::NetRuleEntry; 1] = [bpf_api::NetRuleEntry {
     },
 }];
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "maps/net_parents")]
 pub static mut NET_PARENTS: [bpf_api::NetParentEntry; 1] = [bpf_api::NetParentEntry {
@@ -65,15 +65,15 @@ pub static mut NET_PARENTS: [bpf_api::NetParentEntry; 1] = [bpf_api::NetParentEn
     parent: 0,
 }];
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 static mut CURRENT_UNIT: u32 = 0;
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn current_unit() -> u32 {
     unsafe { CURRENT_UNIT }
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn addr_matches(rule: &bpf_api::NetRule, addr: &[u8; 16]) -> bool {
     let mut bits = rule.prefix_len;
     let mut i = 0;
@@ -92,12 +92,12 @@ fn addr_matches(rule: &bpf_api::NetRule, addr: &[u8; 16]) -> bool {
     true
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn rule_matches(rule: &bpf_api::NetRule, addr: &[u8; 16], port: u16, protocol: u8) -> bool {
     rule.port == port && rule.protocol == protocol && addr_matches(rule, addr)
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn get_parent(unit: u32) -> Option<u32> {
     unsafe {
         let mut i = 0;
@@ -116,7 +116,7 @@ fn get_parent(unit: u32) -> Option<u32> {
     None
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn net_allowed(addr: &[u8; 16], port: u16, protocol: u8) -> bool {
     let mut unit = current_unit();
     loop {
@@ -138,7 +138,7 @@ fn net_allowed(addr: &[u8; 16], port: u16, protocol: u8) -> bool {
     false
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[repr(C)]
 struct SockAddr {
     user_ip4: u32,
@@ -148,7 +148,7 @@ struct SockAddr {
     protocol: u32,
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn check4(ctx: *mut c_void) -> i32 {
     let ctx = unsafe { &*(ctx as *const SockAddr) };
     let mut addr = [0u8; 16];
@@ -162,7 +162,7 @@ fn check4(ctx: *mut c_void) -> i32 {
     }
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn check6(ctx: *mut c_void) -> i32 {
     let ctx = unsafe { &*(ctx as *const SockAddr) };
     let mut addr = [0u8; 16];
@@ -178,7 +178,7 @@ fn check6(ctx: *mut c_void) -> i32 {
     }
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 unsafe extern "C" {
     fn bpf_probe_read_user_str(dst: *mut u8, size: u32, src: *const u8) -> i32;
     fn bpf_ringbuf_output(ringbuf: *mut c_void, data: *const c_void, len: u64, flags: u64) -> i64;
@@ -193,12 +193,12 @@ pub fn resolve_host(host: &str) -> std::io::Result<Vec<std::net::IpAddr>> {
         .map(|iter| iter.map(|s| s.ip()).collect())
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "maps/events")]
 pub static mut EVENTS: [u8; 0] = [];
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "maps/event_counts")]
 pub static mut EVENT_COUNTS: [u64; 1] = [0];
@@ -225,35 +225,35 @@ pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
     }
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "cgroup/connect4")]
 pub extern "C" fn connect4(ctx: *mut c_void) -> i32 {
     check4(ctx)
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "cgroup/connect6")]
 pub extern "C" fn connect6(ctx: *mut c_void) -> i32 {
     check6(ctx)
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "cgroup/sendmsg4")]
 pub extern "C" fn sendmsg4(ctx: *mut c_void) -> i32 {
     check4(ctx)
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "cgroup/sendmsg6")]
 pub extern "C" fn sendmsg6(ctx: *mut c_void) -> i32 {
     check6(ctx)
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/file_open")]
 pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
@@ -279,7 +279,7 @@ pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
     0
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/file_permission")]
 pub extern "C" fn file_permission(_file: *mut c_void, mask: i32) -> i32 {
@@ -287,7 +287,7 @@ pub extern "C" fn file_permission(_file: *mut c_void, mask: i32) -> i32 {
     if (mask & MAY_WRITE) != 0 { deny() } else { 0 }
 }
 
-#[cfg(any(target_arch = "bpf", test))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/inode_unlink")]
 pub extern "C" fn inode_unlink(_dir: *mut c_void, _dentry: *mut c_void) -> i32 {
