@@ -1,0 +1,21 @@
+[package]
+name = "cargo-warden-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+bpf-core = { path = "../crates/bpf-core", features = ["fuzzing"] }
+
+[[bin]]
+name = "net"
+path = "fuzz_targets/net.rs"
+test = false
+doc = false
+
+[workspace]

@@ -6,7 +6,13 @@ license = "MIT OR Apache-2.0"
 
 [lib]
 path = "src/lib.rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bpf-api = { path = "../bpf-api", optional = true }
+
+[features]
+fuzzing = ["bpf-api"]
 
 [target.'cfg(target_arch = "bpf")'.dependencies]
 bpf-api = { path = "../bpf-api" }
