@@ -2,6 +2,7 @@ use aya::maps::{MapData, ring_buf::RingBuf};
 use bpf_api::Event;
 use log::{info, warn};
 use serde::Serialize;
+use serde_json::json;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;
@@ -91,6 +92,39 @@ fn diagnostic(record: &EventRecord) -> Option<String> {
         ACTION_CONNECT => Some(format!("Network denied: {}", record.path_or_addr)),
         _ => None,
     }
+}
+
+/// Builds a SARIF log from a slice of events.
+pub fn sarif_from_events(events: &[EventRecord]) -> serde_json::Value {
+    let results: Vec<_> = events
+        .iter()
+        .map(|e| {
+            json!({
+                "ruleId": e.action.to_string(),
+                "level": if e.verdict == VERDICT_DENIED { "error" } else { "note" },
+                "message": { "text": format!("{}", e) },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": e.path_or_addr }
+                    }
+                }]
+            })
+        })
+        .collect();
+    json!({
+        "version": "2.1.0",
+        "runs": [{
+            "tool": { "driver": { "name": "cargo-warden" } },
+            "results": results
+        }]
+    })
+}
+
+/// Writes a SARIF log to the given path.
+pub fn export_sarif(events: &[EventRecord], path: &Path) -> Result<(), anyhow::Error> {
+    let sarif = sarif_from_events(events);
+    std::fs::write(path, serde_json::to_string_pretty(&sarif)?)?;
+    Ok(())
 }
 
 /// Polls a ring buffer map and streams logs to JSONL file and systemd journal.
@@ -275,7 +309,10 @@ mod grpc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Seek};
+    use std::{
+        fs::File,
+        io::{Read, Seek},
+    };
     use tempfile::NamedTempFile;
 
     #[test]
@@ -373,5 +410,27 @@ mod tests {
         let mut content = String::new();
         tmp.as_file_mut().read_to_string(&mut content).unwrap();
         assert!(content.contains("\"pid\":1"));
+    }
+
+    #[test]
+    fn exports_sarif_file() {
+        let record = EventRecord {
+            pid: 2,
+            unit: 0,
+            action: ACTION_EXEC,
+            verdict: VERDICT_DENIED,
+            container_id: 0,
+            caps: 0,
+            path_or_addr: "/bin/bad".into(),
+        };
+        let tmp = NamedTempFile::new().unwrap();
+        export_sarif(std::slice::from_ref(&record), tmp.path()).unwrap();
+        let mut content = String::new();
+        File::open(tmp.path())
+            .unwrap()
+            .read_to_string(&mut content)
+            .unwrap();
+        assert!(content.contains("\"version\": \"2.1.0\""));
+        assert!(content.contains(&record.path_or_addr));
     }
 }

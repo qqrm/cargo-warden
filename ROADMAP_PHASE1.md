@@ -60,4 +60,5 @@
 
 ## Phase 3 Progress
 - [x] Document usage in `.github/workflows/warden-ci.yml`.
+- [x] Export violation events to SARIF for PR annotations.
 
