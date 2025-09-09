@@ -31,7 +31,7 @@
 ## Packaging and Distribution
 - [x] Publish prebuilt BPF artifacts for common architectures.
 - [x] Provide Docker image with runtime dependencies preinstalled.
-- [ ] Generate distributable archive with CLI and agent binaries.
+- [x] Generate distributable archive with CLI and agent binaries.
 
 ## CI and Tooling
 - [ ] Expand CI to test examples under multiple kernel versions.
