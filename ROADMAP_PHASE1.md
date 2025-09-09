@@ -54,6 +54,7 @@
 - [x] Document security model and threat considerations.
 - [x] Write end-to-end tutorial covering policy creation and enforcement.
 - [x] Publish prebuilt BPF artifacts for common architectures.
+- [x] Generate distributable archive with CLI and agent binaries.
 
 ## Phase 3 Progress
 - [x] Document usage in `.github/workflows/warden-ci.yml`.
