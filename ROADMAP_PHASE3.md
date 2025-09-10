@@ -20,9 +20,6 @@
 - [ ] Run `cargo-spellcheck` for documentation consistency.
 - [ ] Use `actionlint` to validate GitHub workflow files.
 
-## GeoSeqOps
-- [ ] Evaluate requirements and integration approach for GeoSeqOps module.
-
 ## Cross-cutting
 - [ ] PR with violation displays SARIF annotations.
 - [ ] Metrics dashboard works out of the box.
