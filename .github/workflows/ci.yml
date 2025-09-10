@@ -31,10 +31,13 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-udeps
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - run: cargo fmt --all -- --check
       - run: cargo check --tests --benches
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test
+      - run: cargo nextest run
       - run: cargo machete
         continue-on-error: true
       - run: cargo audit
