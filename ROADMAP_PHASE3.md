@@ -18,7 +18,7 @@
 - [ ] Add coverage reports using `cargo-llvm-cov`.
 - [ ] Adopt `cargo-nextest` for parallel test execution.
 - [ ] Run `cargo-spellcheck` for documentation consistency.
-- [ ] Use `actionlint` to validate GitHub workflow files.
+- [x] Use `actionlint` to validate GitHub workflow files.
 
 ## Cross-cutting
 - [ ] PR with violation displays SARIF annotations.
