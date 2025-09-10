@@ -25,12 +25,21 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-machete
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-udeps
       - run: cargo fmt --all -- --check
       - run: cargo check --tests --benches
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test
       - run: cargo machete
         continue-on-error: true
+      - run: cargo audit
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo +nightly udeps --all-targets --all-features
 
   examples:
     strategy:

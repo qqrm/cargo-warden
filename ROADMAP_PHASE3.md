@@ -13,8 +13,8 @@
 - [x] Document usage in `.github/workflows/warden-ci.yml`.
 
 ## CI and Tooling
-- [ ] Integrate `cargo-audit` for dependency vulnerability checks.
-- [ ] Integrate `cargo-udeps` to detect unused dependencies.
+ - [x] Integrate `cargo-audit` for dependency vulnerability checks.
+ - [x] Integrate `cargo-udeps` to detect unused dependencies.
 - [ ] Add coverage reports using `cargo-llvm-cov`.
 - [ ] Adopt `cargo-nextest` for parallel test execution.
 - [ ] Run `cargo-spellcheck` for documentation consistency.

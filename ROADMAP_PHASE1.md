@@ -64,4 +64,6 @@
 - [x] Document usage in `.github/workflows/warden-ci.yml`.
 - [x] Export violation events to SARIF for PR annotations.
 - [x] Use actionlint to validate GitHub workflow files.
+- [x] Integrate `cargo-audit` for dependency vulnerability checks.
+- [x] Integrate `cargo-udeps` to detect unused dependencies.
 
