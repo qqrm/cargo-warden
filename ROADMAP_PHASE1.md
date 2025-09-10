@@ -66,4 +66,5 @@
 - [x] Use actionlint to validate GitHub workflow files.
 - [x] Integrate `cargo-audit` for dependency vulnerability checks.
 - [x] Integrate `cargo-udeps` to detect unused dependencies.
+- [x] Adopt `cargo-nextest` for parallel test execution.
 

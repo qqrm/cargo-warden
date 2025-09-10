@@ -16,7 +16,7 @@
  - [x] Integrate `cargo-audit` for dependency vulnerability checks.
  - [x] Integrate `cargo-udeps` to detect unused dependencies.
 - [ ] Add coverage reports using `cargo-llvm-cov`.
-- [ ] Adopt `cargo-nextest` for parallel test execution.
+- [x] Adopt `cargo-nextest` for parallel test execution.
 - [ ] Run `cargo-spellcheck` for documentation consistency.
 - [x] Use `actionlint` to validate GitHub workflow files.
 
