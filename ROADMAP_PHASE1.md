@@ -15,6 +15,7 @@
 - [x] Implement `build` wrapper that sets up cgroup, loads eBPF programs, and invokes Cargo.
 - [x] Implement `run -- <cmd>` wrapper for arbitrary commands.
 - [x] Add allowlist CLI option or config stub.
+- [x] Display policy and recent events via `status` command.
 
 ## Agent-lite
 - [x] Collect events from BPF maps and output text and JSON logs.

@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
+use serde::Deserialize;
 use std::fs::File;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, exit};
@@ -42,6 +43,33 @@ enum Commands {
     Init,
     /// Show active policy and recent events.
     Status,
+}
+
+#[derive(Debug, Deserialize)]
+struct EventRecord {
+    pid: u32,
+    unit: u8,
+    action: u8,
+    verdict: u8,
+    container_id: u64,
+    caps: u64,
+    path_or_addr: String,
+}
+
+impl std::fmt::Display for EventRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "pid={} unit={} action={} verdict={} container_id={} caps={} path_or_addr={}",
+            self.pid,
+            self.unit,
+            self.action,
+            self.verdict,
+            self.container_id,
+            self.caps,
+            self.path_or_addr
+        )
+    }
 }
 
 fn main() {
@@ -119,6 +147,23 @@ fn build_command(args: &[String]) -> Command {
     cmd
 }
 
+fn read_recent_events(path: &Path, limit: usize) -> io::Result<Vec<EventRecord>> {
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
+    let start = lines.len().saturating_sub(limit);
+    let mut events = Vec::new();
+    for line in &lines[start..] {
+        if let Ok(ev) = serde_json::from_str::<EventRecord>(line) {
+            events.push(ev);
+        }
+    }
+    Ok(events)
+}
+
 fn handle_run(cmd: Vec<String>, allow: &[String], policy: &[String]) -> io::Result<()> {
     if cmd.is_empty() {
         return Err(io::Error::new(
@@ -177,8 +222,21 @@ fn apply_seccomp(_deny: &[String]) -> io::Result<()> {
 }
 
 fn handle_status() -> io::Result<()> {
-    println!("active policy: none");
-    println!("recent events: none");
+    let policy_path = Path::new("warden.toml");
+    if policy_path.exists() {
+        println!("active policy: {}", policy_path.display());
+    } else {
+        println!("active policy: none");
+    }
+    let events = read_recent_events(Path::new("warden-events.jsonl"), 10)?;
+    if events.is_empty() {
+        println!("recent events: none");
+    } else {
+        println!("recent events:");
+        for e in events {
+            println!("{}", e);
+        }
+    }
     Ok(())
 }
 
@@ -220,10 +278,14 @@ fn handle_init_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> io::
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, build_command, handle_init_with, run_command, setup_isolation};
+    use super::{
+        Cli, Commands, build_command, handle_init_with, read_recent_events, run_command,
+        setup_isolation,
+    };
     use clap::{CommandFactory, Parser};
     use std::ffi::OsStr;
-    use std::io::Cursor;
+    use std::fs::File;
+    use std::io::{Cursor, Write};
 
     use tempfile::tempdir;
 
@@ -351,6 +413,45 @@ mod tests {
         let config = std::fs::read_to_string(dir.path().join("warden.toml")).unwrap();
         assert!(config.contains("foo"));
         assert!(config.contains("bar"));
+    }
+
+    #[test]
+    fn read_recent_events_reads_log() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let mut file = File::create(&path).unwrap();
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({
+                "pid": 1,
+                "unit": 0,
+                "action": 3,
+                "verdict": 0,
+                "container_id": 0,
+                "caps": 0,
+                "path_or_addr": "/bin/echo"
+            })
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({
+                "pid": 2,
+                "unit": 0,
+                "action": 4,
+                "verdict": 1,
+                "container_id": 0,
+                "caps": 0,
+                "path_or_addr": "1.2.3.4:80"
+            })
+        )
+        .unwrap();
+        let events = read_recent_events(&path, 10).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].pid, 1);
+        assert_eq!(events[1].verdict, 1);
     }
 
     #[test]
