@@ -74,3 +74,4 @@
 - [x] Provide example Prometheus dashboard.
 - [x] Publish `warden-ci` GitHub Action with minimal workflow.
 
+- [x] PR with violation displays SARIF annotations.
