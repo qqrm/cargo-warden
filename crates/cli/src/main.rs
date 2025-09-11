@@ -327,8 +327,8 @@ fn handle_init_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> io::
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, Commands, EventRecord, build_command, export_sarif, handle_init_with,
-        handle_report, read_recent_events, run_command, setup_isolation,
+        Cli, Commands, EventRecord, build_command, export_sarif, handle_init_with, handle_report,
+        read_recent_events, run_command, setup_isolation,
     };
     use clap::{CommandFactory, Parser};
     use std::ffi::OsStr;
