@@ -25,3 +25,11 @@ jobs:
         with:
           command: build
 ```
+
+## PR Annotations
+
+When a pull request triggers this workflow, any violations reported by
+`cargo warden` are exported to `warden.sarif` and uploaded via
+`github/codeql-action/upload-sarif@v2`. GitHub surfaces these findings
+directly on the pull request as inline annotations and under the
+Security tab, making violations easy to spot.
