@@ -259,6 +259,7 @@ where
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use std::collections::HashSet;
 
     fn slow_first_duplicate<T>(items: &[T]) -> Option<T>
     where
@@ -278,6 +279,33 @@ mod tests {
         #[test]
         fn first_duplicate_matches_naive(xs in proptest::collection::vec(any::<u8>(), 0..100)) {
             assert_eq!(find_first_duplicate(&xs), slow_first_duplicate(&xs));
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn exec_duplicates_flagged(xs in proptest::collection::vec(any::<u8>(), 0..20)) {
+            let allowed: Vec<String> = xs.iter().map(|b| b.to_string()).collect();
+            let policy = Policy {
+                mode: Mode::Enforce,
+                fs: FsPolicy::default(),
+                net: NetPolicy::default(),
+                exec: ExecPolicy::default(),
+                syscall: SyscallPolicy::default(),
+                allow: AllowSection {
+                    exec: ExecAllow { allowed: allowed.clone() },
+                    net: NetAllow::default(),
+                    fs: FsAllow::default(),
+                },
+            };
+            let report = policy.validate();
+            let mut seen = HashSet::new();
+            let has_dup = allowed.iter().any(|x| !seen.insert(x));
+            if has_dup {
+                assert!(report.errors.iter().any(|e| matches!(e, ValidationError::DuplicateExec(_))));
+            } else {
+                assert!(report.errors.iter().all(|e| !matches!(e, ValidationError::DuplicateExec(_))));
+            }
         }
     }
 
