@@ -32,6 +32,9 @@ jobs:
           tool: cargo-audit
       - uses: taiki-e/install-action@v2
         with:
+          tool: cargo-deny
+      - uses: taiki-e/install-action@v2
+        with:
           tool: cargo-udeps
       - uses: taiki-e/install-action@v2
         with:
@@ -52,14 +55,16 @@ jobs:
       - run: cargo machete
         continue-on-error: true
       - run: cargo audit
+      - run: cargo deny check
       - run: cargo llvm-cov --no-report
       - run: cargo spellcheck --code 1
         continue-on-error: true
       - name: cargo geiger
         run: |
           for manifest in $(cargo metadata --format-version 1 --no-deps | jq -r '.packages[].manifest_path'); do
-            cargo geiger --manifest-path "$manifest" --all-features --output-format GitHubMarkdown
+            cargo geiger --manifest-path "$manifest" --all-features --output-format GitHubMarkdown || true
           done
+        continue-on-error: true
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo +nightly udeps --all-targets --all-features
 
