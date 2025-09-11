@@ -1,7 +1,6 @@
 use aya::maps::{MapData, ring_buf::RingBuf};
 use bpf_api::Event;
 use log::{info, warn};
-use once_cell::sync::Lazy;
 use prometheus::{Encoder, IntCounter, Registry, TextEncoder};
 use serde::Serialize;
 use serde_json::json;
@@ -9,6 +8,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 #[cfg(feature = "grpc")]
 use tokio::sync::broadcast;
@@ -17,13 +17,13 @@ const ACTION_EXEC: u8 = 3;
 const ACTION_CONNECT: u8 = 4;
 const VERDICT_DENIED: u8 = 1;
 
-static REGISTRY: Lazy<Registry> = Lazy::new(Registry::new);
-static EVENT_COUNTER: Lazy<IntCounter> = Lazy::new(|| {
+static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
+static EVENT_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
     let c = IntCounter::new("warden_events_total", "Total number of events processed").unwrap();
     REGISTRY.register(Box::new(c.clone())).unwrap();
     c
 });
-static DENIED_COUNTER: Lazy<IntCounter> = Lazy::new(|| {
+static DENIED_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
     let c = IntCounter::new(
         "warden_denied_events_total",
         "Total number of denied events",
