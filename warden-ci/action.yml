@@ -1,0 +1,33 @@
+name: 'warden-ci'
+description: 'Run cargo-warden in CI and upload SARIF report.'
+inputs:
+  command:
+    description: 'Cargo command to run under cargo-warden'
+    required: false
+    default: 'build'
+runs:
+  using: 'composite'
+  steps:
+    - name: Install dependencies
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y pkg-config libseccomp-dev
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+    - name: Install cargo-warden
+      shell: bash
+      run: cargo install --path crates/cli
+    - name: Enforce ${{ inputs.command }}
+      shell: bash
+      run: cargo warden ${{ inputs.command }} || true
+    - name: Generate SARIF report
+      shell: bash
+      run: cargo warden report --output warden.sarif
+    - name: Upload SARIF report
+      if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: warden.sarif
+      continue-on-error: true

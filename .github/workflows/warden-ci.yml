@@ -8,22 +8,4 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libseccomp-dev
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - name: Install cargo-warden
-        run: cargo install --path crates/cli
-      - name: Enforce build
-        run: cargo warden build || true
-      - name: Generate SARIF report
-        run: cargo warden report --output warden.sarif
-      - name: Upload SARIF report
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        uses: github/codeql-action/upload-sarif@v2
-        with:
-          sarif_file: warden.sarif
-        continue-on-error: true
+      - uses: ./warden-ci
