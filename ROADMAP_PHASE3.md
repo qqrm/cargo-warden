@@ -21,5 +21,5 @@
  - [x] Use `actionlint` to validate GitHub workflow files.
 
 ## Cross-cutting
-- [ ] PR with violation displays SARIF annotations.
+- [x] PR with violation displays SARIF annotations.
 - [x] Metrics dashboard works out of the box.
