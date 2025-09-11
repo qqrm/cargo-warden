@@ -16,3 +16,6 @@ warning: network blocked: Operation not permitted (os error 1)
 spawn blocked: Permission denied (os error 1)
 ```
 
+An example Prometheus dashboard is provided in `PROMETHEUS_DASHBOARD.json`.
+The agent exposes metrics on a configurable port, allowing the dashboard to work out of the box.
+

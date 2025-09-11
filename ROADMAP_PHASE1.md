@@ -70,3 +70,6 @@
 - [x] Add coverage reports using `cargo-llvm-cov`.
 - [x] Run `cargo-spellcheck` for documentation consistency.
 
+- [x] Upload SARIF reports in GitHub workflow.
+- [x] Provide example Prometheus dashboard.
+

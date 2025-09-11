@@ -1,6 +1,8 @@
 use aya::maps::{MapData, ring_buf::RingBuf};
 use bpf_api::Event;
 use log::{info, warn};
+use once_cell::sync::Lazy;
+use prometheus::{Encoder, IntCounter, Registry, TextEncoder};
 use serde::Serialize;
 use serde_json::json;
 use std::fs::{File, OpenOptions};
@@ -14,6 +16,22 @@ use tokio::sync::broadcast;
 const ACTION_EXEC: u8 = 3;
 const ACTION_CONNECT: u8 = 4;
 const VERDICT_DENIED: u8 = 1;
+
+static REGISTRY: Lazy<Registry> = Lazy::new(Registry::new);
+static EVENT_COUNTER: Lazy<IntCounter> = Lazy::new(|| {
+    let c = IntCounter::new("warden_events_total", "Total number of events processed").unwrap();
+    REGISTRY.register(Box::new(c.clone())).unwrap();
+    c
+});
+static DENIED_COUNTER: Lazy<IntCounter> = Lazy::new(|| {
+    let c = IntCounter::new(
+        "warden_denied_events_total",
+        "Total number of denied events",
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(c.clone())).unwrap();
+    c
+});
 
 #[cfg(feature = "grpc")]
 pub mod proto {
@@ -45,6 +63,7 @@ pub struct Config {
     pub rotation: Option<RotationConfig>,
     #[cfg(feature = "grpc")]
     pub grpc_port: Option<u16>,
+    pub metrics_port: Option<u16>,
 }
 
 impl From<Event> for EventRecord {
@@ -134,6 +153,9 @@ pub fn run(mut ring: RingBuf<MapData>, jsonl: &Path, cfg: Config) -> Result<(), 
     }
     let path = jsonl.to_path_buf();
     let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    if let Some(port) = cfg.metrics_port {
+        start_metrics_server(port);
+    }
 
     #[cfg(feature = "grpc")]
     let (tx, _) = broadcast::channel(64);
@@ -170,6 +192,33 @@ pub fn run(mut ring: RingBuf<MapData>, jsonl: &Path, cfg: Config) -> Result<(), 
     }
 }
 
+fn start_metrics_server(port: u16) {
+    use std::io::Cursor;
+    use tiny_http::{Header, Response, Server, StatusCode};
+    std::thread::spawn(move || {
+        let server = Server::http(("0.0.0.0", port)).expect("start server");
+        for req in server.incoming_requests() {
+            let metric_families = REGISTRY.gather();
+            let mut buffer = Vec::new();
+            let encoder = TextEncoder::new();
+            if encoder.encode(&metric_families, &mut buffer).is_ok() {
+                let len = buffer.len();
+                let response = Response::new(
+                    StatusCode(200),
+                    vec![Header::from_bytes("Content-Type", "text/plain").unwrap()],
+                    Cursor::new(buffer),
+                    Some(len),
+                    None,
+                );
+                let _ = req.respond(response);
+            } else {
+                let response = Response::new_empty(StatusCode(500));
+                let _ = req.respond(response);
+            }
+        }
+    });
+}
+
 #[cfg(feature = "grpc")]
 fn write_outputs(
     record: &EventRecord,
@@ -181,6 +230,10 @@ fn write_outputs(
     let json = serde_json::to_string(record)?;
     writeln!(file, "{}", json)?;
     info!("{}", json);
+    EVENT_COUNTER.inc();
+    if record.verdict == VERDICT_DENIED {
+        DENIED_COUNTER.inc();
+    }
     if let Some(cfg) = rotation {
         rotate_if_needed(file, path, cfg)?;
     }
@@ -203,6 +256,10 @@ fn write_outputs(
     let json = serde_json::to_string(record)?;
     writeln!(file, "{}", json)?;
     info!("{}", json);
+    EVENT_COUNTER.inc();
+    if record.verdict == VERDICT_DENIED {
+        DENIED_COUNTER.inc();
+    }
     if let Some(cfg) = rotation {
         rotate_if_needed(file, path, cfg)?;
     }
@@ -432,5 +489,34 @@ mod tests {
             .unwrap();
         assert!(content.contains("\"version\": \"2.1.0\""));
         assert!(content.contains(&record.path_or_addr));
+    }
+
+    #[test]
+    fn metrics_count_events() {
+        EVENT_COUNTER.reset();
+        DENIED_COUNTER.reset();
+        let record = EventRecord {
+            pid: 3,
+            unit: 0,
+            action: ACTION_EXEC,
+            verdict: VERDICT_DENIED,
+            container_id: 0,
+            caps: 0,
+            path_or_addr: "/bin/deny".into(),
+        };
+        let mut tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        #[cfg(feature = "grpc")]
+        {
+            use tokio::sync::broadcast;
+            let (tx, _) = broadcast::channel(1);
+            write_outputs(&record, tmp.as_file_mut(), &path, None, Some(&tx)).unwrap();
+        }
+        #[cfg(not(feature = "grpc"))]
+        {
+            write_outputs(&record, tmp.as_file_mut(), &path, None).unwrap();
+        }
+        assert_eq!(EVENT_COUNTER.get(), 1);
+        assert_eq!(DENIED_COUNTER.get(), 1);
     }
 }

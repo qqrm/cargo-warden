@@ -43,6 +43,12 @@ enum Commands {
     Init,
     /// Show active policy and recent events.
     Status,
+    /// Export events to a SARIF report.
+    Report {
+        /// Output file for the SARIF report.
+        #[arg(long = "output", value_name = "FILE", default_value = "warden.sarif")]
+        output: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +76,37 @@ impl std::fmt::Display for EventRecord {
             self.path_or_addr
         )
     }
+}
+
+fn sarif_from_events(events: &[EventRecord]) -> serde_json::Value {
+    let results: Vec<_> = events
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "ruleId": e.action.to_string(),
+                "level": if e.verdict == 1 { "error" } else { "note" },
+                "message": { "text": format!("{}", e) },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": e.path_or_addr }
+                    }
+                }]
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "version": "2.1.0",
+        "runs": [{
+            "tool": { "driver": { "name": "cargo-warden" } },
+            "results": results
+        }]
+    })
+}
+
+fn export_sarif(events: &[EventRecord], path: &Path) -> io::Result<()> {
+    let sarif = sarif_from_events(events);
+    let content = serde_json::to_string_pretty(&sarif).map_err(io::Error::other)?;
+    std::fs::write(path, content)
 }
 
 fn main() {
@@ -100,6 +137,12 @@ fn main() {
         Commands::Status => {
             if let Err(e) = handle_status() {
                 eprintln!("status failed: {e}");
+                exit(1);
+            }
+        }
+        Commands::Report { output } => {
+            if let Err(e) = handle_report(&output) {
+                eprintln!("report failed: {e}");
                 exit(1);
             }
         }
@@ -240,6 +283,14 @@ fn handle_status() -> io::Result<()> {
     Ok(())
 }
 
+fn handle_report(output: &str) -> io::Result<()> {
+    let events = read_recent_events(Path::new("warden-events.jsonl"), usize::MAX)?;
+    if events.is_empty() {
+        return Ok(());
+    }
+    export_sarif(&events, Path::new(output))
+}
+
 fn handle_init() -> io::Result<()> {
     let mut input = io::stdin().lock();
     let mut output = io::stdout();
@@ -279,15 +330,15 @@ fn handle_init_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> io::
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, Commands, build_command, handle_init_with, read_recent_events, run_command,
-        setup_isolation,
+        Cli, Commands, EventRecord, build_command, export_sarif, handle_init_with,
+        read_recent_events, run_command, setup_isolation,
     };
     use clap::{CommandFactory, Parser};
     use std::ffi::OsStr;
     use std::fs::File;
     use std::io::{Cursor, Write};
 
-    use tempfile::tempdir;
+    use tempfile::{NamedTempFile, tempdir};
 
     #[test]
     fn verify_cli() {
@@ -385,6 +436,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_report_command() {
+        let cli = Cli::parse_from(["cargo-warden", "report"]);
+        match cli.command {
+            Commands::Report { .. } => {}
+            _ => panic!("expected report command"),
+        }
+    }
+
+    #[test]
     fn parse_init_command() {
         let cli = Cli::parse_from(["cargo-warden", "init"]);
         match cli.command {
@@ -452,6 +512,24 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].pid, 1);
         assert_eq!(events[1].verdict, 1);
+    }
+
+    #[test]
+    fn exports_sarif_file() {
+        let record = EventRecord {
+            pid: 2,
+            unit: 0,
+            action: 3,
+            verdict: 1,
+            container_id: 0,
+            caps: 0,
+            path_or_addr: "/bin/bad".into(),
+        };
+        let tmp = NamedTempFile::new().unwrap();
+        export_sarif(std::slice::from_ref(&record), tmp.path()).unwrap();
+        let content = std::fs::read_to_string(tmp.path()).unwrap();
+        assert!(content.contains("\"version\": \"2.1.0\""));
+        assert!(content.contains(&record.path_or_addr));
     }
 
     #[test]
