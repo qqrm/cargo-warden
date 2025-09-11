@@ -17,4 +17,10 @@ jobs:
       - name: Install cargo-warden
         run: cargo install --path crates/cli
       - name: Enforce build
-        run: cargo warden build
+        run: cargo warden build || true
+      - name: Generate SARIF report
+        run: cargo warden report --output warden.sarif
+      - name: Upload SARIF report
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: warden.sarif

@@ -1,0 +1,14 @@
+{
+  "title": "cargo-warden metrics",
+  "schemaVersion": 18,
+  "version": 1,
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Events total",
+      "datasource": "Prometheus",
+      "targets": [{ "expr": "warden_events_total" }],
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 }
+    }
+  ]
+}
