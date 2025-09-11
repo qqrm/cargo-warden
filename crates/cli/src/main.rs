@@ -285,9 +285,6 @@ fn handle_status() -> io::Result<()> {
 
 fn handle_report(output: &str) -> io::Result<()> {
     let events = read_recent_events(Path::new("warden-events.jsonl"), usize::MAX)?;
-    if events.is_empty() {
-        return Ok(());
-    }
     export_sarif(&events, Path::new(output))
 }
 
@@ -331,7 +328,7 @@ fn handle_init_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> io::
 mod tests {
     use super::{
         Cli, Commands, EventRecord, build_command, export_sarif, handle_init_with,
-        read_recent_events, run_command, setup_isolation,
+        handle_report, read_recent_events, run_command, setup_isolation,
     };
     use clap::{CommandFactory, Parser};
     use std::ffi::OsStr;
@@ -530,6 +527,19 @@ mod tests {
         let content = std::fs::read_to_string(tmp.path()).unwrap();
         assert!(content.contains("\"version\": \"2.1.0\""));
         assert!(content.contains(&record.path_or_addr));
+    }
+
+    #[test]
+    fn report_creates_empty_file() {
+        let dir = tempdir().unwrap();
+        let old_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        File::create("warden-events.jsonl").unwrap();
+        handle_report("out.sarif").unwrap();
+        assert!(dir.path().join("out.sarif").exists());
+
+        std::env::set_current_dir(old_dir).unwrap();
     }
 
     #[test]
