@@ -366,6 +366,7 @@ mod grpc {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::{
         fs::File,
         io::{Read, Seek},
@@ -441,6 +442,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn writes_jsonl_line() {
         let record = EventRecord {
             pid: 1,
@@ -492,6 +494,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn metrics_count_events() {
         EVENT_COUNTER.reset();
         DENIED_COUNTER.reset();
