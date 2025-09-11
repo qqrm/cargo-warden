@@ -42,6 +42,9 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-geiger
       - run: cargo fmt --all -- --check
       - run: cargo check --tests --benches
       - run: cargo clippy --all-targets --all-features -- -D warnings
@@ -52,6 +55,7 @@ jobs:
       - run: cargo llvm-cov --no-report
       - run: cargo spellcheck --code 1
         continue-on-error: true
+      - run: cargo geiger --all-features --output-format GitHubMarkdown
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo +nightly udeps --all-targets --all-features
 

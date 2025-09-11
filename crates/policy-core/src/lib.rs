@@ -258,6 +258,28 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn slow_first_duplicate<T>(items: &[T]) -> Option<T>
+    where
+        T: Eq + Clone,
+    {
+        for j in 0..items.len() {
+            for i in 0..j {
+                if items[i] == items[j] {
+                    return Some(items[j].clone());
+                }
+            }
+        }
+        None
+    }
+
+    proptest! {
+        #[test]
+        fn first_duplicate_matches_naive(xs in proptest::collection::vec(any::<u8>(), 0..100)) {
+            assert_eq!(find_first_duplicate(&xs), slow_first_duplicate(&xs));
+        }
+    }
 
     const VALID: &str = r#"
 mode = "enforce"
