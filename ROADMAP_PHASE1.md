@@ -34,6 +34,7 @@
 - [x] Add GitHub CI pipeline for formatting, linting, and tests.
 - [x] Install cargo-deny in CI pipeline for dependency auditing.
 - [x] Plan additional DevSecOps tooling: cargo-audit, cargo-udeps, cargo-llvm-cov, cargo-nextest, cargo-spellcheck, actionlint.
+- [x] Integrate cargo-geiger for unsafe-code analysis.
 - [x] Draft roadmap for Phase 2.
 - [x] Draft roadmap for Phase 3.
 - [x] Add GitHub publish workflow for crates.io releases.
