@@ -22,6 +22,8 @@ jobs:
       - name: Generate SARIF report
         run: cargo warden report --output warden.sarif
       - name: Upload SARIF report
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         uses: github/codeql-action/upload-sarif@v2
         with:
           sarif_file: warden.sarif
+        continue-on-error: true
