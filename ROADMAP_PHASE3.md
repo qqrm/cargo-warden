@@ -9,7 +9,7 @@
 - [x] Provide example Prometheus dashboard.
 
 ## GitHub Action
-- [ ] Publish `warden-ci` GitHub Action with minimal workflow.
+- [x] Publish `warden-ci` GitHub Action with minimal workflow.
 - [x] Document usage in `.github/workflows/warden-ci.yml`.
 
 ## CI and Tooling

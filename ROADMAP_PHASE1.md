@@ -72,4 +72,5 @@
 
 - [x] Upload SARIF reports in GitHub workflow.
 - [x] Provide example Prometheus dashboard.
+- [x] Publish `warden-ci` GitHub Action with minimal workflow.
 
