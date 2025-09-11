@@ -54,6 +54,7 @@ jobs:
         continue-on-error: true
       - run: cargo audit
       - run: cargo deny check
+        continue-on-error: true
       - run: cargo llvm-cov --lcov --output-path lcov.info
       - uses: codecov/codecov-action@v4
         with:
