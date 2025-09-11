@@ -28,7 +28,6 @@ dependencies = [
  "futures-util",
  "libc",
  "log",
- "once_cell",
  "prometheus",
  "prost",
  "serde",
