@@ -15,10 +15,10 @@
 ## CI and Tooling
  - [x] Integrate `cargo-audit` for dependency vulnerability checks.
  - [x] Integrate `cargo-udeps` to detect unused dependencies.
-- [ ] Add coverage reports using `cargo-llvm-cov`.
-- [x] Adopt `cargo-nextest` for parallel test execution.
-- [ ] Run `cargo-spellcheck` for documentation consistency.
-- [x] Use `actionlint` to validate GitHub workflow files.
+ - [x] Add coverage reports using `cargo-llvm-cov`.
+ - [x] Adopt `cargo-nextest` for parallel test execution.
+ - [x] Run `cargo-spellcheck` for documentation consistency.
+ - [x] Use `actionlint` to validate GitHub workflow files.
 
 ## Cross-cutting
 - [ ] PR with violation displays SARIF annotations.
