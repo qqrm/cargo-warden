@@ -23,7 +23,7 @@ jobs:
         with:
           components: rustfmt, clippy, llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y pkg-config libseccomp-dev protobuf-compiler
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libseccomp-dev protobuf-compiler jq
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-machete
@@ -55,7 +55,11 @@ jobs:
       - run: cargo llvm-cov --no-report
       - run: cargo spellcheck --code 1
         continue-on-error: true
-      - run: cargo geiger --all-features --output-format GitHubMarkdown
+      - name: cargo geiger
+        run: |
+          for manifest in $(cargo metadata --format-version 1 --no-deps | jq -r '.packages[].manifest_path'); do
+            cargo geiger --manifest-path "$manifest" --all-features --output-format GitHubMarkdown
+          done
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo +nightly udeps --all-targets --all-features
 
