@@ -67,4 +67,6 @@
 - [x] Integrate `cargo-audit` for dependency vulnerability checks.
 - [x] Integrate `cargo-udeps` to detect unused dependencies.
 - [x] Adopt `cargo-nextest` for parallel test execution.
+- [x] Add coverage reports using `cargo-llvm-cov`.
+- [x] Run `cargo-spellcheck` for documentation consistency.
 
