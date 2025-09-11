@@ -36,6 +36,7 @@
 - [x] Plan additional DevSecOps tooling: cargo-audit, cargo-udeps, cargo-llvm-cov, cargo-nextest, cargo-spellcheck, actionlint.
 - [x] Draft roadmap for Phase 2.
 - [x] Draft roadmap for Phase 3.
+- [x] Add GitHub publish workflow for crates.io releases.
 
 ## Phase 2 Progress
 - [x] Expose control for filesystem read/write policies in BPF API.
