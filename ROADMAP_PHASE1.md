@@ -36,6 +36,8 @@
 - [x] Plan additional DevSecOps tooling: cargo-audit, cargo-udeps, cargo-llvm-cov, cargo-nextest, cargo-spellcheck, actionlint.
 - [x] Draft roadmap for Phase 2.
 - [x] Draft roadmap for Phase 3.
+- [x] Enforce cargo-deny and rustdoc checks in CI.
+- [x] Publish coverage reports to Codecov.
 
 ## Phase 2 Progress
 - [x] Expose control for filesystem read/write policies in BPF API.
