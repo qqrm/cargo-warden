@@ -14,5 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo publish -p policy-core --token ${{ secrets.CRATES_IO_TOKEN }}
-      - run: cargo publish -p cargo-warden --token ${{ secrets.CRATES_IO_TOKEN }}
+      - run: |
+          set -e
+          crates="bpf-api bpf-core policy-core policy-compiler agent-lite testkits cargo-warden"
+          for crate in $crates; do
+            cargo publish -p "$crate" --token "${{ secrets.CRATES_IO_TOKEN }}"
+          done
