@@ -39,6 +39,7 @@
 - [x] Draft roadmap for Phase 2.
 - [x] Draft roadmap for Phase 3.
 - [x] Add GitHub publish workflow for crates.io releases.
+- [x] Publish policy-core before cargo-warden in release workflow.
 
 ## Phase 2 Progress
 - [x] Expose control for filesystem read/write policies in BPF API.
