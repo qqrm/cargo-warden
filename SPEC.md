@@ -80,32 +80,32 @@ The goal of cargo-warden is to provide Rust developers with a secure sandbox for
 
 Components:
 
-* **bpf-core** – eBPF programs (LSM and cgroup) for exec, filesystem, and network.
-* **bpf-api** – shared structures and map layouts with stable ABI.
-* **policy-core** – permission model and config parsing.
-* **policy-compiler** – compiles policies into compact structures for eBPF maps.
-* **agent-lite** – userspace daemon for events, logs, and basic telemetry.
+* **qqrm-bpf-core** – eBPF programs (LSM and cgroup) for exec, filesystem, and network.
+* **qqrm-bpf-api** – shared structures and map layouts with stable ABI.
+* **qqrm-policy-core** – permission model and config parsing.
+* **qqrm-policy-compiler** – compiles policies into compact structures for eBPF maps.
+* **qqrm-agent-lite** – userspace daemon for events, logs, and basic telemetry.
 * **cli** – `cargo-warden` subcommand and wrapper: creates cgroup, loads BPF, handles UX.
-* **testkits** – utilities for integration testing.
+* **qqrm-testkits** – utilities for integration testing.
 * **examples** – demonstration projects with benign and malicious cases.
 
 Boundaries:
 
-* `bpf-core` imports only types from `bpf-api`.
-* `cli` and `agent-lite` contain no business logic—only wiring and output.
-* `policy-core` knows nothing about eBPF, `policy-compiler` knows nothing about the CLI.
+* `qqrm-bpf-core` imports only types from `qqrm-bpf-api`.
+* `cli` and `qqrm-agent-lite` contain no business logic—only wiring and output.
+* `qqrm-policy-core` knows nothing about eBPF, `qqrm-policy-compiler` knows nothing about the CLI.
 
 ## 7. Workspace Layout and Features
 
 Workspace crates:
 
-* `crates/bpf-api`
-* `crates/bpf-core`
-* `crates/policy-core`
-* `crates/policy-compiler`
-* `crates/agent-lite`
+* `crates/qqrm-bpf-api`
+* `crates/qqrm-bpf-core`
+* `crates/qqrm-policy-core`
+* `crates/qqrm-policy-compiler`
+* `crates/qqrm-agent-lite`
 * `crates/cli`
-* `crates/testkits`
+* `crates/qqrm-testkits`
 * `crates/examples/*`
 
 Feature flags:
@@ -117,7 +117,7 @@ Feature flags:
 
 ## 8. Module Contracts
 
-`bpf-api`
+`qqrm-bpf-api`
 
 ```rust
 #[repr(C)]
@@ -133,7 +133,7 @@ pub struct Event {
 }
 ```
 
-`policy-core`
+`qqrm-policy-core`
 
 ```rust
 pub enum Permission {
@@ -147,7 +147,7 @@ pub enum Permission {
 pub struct Policy { pub rules: Vec<Permission>, pub mode: Mode }
 ```
 
-`policy-compiler`
+`qqrm-policy-compiler`
 
 ```rust
 pub struct MapsLayout { /* descriptions for eBPF maps */ }
@@ -155,7 +155,7 @@ pub struct MapsLayout { /* descriptions for eBPF maps */ }
 pub fn compile(policy: &Policy) -> Result<MapsLayout, Error>;
 ```
 
-`agent-lite`
+`qqrm-agent-lite`
 
 ```rust
 pub fn run(layout: &MapsLayout) -> anyhow::Result<Report>;
@@ -249,7 +249,7 @@ User’s local trust database:
 * Launches `cargo` as a child process; the entire process tree inherits the cgroup.
 * Uprobes tag processes and populate eBPF maps with policy IDs.
 * On risky operations eBPF returns Allow or `EPERM`.
-* `agent-lite` reads events from a ring buffer and writes a report.
+* `qqrm-agent-lite` reads events from a ring buffer and writes a report.
 
 ## 12. User Experience and Commands
 
@@ -305,7 +305,7 @@ Levels:
 * Unit tests in each crate.
 * Integration tests in `cli` with examples.
 * Negative tests expect `EPERM` and precise hints.
-* Property-based tests in `policy-compiler` for paths and rules.
+* Property-based tests in `qqrm-policy-compiler` for paths and rules.
 * Fuzzing in config parsers and event handling.
 
 Examples:
@@ -344,7 +344,7 @@ Phased without dates. Each phase has a clear scope, artifacts, and exit criteria
 
 **Artifacts**
 
-* Crates: `bpf-api`, `bpf-core`, `cli`, `agent-lite`, `examples`.
+* Crates: `qqrm-bpf-api`, `qqrm-bpf-core`, `cli`, `qqrm-agent-lite`, `examples`.
 * Text report and JSON events.
 
 **Exit criteria**
@@ -369,7 +369,7 @@ Phased without dates. Each phase has a clear scope, artifacts, and exit criteria
 
 **Artifacts**
 
-* Crates: `policy-core`, `policy-compiler`, updates to `bpf-core` and `cli`.
+* Crates: `qqrm-policy-core`, `qqrm-policy-compiler`, updates to `qqrm-bpf-core` and `cli`.
 * Examples: writing to `$HOME`, `/tmp`, reading secrets.
 
 **Exit criteria**
@@ -392,7 +392,7 @@ Phased without dates. Each phase has a clear scope, artifacts, and exit criteria
 
 **Artifacts**
 
-* Crates: `report-lite` or extension to `agent-lite` for metrics and SARIF export.
+* Crates: `report-lite` or extension to `qqrm-agent-lite` for metrics and SARIF export.
 * `.github/workflows/warden-ci.yml` example.
 
 **Exit criteria**
@@ -409,8 +409,8 @@ Phased without dates. Each phase has a clear scope, artifacts, and exit criteria
 **Scope**
 
 * Performance: CPU ≤ 3%, I/O ≤ 5% on typical projects.
-* Property-based tests for `policy-compiler`, fuzzing parsers.
-* Freeze `bpf-api` ABI and map layout, version compatibility policy.
+* Property-based tests for `qqrm-policy-compiler`, fuzzing parsers.
+* Freeze `qqrm-bpf-api` ABI and map layout, version compatibility policy.
 * Complete `CONTRIBUTING`, `SECURITY`, `CODEOWNERS`.
 
 **Artifacts**
@@ -474,7 +474,7 @@ jobs:
 
 * Rust 2024, `clippy` strict, deny warnings
 * Format with stable `rustfmt`
-* Public API only in `bpf-api` and `policy-core`; everything else `pub(crate)`
+* Public API only in `qqrm-bpf-api` and `qqrm-policy-core`; everything else `pub(crate)`
 
 ### D. Glossary
 
