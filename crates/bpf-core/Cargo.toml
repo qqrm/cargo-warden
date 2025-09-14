@@ -1,5 +1,5 @@
 [package]
-name = "bpf-core"
+name = "qqrm-bpf-core"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -9,13 +9,13 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-bpf-api = { path = "../bpf-api", optional = true }
+bpf-api = { package = "qqrm-bpf-api", path = "../bpf-api", optional = true }
 
 [features]
 fuzzing = ["bpf-api"]
 
 [target.'cfg(target_arch = "bpf")'.dependencies]
-bpf-api = { path = "../bpf-api" }
+bpf-api = { package = "qqrm-bpf-api", path = "../bpf-api" }
 
 [dev-dependencies]
-bpf-api = { path = "../bpf-api" }
+bpf-api = { package = "qqrm-bpf-api", path = "../bpf-api" }

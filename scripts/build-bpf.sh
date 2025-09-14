@@ -19,7 +19,7 @@ fi
 
 for arch in "${ARCHES[@]}"; do
     RUSTFLAGS="-C link-arg=--llvm-args=-bpf-stack-size=$STACK_SIZE" \
-        cargo +nightly rustc -p bpf-core --release --target "$TARGET" -Z build-std=core -- --emit=obj
+        cargo +nightly rustc -p qqrm-bpf-core --release --target "$TARGET" -Z build-std=core -- --emit=obj
     mkdir -p "prebuilt/$arch"
-    cp "target/$TARGET/release/deps/bpf_core.o" "prebuilt/$arch/bpf-core.o"
+    cp "target/$TARGET/release/deps/qqrm_bpf_core.o" "prebuilt/$arch/qqrm-bpf-core.o"
 done

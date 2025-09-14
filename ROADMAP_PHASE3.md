@@ -5,7 +5,7 @@
 - [x] Upload SARIF reports in GitHub workflow.
 
 ## Metrics
-- [x] Extend agent-lite to expose Prometheus metrics.
+- [x] Extend qqrm-agent-lite to expose Prometheus metrics.
 - [x] Provide example Prometheus dashboard.
 
 ## GitHub Action
