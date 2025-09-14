@@ -39,8 +39,9 @@
 - [x] Draft roadmap for Phase 2.
 - [x] Draft roadmap for Phase 3.
 - [x] Add GitHub publish workflow for crates.io releases.
-- [x] Publish policy-core before cargo-warden in release workflow.
+- [x] Publish qqrm-policy-core before qqrm-cargo-warden in release workflow.
 - [x] Fix publish workflow to use CI environment for secrets.
+- [x] Prefix crate names with `qqrm-` to avoid crates.io collisions.
 
 ## Phase 2 Progress
 - [x] Expose control for filesystem read/write policies in BPF API.

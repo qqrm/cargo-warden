@@ -1,5 +1,5 @@
 [package]
-name = "cargo-warden"
+name = "qqrm-cargo-warden"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -8,9 +8,13 @@ license = "MIT OR Apache-2.0"
 clap = { version = "4", features = ["derive"] }
 libseccomp = "0.3"
 libc = "0.2"
-policy-core = { version = "0.1.0", path = "../policy-core" }
+policy-core = { package = "qqrm-policy-core", version = "0.1.0", path = "../policy-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
+
+[[bin]]
+name = "cargo-warden"
+path = "src/main.rs"

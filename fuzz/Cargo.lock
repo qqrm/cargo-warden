@@ -12,30 +12,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "bpf-api"
-version = "0.1.0"
-
-[[package]]
-name = "bpf-core"
-version = "0.1.0"
-dependencies = [
- "bpf-api",
-]
-
-[[package]]
 name = "cargo-warden-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
- "bpf-core",
  "libfuzzer-sys",
+ "qqrm-bpf-core",
 ]
 
 [[package]]
 name = "cc"
-version = "1.2.36"
+version = "1.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5252b3d2648e5eedbc1a6f501e3c795e07025c1e93bbf8bbdd6eef7f447a6d54"
+checksum = "65193589c6404eb80b450d618eaf9a2cafaaafd57ecce47370519ef674a7bd44"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -114,6 +103,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "qqrm-bpf-api"
+version = "0.1.0"
+
+[[package]]
+name = "qqrm-bpf-core"
+version = "0.1.0"
+dependencies = [
+ "qqrm-bpf-api",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -147,9 +147,9 @@ dependencies = [
 
 [[package]]
 name = "unicode-ident"
-version = "1.0.18"
+version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
+checksum = "f63a545481291138910575129486daeaf8ac54aee4387fe7906919f7830c7d9d"
 
 [[package]]
 name = "wasi"
