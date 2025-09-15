@@ -42,6 +42,7 @@
 - [x] Publish qqrm-policy-core before qqrm-cargo-warden in release workflow.
 - [x] Fix publish workflow to use CI environment for secrets.
 - [x] Prefix crate names with `qqrm-` to avoid crates.io collisions.
+- [x] Derive crate names from Cargo manifests in publish workflow.
 
 ## Phase 2 Progress
 - [x] Expose control for filesystem read/write policies in BPF API.
