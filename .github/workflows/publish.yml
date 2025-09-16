@@ -8,7 +8,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: CI
+    environment: prod
     permissions:
       contents: read
     steps:
