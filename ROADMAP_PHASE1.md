@@ -69,7 +69,7 @@
 - [x] Add fuzzing harness for BPF programs.
 
 ## Phase 3 Progress
-- [x] Document usage in `.github/workflows/warden-ci.yml`.
+- [x] Document usage in `.github/workflows/Warden CI.yml`.
 - [x] Export violation events to SARIF for PR annotations.
 - [x] Use actionlint to validate GitHub workflow files.
 - [x] Integrate `cargo-audit` for dependency vulnerability checks.
@@ -80,6 +80,6 @@
 
 - [x] Upload SARIF reports in GitHub workflow.
 - [x] Provide example Prometheus dashboard.
-- [x] Publish `warden-ci` GitHub Action with minimal workflow.
+- [x] Publish `Warden CI` GitHub Action with minimal workflow.
 
 - [x] PR with violation displays SARIF annotations.

@@ -9,8 +9,8 @@
 - [x] Provide example Prometheus dashboard.
 
 ## GitHub Action
-- [x] Publish `warden-ci` GitHub Action with minimal workflow.
-- [x] Document usage in `.github/workflows/warden-ci.yml`.
+- [x] Publish `Warden CI` GitHub Action with minimal workflow.
+- [x] Document usage in `.github/workflows/Warden CI.yml`.
 
 ## CI and Tooling
  - [x] Integrate `cargo-audit` for dependency vulnerability checks.
