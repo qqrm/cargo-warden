@@ -1,4 +1,4 @@
-name: 'warden-ci'
+name: 'Warden CI'
 description: 'Run cargo-warden in CI and upload SARIF report.'
 inputs:
   command:

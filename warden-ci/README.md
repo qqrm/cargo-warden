@@ -1,4 +1,4 @@
-# warden-ci GitHub Action
+# Warden CI GitHub Action
 
 Runs `cargo-warden` in CI, generates a SARIF report and uploads it for pull request annotations.
 
@@ -11,7 +11,7 @@ Runs `cargo-warden` in CI, generates a SARIF report and uploads it for pull requ
 ## Usage
 
 ```yaml
-name: warden-ci
+name: Warden CI
 on: [push, pull_request]
 jobs:
   build:
