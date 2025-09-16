@@ -393,7 +393,7 @@ Phased without dates. Each phase has a clear scope, artifacts, and exit criteria
 **Artifacts**
 
 * Crates: `report-lite` or extension to `qqrm-agent-lite` for metrics and SARIF export.
-* `.github/workflows/warden-ci.yml` example.
+* `.github/workflows/Warden CI.yml` example.
 
 **Exit criteria**
 
@@ -442,7 +442,7 @@ Phased without dates. Each phase has a clear scope, artifacts, and exit criteria
 ### A. Minimal GitHub Actions Workflow
 
 ```yaml
-name: warden-ci
+name: Warden CI
 on: [push, pull_request]
 jobs:
   build:
