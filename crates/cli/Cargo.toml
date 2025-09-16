@@ -3,6 +3,11 @@ name = "qqrm-cargo-warden"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Command-line interface for the cargo-warden sandbox."
+repository = "https://github.com/qqrm/cargo-warden"
+homepage = "https://github.com/qqrm/cargo-warden"
+documentation = "https://docs.rs/qqrm-cargo-warden"
+readme = "../../README.md"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

@@ -3,6 +3,11 @@ name = "qqrm-policy-core"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Policy data model and validation for the cargo-warden sandbox."
+repository = "https://github.com/qqrm/cargo-warden"
+homepage = "https://github.com/qqrm/cargo-warden"
+documentation = "https://docs.rs/qqrm-policy-core"
+readme = "../../README.md"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

@@ -43,6 +43,7 @@
 - [x] Fix publish workflow to use CI environment for secrets.
 - [x] Prefix crate names with `qqrm-` to avoid crates.io collisions.
 - [x] Derive crate names from Cargo manifests in publish workflow.
+- [x] Add CI guard ensuring path dependencies specify versions for crates.io publishing.
 
 ## Phase 2 Progress
 - [x] Expose control for filesystem read/write policies in BPF API.
