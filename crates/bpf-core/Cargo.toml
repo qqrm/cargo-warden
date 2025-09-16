@@ -3,19 +3,24 @@ name = "qqrm-bpf-core"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "eBPF enforcement programs for the cargo-warden sandbox."
+repository = "https://github.com/qqrm/cargo-warden"
+homepage = "https://github.com/qqrm/cargo-warden"
+documentation = "https://docs.rs/qqrm-bpf-core"
+readme = "../../README.md"
 
 [lib]
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-bpf-api = { package = "qqrm-bpf-api", path = "../bpf-api", optional = true }
+bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api", optional = true }
 
 [features]
 fuzzing = ["bpf-api"]
 
 [target.'cfg(target_arch = "bpf")'.dependencies]
-bpf-api = { package = "qqrm-bpf-api", path = "../bpf-api" }
+bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
 
 [dev-dependencies]
-bpf-api = { package = "qqrm-bpf-api", path = "../bpf-api" }
+bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
