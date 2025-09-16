@@ -1,7 +1,7 @@
 name: warden-ci
 on: [push, pull_request]
 jobs:
-  build:
+  warden-scan:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
