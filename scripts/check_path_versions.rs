@@ -148,11 +148,6 @@ fn check_dependency_table(
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
-        Value::Integer(n) => n.to_string(),
-        Value::Float(f) => f.to_string(),
-        Value::Boolean(b) => b.to_string(),
-        Value::Datetime(dt) => dt.to_string(),
-        Value::Array(items) => format!("{items:?}"),
-        Value::Table(table) => format!("{table:?}"),
-    }
+        other => other.to_string(),
+   }
 }
