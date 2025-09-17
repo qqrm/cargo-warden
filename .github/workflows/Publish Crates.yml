@@ -13,6 +13,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      - name: Configure git remote
+        run: ./repo_setup.sh
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-workspaces
         run: cargo install cargo-workspaces --locked
@@ -23,15 +25,7 @@ jobs:
           set -euo pipefail
           cargo workspaces publish \
             --publish-as-is \
+            --skip-published \
             --no-git-commit \
-            --no-git-tag \
-            --no-git-push \
             --publish-interval 45 \
-            -y \
-            --package qqrm-bpf-api \
-            --package qqrm-bpf-core \
-            --package qqrm-policy-core \
-            --package qqrm-policy-compiler \
-            --package qqrm-agent-lite \
-            --package qqrm-testkits \
-            --package qqrm-cargo-warden
+            -y
