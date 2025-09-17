@@ -328,116 +328,18 @@ CI:
 * `SECURITY` with vulnerability reporting procedure.
 * `CODEOWNERS` and PR templates.
 
-## 18. OSS Roadmap
-
-Phased without dates. Each phase has a clear scope, artifacts, and exit criteria for agent-oriented development and modular testing.
-
-### Phase 1 – MVP of Basic Isolation
-
-**Scope**
-
-* Enforce network via cgroup `connect4/6` and `sendmsg4/6` – deny-all.
-* Enforce exec via LSM `bprm_check_security` – tool allowlist.
-* Observe filesystem events (`file_open`) without blocking.
-* CLI as Cargo subcommand: `cargo warden build`, `cargo warden run -- <cmd>`.
-* Examples: network `build.rs`, exec `bash`.
-
-**Artifacts**
-
-* Crates: `qqrm-bpf-api`, `qqrm-bpf-core`, `cli`, `qqrm-agent-lite`, `examples`.
-* Text report and JSON events.
-
-**Exit criteria**
-
-* Direct connections blocked with `EPERM`, allowed host passes.
-* Any exec outside allowlist gets `EPERM` with hint about needed permission.
-* Logs contain `pid`, unit, action, path/address, verdict.
-
-**Out of scope**
-
-* Strict filesystem policy, trust DB, SARIF, Prometheus.
-
-### Phase 2 – Filesystem Policy and Trust
-
-**Scope**
-
-* `fs-strict`: write only `target` and `OUT_DIR`; read only workspace + explicit paths.
-* `inode_unlink/rename` to protect integrity.
-* Project `warden.toml` – basic permission model.
-* User’s local trust DB for grants.
-* Improved CLI UX: `report --format json|text`.
-
-**Artifacts**
-
-* Crates: `qqrm-policy-core`, `qqrm-policy-compiler`, updates to `qqrm-bpf-core` and `cli`.
-* Examples: writing to `$HOME`, `/tmp`, reading secrets.
-
-**Exit criteria**
-
-* Writes outside `target/OUT_DIR` get `EPERM` with precise hint.
-* Reads of sensitive paths denied unless explicitly allowed.
-* Project with valid declarations builds without interactive questions.
-
-**Out of scope**
-
-* SARIF, Prometheus, GitHub Action.
-
-### Phase 3 – Reports and CI Integration
-
-**Scope**
-
-* SARIF reports for PR annotations.
-* Basic Prometheus metrics and example dashboard.
-* GitHub Action: documentation and minimal workflow.
-
-**Artifacts**
-
-* Crates: `report-lite` or extension to `qqrm-agent-lite` for metrics and SARIF export.
-* `.github/workflows/Warden CI.yml` example.
-
-**Exit criteria**
-
-* PR with violation gets SARIF annotation.
-* Metrics visible in Prometheus, dashboard works out of the box.
-
-**Out of scope**
-
-* GitHub-aware proxy, SHA256 pinning.
-
-### Phase 4 – Hardening and API Stabilization
-
-**Scope**
-
-* Performance: CPU ≤ 3%, I/O ≤ 5% on typical projects.
-* Property-based tests for `qqrm-policy-compiler`, fuzzing parsers.
-* Freeze `qqrm-bpf-api` ABI and map layout, version compatibility policy.
-* Complete `CONTRIBUTING`, `SECURITY`, `CODEOWNERS`.
-
-**Artifacts**
-
-* Stable releases `v0.1.x` and migration guide.
-
-**Exit criteria**
-
-* All negative examples deterministically return `EPERM` with clear hints.
-* API stability documented; semantic versioning applied.
-
-**Out of scope**
-
-* Enterprise features and GitHub-aware proxy.
-
-## 19. Risks and Mitigations
+## 18. Risks and Mitigations
 
 * Clients ignore `HTTPS_PROXY` – solved via cgroup hooks denying direct connections.
 * Symlinks and bind mounts – match by inode and check realpath.
 * Performance on large workspaces – profiling and caches.
 
-## 20. Licensing and Ecosystem
+## 19. Licensing and Ecosystem
 
 * OSS license MIT or Apache-2.0.
 * Compatible with `cargo-vet` and `cargo-crev` as additional supply-chain tools.
 
-## 21. Appendices
+## 20. Appendices
 
 ### A. Minimal GitHub Actions Workflow
 
