@@ -35,6 +35,7 @@
 - [x] Install cargo-deny in CI pipeline for dependency auditing.
 - [x] Plan additional DevSecOps tooling: cargo-audit, cargo-udeps, cargo-llvm-cov, cargo-nextest, cargo-spellcheck, actionlint.
 - [x] Integrate cargo-geiger for unsafe-code analysis.
+- [x] Move cargo-geiger checks into a manual GitHub workflow.
 - [x] Extend property-based test coverage for policy validation.
 - [x] Draft roadmap for Phase 2.
 - [x] Draft roadmap for Phase 3.
