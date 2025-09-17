@@ -148,6 +148,8 @@ fn check_dependency_table(
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
-        other => other.to_string(),
-   }
+        other => toml::to_string(other)
+            .map(|s| s.trim().to_owned())
+            .unwrap_or_else(|_| format!("{other:?}")),
+    }
 }
