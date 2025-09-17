@@ -38,6 +38,7 @@
 - [x] Extend property-based test coverage for policy validation.
 - [x] Draft roadmap for Phase 2.
 - [x] Draft roadmap for Phase 3.
+- [x] Replace the path dependency version checker with a Rust tool.
 - [x] Add GitHub publish workflow for crates.io releases.
 - [x] Publish qqrm-policy-core before qqrm-cargo-warden in release workflow.
 - [x] Fix publish workflow to use CI environment for secrets.
