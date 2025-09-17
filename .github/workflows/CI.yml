@@ -23,7 +23,10 @@ jobs:
         with:
           components: rustfmt, clippy, llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
-      - run: python3 scripts/check_path_versions.py
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: rust-script
+      - run: rust-script scripts/check_path_versions.rs
       - run: sudo apt-get update && sudo apt-get install -y pkg-config libseccomp-dev protobuf-compiler jq
       - uses: taiki-e/install-action@v2
         with:
@@ -46,9 +49,6 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-geiger
       - run: cargo fmt --all -- --check
       - run: cargo check --tests --benches
       - run: cargo clippy --all-targets --all-features -- -D warnings
@@ -59,12 +59,6 @@ jobs:
       - run: cargo deny check
       - run: cargo llvm-cov --no-report
       - run: cargo spellcheck --code 1
-        continue-on-error: true
-      - name: cargo geiger
-        run: |
-          for manifest in $(cargo metadata --format-version 1 --no-deps | jq -r '.packages[].manifest_path'); do
-            cargo geiger --manifest-path "$manifest" --all-features --output-format GitHubMarkdown || true
-          done
         continue-on-error: true
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo +nightly udeps --all-targets --all-features
