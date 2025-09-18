@@ -302,7 +302,10 @@ fn handle_init_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> io::
             "warden.toml already exists",
         ));
     }
-    writeln!(output, "Enter allowlist entries (comma separated):")?;
+    writeln!(
+        output,
+        "Enter allowed executables for [allow.exec] (comma separated, leave blank for none):",
+    )?;
     let mut line = String::new();
     input.read_line(&mut line)?;
     let entries: Vec<String> = line
@@ -310,17 +313,25 @@ fn handle_init_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> io::
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    let mut file = File::create(path)?;
-    writeln!(file, "[allowlist]")?;
-    writeln!(file, "paths = [")?;
-    for (i, entry) in entries.iter().enumerate() {
-        if i + 1 == entries.len() {
-            writeln!(file, "    \"{}\"", entry)?;
-        } else {
-            writeln!(file, "    \"{}\",", entry)?;
-        }
-    }
-    writeln!(file, "]")?;
+    let allowed = toml::Value::Array(entries.iter().cloned().map(toml::Value::String).collect());
+    let content = format!(
+        "mode = \"enforce\"\n\
+         fs.default = \"strict\"\n\
+         net.default = \"deny\"\n\
+         exec.default = \"allowlist\"\n\
+         \n\
+         [allow.exec]\n\
+         allowed = {}\n\
+         \n\
+         [allow.net]\n\
+         hosts = []\n\
+         \n\
+         [allow.fs]\n\
+         write_extra = []\n\
+         read_extra = []\n",
+        allowed
+    );
+    std::fs::write(path, content)?;
     Ok(())
 }
 
@@ -331,11 +342,32 @@ mod tests {
         read_recent_events, run_command, setup_isolation,
     };
     use clap::{CommandFactory, Parser};
+    use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
+    use serial_test::serial;
     use std::ffi::OsStr;
     use std::fs::File;
     use std::io::{Cursor, Write};
+    use std::path::{Path, PathBuf};
 
     use tempfile::{NamedTempFile, tempdir};
+
+    struct DirGuard {
+        original: PathBuf,
+    }
+
+    impl DirGuard {
+        fn change_to(path: &Path) -> Self {
+            let original = std::env::current_dir().unwrap();
+            std::env::set_current_dir(path).unwrap();
+            Self { original }
+        }
+    }
+
+    impl Drop for DirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
+    }
 
     #[test]
     fn verify_cli() {
@@ -451,10 +483,10 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn handle_init_creates_file_and_prompts() {
         let dir = tempdir().unwrap();
-        let old_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = DirGuard::change_to(dir.path());
 
         let input_data = "foo, bar\n";
         let mut input = Cursor::new(input_data.as_bytes());
@@ -462,14 +494,44 @@ mod tests {
 
         handle_init_with(&mut input, &mut output).unwrap();
 
-        std::env::set_current_dir(old_dir).unwrap();
+        let config_path = dir.path().join("warden.toml");
+        let config = std::fs::read_to_string(&config_path).unwrap();
 
         let out_str = String::from_utf8(output).unwrap();
-        assert!(out_str.contains("Enter allowlist entries"));
+        assert!(out_str.contains(
+            "Enter allowed executables for [allow.exec] (comma separated, leave blank for none):"
+        ));
 
-        let config = std::fs::read_to_string(dir.path().join("warden.toml")).unwrap();
-        assert!(config.contains("foo"));
-        assert!(config.contains("bar"));
+        assert!(config.contains("mode = \"enforce\""));
+        assert!(config.contains("fs.default = \"strict\""));
+        assert!(config.contains("net.default = \"deny\""));
+        assert!(config.contains("exec.default = \"allowlist\""));
+
+        let policy = Policy::from_toml_str(&config).unwrap();
+        assert_eq!(policy.mode, Mode::Enforce);
+        assert_eq!(policy.fs.default, FsDefault::Strict);
+        assert_eq!(policy.net.default, NetDefault::Deny);
+        assert_eq!(policy.exec.default, ExecDefault::Allowlist);
+        assert_eq!(policy.allow.exec.allowed, ["foo", "bar"]);
+        assert!(policy.allow.net.hosts.is_empty());
+        assert!(policy.allow.fs.write_extra.is_empty());
+        assert!(policy.allow.fs.read_extra.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn handle_init_produces_parseable_policy() {
+        let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        let mut input = Cursor::new(b"\n" as &[u8]);
+        let mut output = Vec::new();
+
+        handle_init_with(&mut input, &mut output).unwrap();
+
+        let config_path = dir.path().join("warden.toml");
+        let config = std::fs::read_to_string(&config_path).unwrap();
+        Policy::from_toml_str(&config).unwrap();
     }
 
     #[test]
@@ -530,16 +592,14 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn report_creates_empty_file() {
         let dir = tempdir().unwrap();
-        let old_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = DirGuard::change_to(dir.path());
 
         File::create("warden-events.jsonl").unwrap();
         handle_report("out.sarif").unwrap();
         assert!(dir.path().join("out.sarif").exists());
-
-        std::env::set_current_dir(old_dir).unwrap();
     }
 
     #[test]

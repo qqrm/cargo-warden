@@ -1061,7 +1061,9 @@ dependencies = [
  "qqrm-policy-core",
  "serde",
  "serde_json",
+ "serial_test",
  "tempfile",
+ "toml",
 ]
 
 [[package]]
