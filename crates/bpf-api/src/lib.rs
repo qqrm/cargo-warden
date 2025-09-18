@@ -5,6 +5,17 @@ pub const FS_READ: u8 = 1;
 /// Bit flag for write access.
 pub const FS_WRITE: u8 = 2;
 
+/// Maximum number of exec allowlist entries supported by the eBPF map.
+pub const EXEC_ALLOWLIST_CAPACITY: u32 = 64;
+/// Maximum number of network rules supported by the eBPF map.
+pub const NET_RULES_CAPACITY: u32 = 256;
+/// Maximum number of parent relationships supported by the eBPF map.
+pub const NET_PARENTS_CAPACITY: u32 = 256;
+/// Size of the event ring buffer in bytes.
+pub const EVENT_RINGBUF_CAPACITY_BYTES: u32 = 4096;
+/// Number of slots tracked for emitted event counters.
+pub const EVENT_COUNT_SLOTS: u32 = 1;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct ExecAllowEntry {
