@@ -2,6 +2,7 @@
 members = [
     "crates/bpf-api",
     "crates/bpf-core",
+    "crates/bpf-host",
     "crates/cli",
     "crates/agent-lite",
     "crates/policy-core",

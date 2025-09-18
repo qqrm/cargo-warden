@@ -16,12 +16,14 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 aya-bpf = { package = "aya-ebpf", version = "0.1.1" }
 bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api", optional = true }
+bpf-host = { package = "qqrm-bpf-host", version = "0.1.0", path = "../bpf-host", optional = true }
 
 [features]
-fuzzing = ["bpf-api"]
+fuzzing = ["bpf-api", "bpf-host"]
 
 [target.'cfg(target_arch = "bpf")'.dependencies]
 bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
 
 [dev-dependencies]
 bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
+bpf-host = { package = "qqrm-bpf-host", version = "0.1.0", path = "../bpf-host" }
