@@ -74,41 +74,35 @@ pub fn compile(policy: &Policy) -> Result<MapsLayout, CompileError> {
 }
 
 fn compile_exec_allowlist(policy: &Policy) -> Result<Vec<ExecAllowEntry>, CompileError> {
-    if policy.exec.default != ExecDefault::Allowlist {
+    if policy.exec_default() != ExecDefault::Allowlist {
         return Ok(Vec::new());
     }
     policy
-        .allow
-        .exec
-        .allowed
-        .iter()
+        .exec_allowed()
         .map(|path| encode_exec_path(path).map(|encoded| ExecAllowEntry { path: encoded }))
         .collect()
 }
 
 fn compile_net_rules(policy: &Policy) -> Result<Vec<NetRuleEntry>, CompileError> {
-    if policy.net.default != NetDefault::Deny {
+    if policy.net_default() != NetDefault::Deny {
         return Ok(Vec::new());
     }
     policy
-        .allow
-        .net
-        .hosts
-        .iter()
+        .net_hosts()
         .map(|host| parse_host_entry(host))
         .collect()
 }
 
 fn compile_fs_rules(policy: &Policy) -> Result<Vec<FsRuleEntry>, CompileError> {
-    if policy.fs.default != FsDefault::Strict {
+    if policy.fs_default() != FsDefault::Strict {
         return Ok(Vec::new());
     }
     let mut entries = Vec::new();
-    for path in &policy.allow.fs.write_extra {
-        entries.push(fs_rule_entry(path, FS_READ | FS_WRITE)?);
+    for path in policy.fs_write_paths() {
+        entries.push(fs_rule_entry(path.as_path(), FS_READ | FS_WRITE)?);
     }
-    for path in &policy.allow.fs.read_extra {
-        entries.push(fs_rule_entry(path, FS_READ)?);
+    for path in policy.fs_read_paths() {
+        entries.push(fs_rule_entry(path.as_path(), FS_READ)?);
     }
     Ok(entries)
 }
@@ -182,7 +176,7 @@ fn slice_to_bytes<T: Copy>(slice: &[T]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::mem::size_of;
+    use std::{mem::size_of, path::PathBuf};
 
     fn to_string(bytes: &[u8]) -> String {
         let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
@@ -193,28 +187,16 @@ mod tests {
     fn compiles_policy_into_layout() {
         let policy = Policy {
             mode: policy_core::Mode::Enforce,
-            fs: policy_core::FsPolicy {
-                default: FsDefault::Strict,
-            },
-            net: policy_core::NetPolicy {
-                default: NetDefault::Deny,
-            },
-            exec: policy_core::ExecPolicy {
-                default: ExecDefault::Allowlist,
-            },
-            syscall: policy_core::SyscallPolicy { deny: vec![] },
-            allow: policy_core::AllowSection {
-                exec: policy_core::ExecAllow {
-                    allowed: vec!["/usr/bin/rustc".into(), "/bin/bash".into()],
-                },
-                net: policy_core::NetAllow {
-                    hosts: vec!["127.0.0.1:8080".into()],
-                },
-                fs: policy_core::FsAllow {
-                    write_extra: vec![PathBuf::from("/tmp/logs")],
-                    read_extra: vec![PathBuf::from("/etc/ssl/certs")],
-                },
-            },
+            rules: vec![
+                policy_core::Permission::FsDefault(FsDefault::Strict),
+                policy_core::Permission::NetDefault(NetDefault::Deny),
+                policy_core::Permission::ExecDefault(ExecDefault::Allowlist),
+                policy_core::Permission::Exec("/usr/bin/rustc".into()),
+                policy_core::Permission::Exec("/bin/bash".into()),
+                policy_core::Permission::NetConnect("127.0.0.1:8080".into()),
+                policy_core::Permission::FsWrite(PathBuf::from("/tmp/logs")),
+                policy_core::Permission::FsRead(PathBuf::from("/etc/ssl/certs")),
+            ],
         };
 
         let layout = compile(&policy).expect("compile");
@@ -246,28 +228,14 @@ mod tests {
     fn binary_serialization_matches_layout() {
         let policy = Policy {
             mode: policy_core::Mode::Enforce,
-            fs: policy_core::FsPolicy {
-                default: FsDefault::Strict,
-            },
-            net: policy_core::NetPolicy {
-                default: NetDefault::Deny,
-            },
-            exec: policy_core::ExecPolicy {
-                default: ExecDefault::Allowlist,
-            },
-            syscall: policy_core::SyscallPolicy { deny: vec![] },
-            allow: policy_core::AllowSection {
-                exec: policy_core::ExecAllow {
-                    allowed: vec!["/usr/bin/rustc".into()],
-                },
-                net: policy_core::NetAllow {
-                    hosts: vec!["127.0.0.1:8080".into()],
-                },
-                fs: policy_core::FsAllow {
-                    write_extra: vec![PathBuf::from("/tmp/logs")],
-                    read_extra: vec![],
-                },
-            },
+            rules: vec![
+                policy_core::Permission::FsDefault(FsDefault::Strict),
+                policy_core::Permission::NetDefault(NetDefault::Deny),
+                policy_core::Permission::ExecDefault(ExecDefault::Allowlist),
+                policy_core::Permission::Exec("/usr/bin/rustc".into()),
+                policy_core::Permission::NetConnect("127.0.0.1:8080".into()),
+                policy_core::Permission::FsWrite(PathBuf::from("/tmp/logs")),
+            ],
         };
 
         let layout = compile(&policy).expect("compile");
