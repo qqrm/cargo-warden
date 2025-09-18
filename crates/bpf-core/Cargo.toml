@@ -14,6 +14,7 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+aya-bpf = { package = "aya-ebpf", version = "0.1.1" }
 bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api", optional = true }
 
 [features]
