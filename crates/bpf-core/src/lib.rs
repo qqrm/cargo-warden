@@ -1,5 +1,7 @@
 #![cfg_attr(target_arch = "bpf", no_std)]
 #![cfg_attr(not(target_arch = "bpf"), allow(dead_code))]
+#![cfg_attr(target_arch = "bpf", allow(static_mut_refs))]
+#![cfg_attr(target_arch = "bpf", allow(unsafe_op_in_unsafe_fn))]
 
 #[cfg(target_arch = "bpf")]
 use aya_bpf::{
@@ -69,6 +71,11 @@ type LengthMap = TestArray<u32, 1>;
 type EventCountsMap = Array<u64>;
 #[cfg(any(test, feature = "fuzzing"))]
 type EventCountsMap = TestArray<u64, { bpf_api::EVENT_COUNT_SLOTS as usize }>;
+
+#[cfg(target_arch = "bpf")]
+type ModeMap = Array<u32>;
+#[cfg(any(test, feature = "fuzzing"))]
+type ModeMap = TestArray<u32, 1>;
 
 #[cfg(target_arch = "bpf")]
 type EventsMap = RingBuf;
@@ -146,6 +153,16 @@ const fn event_counts_map() -> EventCountsMap {
 }
 
 #[cfg(target_arch = "bpf")]
+const fn mode_map() -> ModeMap {
+    Array::with_max_entries(1, 0)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+const fn mode_map() -> ModeMap {
+    TestArray::new()
+}
+
+#[cfg(target_arch = "bpf")]
 #[map(name = "EXEC_ALLOWLIST")]
 static mut EXEC_ALLOWLIST: ExecAllowlistMap = exec_allowlist_map();
 
@@ -200,6 +217,13 @@ static mut EVENT_COUNTS: EventCountsMap = event_counts_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static EVENT_COUNTS: EventCountsMap = event_counts_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "SANDBOX_MODE")]
+static mut SANDBOX_MODE: ModeMap = mode_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static SANDBOX_MODE: ModeMap = mode_map();
 
 #[cfg(target_arch = "bpf")]
 #[map(name = "FS_RULES")]
@@ -265,6 +289,26 @@ unsafe fn load_length(map: &LengthMap) -> u32 {
     map.get(0).unwrap_or(0)
 }
 
+#[cfg(target_arch = "bpf")]
+fn sandbox_mode() -> u32 {
+    unsafe {
+        SANDBOX_MODE
+            .get(0)
+            .copied()
+            .unwrap_or(bpf_api::MODE_ENFORCE)
+    }
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn sandbox_mode() -> u32 {
+    SANDBOX_MODE.get(0).unwrap_or(bpf_api::MODE_ENFORCE)
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn observing() -> bool {
+    sandbox_mode() == bpf_api::MODE_OBSERVE
+}
+
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn clamp_len(len: u32, capacity: u32) -> u32 {
     len.min(capacity)
@@ -307,7 +351,7 @@ fn increment_event_count() {
     #[cfg(target_arch = "bpf")]
     unsafe {
         if let Some(counter) = EVENT_COUNTS.get_ptr_mut(0) {
-            *counter = counter.wrapping_add(1);
+            *counter = (*counter).wrapping_add(1);
         }
     }
 
@@ -641,7 +685,7 @@ fn check4(ctx: *mut c_void) -> i32 {
     addr[..4].copy_from_slice(&ctx.user_ip4.to_be_bytes());
     let port = u16::from_be(ctx.user_port);
     let proto = ctx.protocol as u8;
-    if net_allowed(&addr, port, proto) {
+    if net_allowed(&addr, port, proto) || observing() {
         0
     } else {
         deny()
@@ -657,7 +701,7 @@ fn check6(ctx: *mut c_void) -> i32 {
     }
     let port = u16::from_be(ctx.user_port);
     let proto = ctx.protocol as u8;
-    if net_allowed(&addr, port, proto) {
+    if net_allowed(&addr, port, proto) || observing() {
         0
     } else {
         deny()
@@ -690,7 +734,7 @@ pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
         }
         i += 1;
     }
-    deny()
+    if observing() { 0 } else { deny() }
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -738,7 +782,7 @@ pub extern "C" fn file_open(file: *mut c_void, _cred: *mut c_void) -> i32 {
     let allowed = fs_allowed(&path, access);
     let event = fs_event(ACTION_OPEN, &path, allowed);
     publish_event(&event);
-    if allowed { 0 } else { deny() }
+    if allowed || observing() { 0 } else { deny() }
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -761,7 +805,7 @@ pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
     } else {
         let event = fs_event(ACTION_OPEN, &path, false);
         publish_event(&event);
-        deny()
+        if observing() { 0 } else { deny() }
     }
 }
 
@@ -781,14 +825,14 @@ pub extern "C" fn inode_unlink(_dir: *mut c_void, dentry: *mut c_void) -> i32 {
     } else {
         let event = fs_event(ACTION_UNLINK, &path, false);
         publish_event(&event);
-        deny()
+        if observing() { 0 } else { deny() }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bpf_api::{FS_READ, FS_WRITE};
+    use bpf_api::{FS_READ, FS_WRITE, MODE_ENFORCE, MODE_OBSERVE};
     use bpf_host::{
         fs::{TestDentry, TestFile},
         resolve_host,
@@ -886,6 +930,30 @@ mod tests {
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
+    }
+
+    #[test]
+    fn file_open_observe_mode_allows_but_emits_event() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        SANDBOX_MODE.set(0, MODE_OBSERVE);
+        let path = "/workspace/observe.txt";
+        let path_bytes = c_string(path);
+        let mut file = TestFile {
+            path: path_bytes.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
+        assert_eq!(result, 0);
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert_eq!(count, 1);
+        SANDBOX_MODE.set(0, MODE_ENFORCE);
     }
 
     #[test]
@@ -1131,6 +1199,8 @@ mod tests {
         unsafe {
             CURRENT_UNIT = 0;
         }
+        SANDBOX_MODE.clear();
+        SANDBOX_MODE.set(0, MODE_ENFORCE);
     }
 
     fn set_fs_rules(entries: &[bpf_api::FsRuleEntry]) {
@@ -1148,6 +1218,8 @@ mod tests {
         unsafe {
             CURRENT_UNIT = 0;
         }
+        SANDBOX_MODE.clear();
+        SANDBOX_MODE.set(0, MODE_ENFORCE);
     }
 
     fn fs_rule_entry(unit: u32, path: &str, access: u8) -> bpf_api::FsRuleEntry {

@@ -17,6 +17,10 @@ pub const FS_RULES_CAPACITY: u32 = 256;
 pub const EVENT_RINGBUF_CAPACITY_BYTES: u32 = 4096;
 /// Number of slots tracked for emitted event counters.
 pub const EVENT_COUNT_SLOTS: u32 = 1;
+/// Sandbox mode value indicating enforcement.
+pub const MODE_ENFORCE: u32 = 0;
+/// Sandbox mode value indicating observation.
+pub const MODE_OBSERVE: u32 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
