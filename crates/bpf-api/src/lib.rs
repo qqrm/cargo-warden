@@ -5,6 +5,9 @@ pub const FS_READ: u8 = 1;
 /// Bit flag for write access.
 pub const FS_WRITE: u8 = 2;
 
+/// Action code emitted when filesystem access is denied.
+pub const ACTION_FS_DENIED: u8 = 5;
+
 /// Maximum number of exec allowlist entries supported by the eBPF map.
 pub const EXEC_ALLOWLIST_CAPACITY: u32 = 64;
 /// Maximum number of network rules supported by the eBPF map.

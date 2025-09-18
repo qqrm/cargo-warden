@@ -20,6 +20,12 @@ const _EVENT_SIZE: usize = size_of::<Event>();
 const EPERM: i32 = 1;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const ACTION_OPEN: u8 = 0;
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const ACTION_UNLINK: u8 = 2;
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn deny() -> i32 {
     -EPERM
 }
@@ -642,7 +648,12 @@ fn dentry_path_ptr(_dentry: *mut c_void) -> Option<*const u8> {
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn emit_fs_event(path: &[u8; 256], verdict: u8) {
+fn fs_event(action: u8, path: &[u8; 256], allowed: bool) -> Event {
+    let (action, verdict) = if allowed {
+        (action, 0)
+    } else {
+        (bpf_api::ACTION_FS_DENIED, 1)
+    };
     let mut event = Event {
         pid: unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 },
         unit: {
@@ -653,14 +664,26 @@ fn emit_fs_event(path: &[u8; 256], verdict: u8) {
                 unit as u8
             }
         },
-        action: 0,
+        action,
         verdict,
         reserved: 0,
         container_id: 0,
         caps: 0,
         path_or_addr: [0; 256],
     };
-    event.path_or_addr.copy_from_slice(path);
+
+    let mut len = path.iter().position(|&b| b == 0).unwrap_or(path.len());
+    if len >= event.path_or_addr.len() {
+        len = event.path_or_addr.len() - 1;
+    }
+    event.path_or_addr[..len].copy_from_slice(&path[..len]);
+    event.path_or_addr[len] = 0;
+
+    event
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn publish_event(event: &Event) {
     let ringbuf_ptr = {
         #[cfg(target_arch = "bpf")]
         {
@@ -675,7 +698,7 @@ fn emit_fs_event(path: &[u8; 256], verdict: u8) {
     unsafe {
         bpf_ringbuf_output(
             ringbuf_ptr,
-            &event as *const _ as *const c_void,
+            event as *const _ as *const c_void,
             size_of::<Event>() as u64,
             0,
         );
@@ -792,18 +815,15 @@ pub extern "C" fn sendmsg6(ctx: *mut c_void) -> i32 {
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/file_open")]
 pub extern "C" fn file_open(file: *mut c_void, _cred: *mut c_void) -> i32 {
-    let path_ptr = match file_path_ptr(file) {
-        Some(ptr) => ptr,
-        None => return deny(),
-    };
-    let Some(path) = read_user_path(path_ptr) else {
-        return deny();
-    };
+    let path = file_path_ptr(file)
+        .and_then(read_user_path)
+        .unwrap_or([0; 256]);
     let access = file_mode_bits(file)
         .map(access_from_mode)
         .unwrap_or(bpf_api::FS_READ);
     let allowed = fs_allowed(&path, access);
-    emit_fs_event(&path, if allowed { 0 } else { 1 });
+    let event = fs_event(ACTION_OPEN, &path, allowed);
+    publish_event(&event);
     if allowed { 0 } else { deny() }
 }
 
@@ -815,30 +835,30 @@ pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
     if access == 0 {
         return 0;
     }
-    let path_ptr = match file_path_ptr(file) {
-        Some(ptr) => ptr,
-        None => return deny(),
-    };
-    let Some(path) = read_user_path(path_ptr) else {
-        return deny();
-    };
-    if fs_allowed(&path, access) { 0 } else { deny() }
+    let path = file_path_ptr(file)
+        .and_then(read_user_path)
+        .unwrap_or([0; 256]);
+    if fs_allowed(&path, access) {
+        0
+    } else {
+        let event = fs_event(ACTION_OPEN, &path, false);
+        publish_event(&event);
+        deny()
+    }
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/inode_unlink")]
 pub extern "C" fn inode_unlink(_dir: *mut c_void, dentry: *mut c_void) -> i32 {
-    let path_ptr = match dentry_path_ptr(dentry) {
-        Some(ptr) => ptr,
-        None => return deny(),
-    };
-    let Some(path) = read_user_path(path_ptr) else {
-        return deny();
-    };
+    let path = dentry_path_ptr(dentry)
+        .and_then(read_user_path)
+        .unwrap_or([0; 256]);
     if fs_allowed(&path, bpf_api::FS_WRITE) {
         0
     } else {
+        let event = fs_event(ACTION_UNLINK, &path, false);
+        publish_event(&event);
         deny()
     }
 }
@@ -846,7 +866,7 @@ pub extern "C" fn inode_unlink(_dir: *mut c_void, dentry: *mut c_void) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bpf_api::{FS_READ, FS_WRITE};
+    use bpf_api::{ACTION_FS_DENIED, FS_READ, FS_WRITE};
     use core::ffi::c_void;
     use std::ptr;
     use std::sync::Mutex;
@@ -914,7 +934,7 @@ mod tests {
         let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
         assert_eq!(event.pid, 1234);
         assert_eq!(event.unit, 0);
-        assert_eq!(event.action, 0);
+        assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 0);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
         let count = EVENT_COUNTS.get(0).unwrap_or(0);
@@ -937,6 +957,7 @@ mod tests {
         let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
         assert_ne!(result, 0);
         let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_FS_DENIED);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
     }
@@ -954,10 +975,84 @@ mod tests {
             mode: FMODE_READ,
         };
         let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        LAST_EVENT.lock().unwrap().take();
         assert_eq!(file_permission(file_ptr, MAY_READ), 0);
+        assert!(LAST_EVENT.lock().unwrap().is_none());
+
+        LAST_EVENT.lock().unwrap().take();
         assert_ne!(file_permission(file_ptr, MAY_WRITE), 0);
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_FS_DENIED);
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), path);
+
         set_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
+        LAST_EVENT.lock().unwrap().take();
         assert_eq!(file_permission(file_ptr, MAY_WRITE), 0);
+        assert!(LAST_EVENT.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn file_permission_allows_matching_rule() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        let base_path = "/workspace/data";
+        set_fs_rules(&[fs_rule_entry(0, base_path, FS_READ | FS_WRITE)]);
+        let file_path = c_string("/workspace/data/reports/output.log");
+        let mut file = TestFile {
+            path: file_path.as_ptr(),
+            mode: FMODE_READ | FMODE_WRITE,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        assert_eq!(file_permission(file_ptr, MAY_READ), 0);
+        assert_eq!(file_permission(file_ptr, MAY_WRITE), 0);
+    }
+
+    #[test]
+    fn file_permission_denies_without_matching_rule() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        let file_path = c_string("/workspace/forbidden/data.txt");
+        let mut file = TestFile {
+            path: file_path.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        assert_ne!(file_permission(file_ptr, MAY_READ), 0);
+    }
+
+    #[test]
+    fn file_permission_allows_prefix_rule() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        let rule_path = "/workspace/data";
+        set_fs_rules(&[fs_rule_entry(0, rule_path, FS_READ | FS_WRITE)]);
+        let file_path = c_string("/workspace/data/subdir/file.txt");
+        let mut file = TestFile {
+            path: file_path.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        assert_eq!(file_permission(file_ptr, MAY_READ), 0);
+    }
+
+    #[test]
+    fn file_permission_denies_mismatched_prefix() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        let rule_path = "/workspace/data";
+        set_fs_rules(&[fs_rule_entry(0, rule_path, FS_READ | FS_WRITE)]);
+        let file_path = c_string("/workspace/database");
+        let mut file = TestFile {
+            path: file_path.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        assert_ne!(file_permission(file_ptr, MAY_READ), 0);
     }
 
     #[test]
@@ -970,20 +1065,34 @@ mod tests {
         let mut dentry = TestDentry {
             name: path_bytes.as_ptr(),
         };
+        LAST_EVENT.lock().unwrap().take();
         assert_ne!(
             inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void),
             0
         );
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_FS_DENIED);
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), path);
+
         set_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
+        LAST_EVENT.lock().unwrap().take();
         assert_eq!(
             inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void),
             0
         );
+        assert!(LAST_EVENT.lock().unwrap().is_none());
+
         set_fs_rules(&[fs_rule_entry(0, path, FS_READ)]);
+        LAST_EVENT.lock().unwrap().take();
         assert_ne!(
             inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void),
             0
         );
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_FS_DENIED);
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), path);
     }
 
     #[test]

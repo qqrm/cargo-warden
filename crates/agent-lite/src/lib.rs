@@ -17,6 +17,7 @@ use tokio::sync::broadcast;
 
 const ACTION_EXEC: u8 = 3;
 const ACTION_CONNECT: u8 = 4;
+const ACTION_FS_DENIED: u8 = bpf_api::ACTION_FS_DENIED;
 const VERDICT_DENIED: u8 = 1;
 
 static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
@@ -164,6 +165,7 @@ fn diagnostic(record: &EventRecord) -> Option<String> {
     match record.action {
         ACTION_EXEC => Some(format!("Execution denied: {}", record.path_or_addr)),
         ACTION_CONNECT => Some(format!("Network denied: {}", record.path_or_addr)),
+        ACTION_FS_DENIED => Some(format!("Filesystem denied: {}", record.path_or_addr)),
         _ => None,
     }
 }
@@ -500,6 +502,19 @@ mod tests {
         assert_eq!(
             diagnostic(&net),
             Some("Network denied: 1.2.3.4:80".to_string())
+        );
+        let fs = EventRecord {
+            pid: 1,
+            unit: 0,
+            action: ACTION_FS_DENIED,
+            verdict: VERDICT_DENIED,
+            container_id: 0,
+            caps: 0,
+            path_or_addr: "/etc/passwd".into(),
+        };
+        assert_eq!(
+            diagnostic(&fs),
+            Some("Filesystem denied: /etc/passwd".to_string())
         );
         let allow = EventRecord {
             pid: 1,
