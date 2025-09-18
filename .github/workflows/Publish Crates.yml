@@ -5,6 +5,13 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+concurrency:
+  group: publish-crates-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -14,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure git remote
-        run: ./repo_setup.sh
+        run: ./local_setup.sh
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-workspaces
         run: cargo install cargo-workspaces --locked
@@ -25,7 +32,9 @@ jobs:
           set -euo pipefail
           cargo workspaces publish \
             --publish-as-is \
-            --skip-published \
             --no-git-commit \
+            --no-git-tag \
+            --no-git-push \
             --publish-interval 45 \
+            --skip-published \
             -y
