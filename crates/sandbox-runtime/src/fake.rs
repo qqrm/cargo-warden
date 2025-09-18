@@ -1,5 +1,6 @@
 use crate::layout::LayoutRecorder;
 use crate::util::{events_path, fake_cgroup_dir};
+use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
 use std::fs;
 use std::io;
@@ -40,6 +41,7 @@ impl FakeSandbox {
     pub(crate) fn run(
         &mut self,
         mut command: Command,
+        _mode: Mode,
         layout: &MapsLayout,
     ) -> io::Result<ExitStatus> {
         if let Some(recorder) = &mut self.layout_recorder {
