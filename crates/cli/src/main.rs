@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use event_reporting::{EventRecord, export_sarif};
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy};
 use qqrm_policy_compiler::{self, MapsLayout};
-use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
@@ -75,69 +75,11 @@ enum Commands {
     },
 }
 
-#[derive(Debug, Deserialize)]
-struct EventRecord {
-    pid: u32,
-    unit: u8,
-    action: u8,
-    verdict: u8,
-    container_id: u64,
-    caps: u64,
-    path_or_addr: String,
-}
-
-impl std::fmt::Display for EventRecord {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "pid={} unit={} action={} verdict={} container_id={} caps={} path_or_addr={}",
-            self.pid,
-            self.unit,
-            self.action,
-            self.verdict,
-            self.container_id,
-            self.caps,
-            self.path_or_addr
-        )
-    }
-}
-
 struct IsolationConfig {
     #[cfg(test)]
     mode: Mode,
     syscall_deny: Vec<String>,
     maps_layout: MapsLayout,
-}
-
-fn sarif_from_events(events: &[EventRecord]) -> serde_json::Value {
-    let results: Vec<_> = events
-        .iter()
-        .map(|e| {
-            serde_json::json!({
-                "ruleId": e.action.to_string(),
-                "level": if e.verdict == 1 { "error" } else { "note" },
-                "message": { "text": format!("{}", e) },
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": { "uri": e.path_or_addr }
-                    }
-                }]
-            })
-        })
-        .collect();
-    serde_json::json!({
-        "version": "2.1.0",
-        "runs": [{
-            "tool": { "driver": { "name": "cargo-warden" } },
-            "results": results
-        }]
-    })
-}
-
-fn export_sarif(events: &[EventRecord], path: &Path) -> io::Result<()> {
-    let sarif = sarif_from_events(events);
-    let content = serde_json::to_string_pretty(&sarif).map_err(io::Error::other)?;
-    std::fs::write(path, content)
 }
 
 fn main() {

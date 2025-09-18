@@ -2,8 +2,6 @@ use aya::maps::{MapData, ring_buf::RingBuf};
 use bpf_api::Event;
 use log::{info, warn};
 use prometheus::{Encoder, IntCounter, Registry, TextEncoder};
-use serde::Serialize;
-use serde_json::json;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;
@@ -14,6 +12,8 @@ use std::time::Duration;
 
 #[cfg(feature = "grpc")]
 use tokio::sync::broadcast;
+
+pub use event_reporting::{EventRecord, export_sarif, sarif_from_events};
 
 const ACTION_EXEC: u8 = 3;
 const ACTION_CONNECT: u8 = 4;
@@ -38,18 +38,6 @@ static DENIED_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
 #[cfg(feature = "grpc")]
 pub mod proto {
     tonic::include_proto!("agent");
-}
-
-/// User-facing representation of an event.
-#[derive(Debug, Serialize, Clone)]
-pub struct EventRecord {
-    pub pid: u32,
-    pub unit: u8,
-    pub action: u8,
-    pub verdict: u8,
-    pub container_id: u64,
-    pub caps: u64,
-    pub path_or_addr: String,
 }
 
 /// Log rotation settings.
@@ -121,39 +109,21 @@ impl Shutdown {
     }
 }
 
-impl From<Event> for EventRecord {
-    fn from(e: Event) -> Self {
-        let end = e
-            .path_or_addr
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(e.path_or_addr.len());
-        let path_or_addr = String::from_utf8_lossy(&e.path_or_addr[..end]).to_string();
-        Self {
-            pid: e.pid,
-            unit: e.unit,
-            action: e.action,
-            verdict: e.verdict,
-            container_id: e.container_id,
-            caps: e.caps,
-            path_or_addr,
-        }
-    }
-}
-
-impl std::fmt::Display for EventRecord {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "pid={} unit={} action={} verdict={} container_id={} caps={} path_or_addr={}",
-            self.pid,
-            self.unit,
-            self.action,
-            self.verdict,
-            self.container_id,
-            self.caps,
-            self.path_or_addr
-        )
+fn event_record_from_event(e: Event) -> EventRecord {
+    let end = e
+        .path_or_addr
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(e.path_or_addr.len());
+    let path_or_addr = String::from_utf8_lossy(&e.path_or_addr[..end]).to_string();
+    EventRecord {
+        pid: e.pid,
+        unit: e.unit,
+        action: e.action,
+        verdict: e.verdict,
+        container_id: e.container_id,
+        caps: e.caps,
+        path_or_addr,
     }
 }
 
@@ -166,39 +136,6 @@ fn diagnostic(record: &EventRecord) -> Option<String> {
         ACTION_CONNECT => Some(format!("Network denied: {}", record.path_or_addr)),
         _ => None,
     }
-}
-
-/// Builds a SARIF log from a slice of events.
-pub fn sarif_from_events(events: &[EventRecord]) -> serde_json::Value {
-    let results: Vec<_> = events
-        .iter()
-        .map(|e| {
-            json!({
-                "ruleId": e.action.to_string(),
-                "level": if e.verdict == VERDICT_DENIED { "error" } else { "note" },
-                "message": { "text": format!("{}", e) },
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": { "uri": e.path_or_addr }
-                    }
-                }]
-            })
-        })
-        .collect();
-    json!({
-        "version": "2.1.0",
-        "runs": [{
-            "tool": { "driver": { "name": "cargo-warden" } },
-            "results": results
-        }]
-    })
-}
-
-/// Writes a SARIF log to the given path.
-pub fn export_sarif(events: &[EventRecord], path: &Path) -> Result<(), anyhow::Error> {
-    let sarif = sarif_from_events(events);
-    std::fs::write(path, serde_json::to_string_pretty(&sarif)?)?;
-    Ok(())
 }
 
 /// Polls a ring buffer map and streams logs to JSONL file and systemd journal.
@@ -250,7 +187,7 @@ pub fn run_with_shutdown(
                 continue;
             }
             let event = unsafe { *(item.as_ptr() as *const Event) };
-            let record: EventRecord = event.into();
+            let record = event_record_from_event(event);
             #[cfg(feature = "grpc")]
             {
                 write_outputs(&record, &mut file, &path, cfg.rotation.as_ref(), Some(&tx))?;
@@ -459,7 +396,7 @@ mod tests {
             caps: 1,
             path_or_addr: path,
         };
-        let record: EventRecord = event.into();
+        let record = event_record_from_event(event);
         assert_eq!(record.pid, 42);
         assert_eq!(record.unit, 1);
         assert_eq!(record.action, 2);
