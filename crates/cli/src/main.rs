@@ -261,7 +261,6 @@ fn empty_policy() -> Policy {
         exec: ExecPolicy::default(),
         syscall: SyscallPolicy::default(),
         allow: AllowSection::default(),
-
     }
 }
 

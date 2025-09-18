@@ -1,6 +1,113 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -n "${HOME:-}" ]]; then
+  case ":${PATH:-}:" in
+    *:"${HOME}/.local/bin":*) ;;
+    *) export PATH="${HOME}/.local/bin:${PATH:-}" ;;
+  esac
+fi
+
+readonly NEEDS_PRIVILEGE_EXIT=125
+
+run_privileged() {
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    "$@"
+    return
+  fi
+
+  if command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+    return
+  fi
+
+  return "$NEEDS_PRIVILEGE_EXIT"
+}
+
+ensure_actionlint() {
+  if command -v actionlint >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Installing actionlint..."
+  curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash \
+    | bash -s -- latest "${HOME}/.local/bin"
+}
+
+has_libseccomp() {
+  if command -v pkg-config >/dev/null 2>&1; then
+    if pkg-config --exists libseccomp; then
+      return 0
+    fi
+    return 1
+  fi
+
+  if command -v ldconfig >/dev/null 2>&1; then
+    if ldconfig -p 2>/dev/null | grep -q "libseccomp"; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+install_libseccomp_with_apt() {
+  local status
+  if ! command -v apt-get >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if ! run_privileged apt-get update; then
+    status=$?
+    if [[ $status -eq $NEEDS_PRIVILEGE_EXIT ]]; then
+      echo "libseccomp-dev is missing and sudo is unavailable; install it manually." >&2
+    else
+      echo "Failed to update package lists via apt-get; install libseccomp-dev manually." >&2
+    fi
+    return 2
+  fi
+
+  if run_privileged apt-get install -y --no-install-recommends libseccomp-dev; then
+    return 0
+  fi
+
+  status=$?
+  if [[ $status -eq $NEEDS_PRIVILEGE_EXIT ]]; then
+    echo "Failed to install libseccomp-dev because sudo is unavailable; install it manually." >&2
+  else
+    echo "Failed to install libseccomp-dev via apt-get; install it manually." >&2
+  fi
+  return 2
+}
+
+ensure_libseccomp() {
+  if has_libseccomp; then
+    return 0
+  fi
+
+  echo "Installing libseccomp development package..."
+  local status=0
+  if install_libseccomp_with_apt; then
+    if has_libseccomp; then
+      return 0
+    fi
+  else
+    status=$?
+    if [[ $status -eq 1 ]]; then
+      echo "apt-get is unavailable; install libseccomp-dev manually." >&2
+    fi
+  fi
+
+  if has_libseccomp; then
+    return 0
+  fi
+
+  echo "libseccomp development headers are missing; install them manually with 'sudo apt-get install -y libseccomp-dev'." >&2
+}
+
+ensure_actionlint
+ensure_libseccomp
+
 REMOTE_NAME="${REMOTE_NAME:-origin}"
 FETCH_URL="${REMOTE_FETCH_URL:-}"
 PUSH_URL="${REMOTE_PUSH_URL:-}"
