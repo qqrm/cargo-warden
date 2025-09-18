@@ -5,6 +5,10 @@ inputs:
     description: 'Cargo command to run under cargo-warden'
     required: false
     default: 'build'
+  mode:
+    description: 'Sandbox mode to use (observe or enforce)'
+    required: false
+    default: 'enforce'
 runs:
   using: 'composite'
   steps:
@@ -19,9 +23,29 @@ runs:
     - name: Install cargo-warden
       shell: bash
       run: cargo install --path crates/cli
-    - name: Enforce ${{ inputs.command }}
+    - name: Run cargo warden ${{ inputs.command }}
       shell: bash
-      run: cargo warden ${{ inputs.command }} || true
+      run: |
+        set -euo pipefail
+        MODE="${{ inputs.mode }}"
+        case "$MODE" in
+          observe|enforce) ;;
+          *)
+            echo "Invalid mode: $MODE" >&2
+            exit 1
+            ;;
+        esac
+        set +e
+        cargo warden --mode "$MODE" ${{ inputs.command }}
+        status=$?
+        set -e
+        if [[ $status -ne 0 ]]; then
+          if [[ "$MODE" == "enforce" ]]; then
+            echo "::warning::cargo warden reported violations in enforce mode (exit $status)" >&2
+          else
+            exit $status
+          fi
+        fi
     - name: Generate SARIF report
       shell: bash
       run: cargo warden report --output warden.sarif
