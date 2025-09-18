@@ -8,7 +8,7 @@ The eBPF layer emits `Event` records via a ring buffer. This ABI defines the lay
 pub struct Event {
     pub pid: u32,
     pub unit: u8,        // 0 Other, 1 BuildRs, 2 ProcMacro, 3 Rustc, 4 Linker
-    pub action: u8,      // 0 Open, 1 Rename, 2 Unlink, 3 Exec, 4 Connect
+    pub action: u8,      // 0 Open, 1 Rename, 2 Unlink, 3 Exec, 4 Connect, 5 FsDenied
     pub verdict: u8,     // 0 Allowed, 1 Denied
     pub reserved: u8,    // padding for alignment, reserved for future use
     pub container_id: u64,
@@ -20,6 +20,12 @@ pub struct Event {
 - **pid** – process identifier.
 - **unit** – workload category generating the event.
 - **action** – operation being audited.
+  - `0`: Filesystem open attempt.
+  - `1`: Filesystem rename attempt.
+  - `2`: Filesystem unlink attempt.
+  - `3`: Execution request.
+  - `4`: Network connection attempt.
+  - `5`: Filesystem access denied by policy. The associated path is stored in `path_or_addr`.
 - **path_or_addr** – associated filesystem path or network address.
 - **verdict** – allow (`0`) or deny (`1`).
 - **container_id** – identifier of the container or sandbox.
