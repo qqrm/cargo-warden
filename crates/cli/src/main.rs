@@ -1,10 +1,9 @@
 use clap::{Parser, Subcommand};
-use policy_core::{AllowSection, ExecPolicy, FsPolicy, Mode, NetPolicy, Policy, SyscallPolicy};
+use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy};
 use qqrm_policy_compiler::{self, MapsLayout};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs::File;
-use std::hash::Hash;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, ExitStatus, exit};
@@ -176,7 +175,9 @@ fn setup_isolation(allow: &[String], policy_paths: &[String]) -> io::Result<Isol
         let extra = load_policy(Path::new(path))?;
         merge_policy(&mut policy, extra);
     }
-    policy.allow.exec.allowed.extend(allow.iter().cloned());
+    policy
+        .rules
+        .extend(allow.iter().cloned().map(Permission::Exec));
     dedup_policy_lists(&mut policy);
 
     let report = policy.validate();
@@ -197,7 +198,7 @@ fn setup_isolation(allow: &[String], policy_paths: &[String]) -> io::Result<Isol
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
     Ok(IsolationConfig {
-        syscall_deny: policy.syscall.deny.clone(),
+        syscall_deny: policy.syscall_deny().cloned().collect(),
         maps_layout: layout,
     })
 }
@@ -227,41 +228,41 @@ fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
 
 fn merge_policy(base: &mut Policy, extra: Policy) {
     base.mode = extra.mode;
-    base.fs = extra.fs;
-    base.net = extra.net;
-    base.exec = extra.exec;
-    base.syscall.deny.extend(extra.syscall.deny);
-    base.allow.exec.allowed.extend(extra.allow.exec.allowed);
-    base.allow.net.hosts.extend(extra.allow.net.hosts);
-    base.allow.fs.write_extra.extend(extra.allow.fs.write_extra);
-    base.allow.fs.read_extra.extend(extra.allow.fs.read_extra);
+    base.rules.extend(extra.rules);
 }
 
 fn dedup_policy_lists(policy: &mut Policy) {
-    dedup_preserving_order(&mut policy.syscall.deny);
-    dedup_preserving_order(&mut policy.allow.exec.allowed);
-    dedup_preserving_order(&mut policy.allow.net.hosts);
-    dedup_preserving_order(&mut policy.allow.fs.write_extra);
-    dedup_preserving_order(&mut policy.allow.fs.read_extra);
-}
+    let mut seen_exec = HashSet::new();
+    let mut seen_net = HashSet::new();
+    let mut seen_fs_write = HashSet::new();
+    let mut seen_fs_read = HashSet::new();
+    let mut seen_syscall = HashSet::new();
 
-fn dedup_preserving_order<T>(items: &mut Vec<T>)
-where
-    T: Eq + Hash + Clone,
-{
-    let mut seen = HashSet::new();
-    items.retain(|item| seen.insert(item.clone()));
+    let mut deduped = Vec::with_capacity(policy.rules.len());
+    for rule in policy.rules.drain(..) {
+        let keep = match &rule {
+            Permission::Exec(path) => seen_exec.insert(path.clone()),
+            Permission::NetConnect(host) => seen_net.insert(host.clone()),
+            Permission::FsWrite(path) => seen_fs_write.insert(path.clone()),
+            Permission::FsRead(path) => seen_fs_read.insert(path.clone()),
+            Permission::SyscallDeny(name) => seen_syscall.insert(name.clone()),
+            _ => true,
+        };
+        if keep {
+            deduped.push(rule);
+        }
+    }
+    policy.rules = deduped;
 }
 
 fn empty_policy() -> Policy {
     Policy {
         mode: Mode::Enforce,
-        fs: FsPolicy::default(),
-        net: NetPolicy::default(),
-        exec: ExecPolicy::default(),
-        syscall: SyscallPolicy::default(),
-        allow: AllowSection::default(),
-
+        rules: vec![
+            Permission::FsDefault(FsDefault::Strict),
+            Permission::NetDefault(NetDefault::Deny),
+            Permission::ExecDefault(ExecDefault::Allowlist),
+        ],
     }
 }
 
@@ -607,13 +608,14 @@ mod tests {
 
         let policy = Policy::from_toml_str(&config).unwrap();
         assert_eq!(policy.mode, Mode::Enforce);
-        assert_eq!(policy.fs.default, FsDefault::Strict);
-        assert_eq!(policy.net.default, NetDefault::Deny);
-        assert_eq!(policy.exec.default, ExecDefault::Allowlist);
-        assert_eq!(policy.allow.exec.allowed, ["foo", "bar"]);
-        assert!(policy.allow.net.hosts.is_empty());
-        assert!(policy.allow.fs.write_extra.is_empty());
-        assert!(policy.allow.fs.read_extra.is_empty());
+        assert_eq!(policy.fs_default(), FsDefault::Strict);
+        assert_eq!(policy.net_default(), NetDefault::Deny);
+        assert_eq!(policy.exec_default(), ExecDefault::Allowlist);
+        let exec_allowed: Vec<_> = policy.exec_allowed().cloned().collect();
+        assert_eq!(exec_allowed, ["foo", "bar"]);
+        assert!(policy.net_hosts().next().is_none());
+        assert!(policy.fs_write_paths().next().is_none());
+        assert!(policy.fs_read_paths().next().is_none());
     }
 
     #[test]

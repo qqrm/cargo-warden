@@ -70,7 +70,8 @@ read_extra = ["{read}"]
         .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
         .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
         .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
-        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path);
+        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path)
+        .current_dir(dir.path());
     cmd.assert().success();
 
     let contents = fs::read_to_string(&events_path)?;

@@ -482,10 +482,8 @@ impl LayoutRecorder {
         match env::var_os("QQRM_WARDEN_FAKE_LAYOUT_PATH") {
             Some(path) => {
                 let path = PathBuf::from(path);
-                if let Some(parent) = path.parent() {
-                    if !parent.as_os_str().is_empty() {
-                        fs::create_dir_all(parent)?;
-                    }
+                if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                    fs::create_dir_all(parent)?;
                 }
                 Ok(Some(Self { path }))
             }
