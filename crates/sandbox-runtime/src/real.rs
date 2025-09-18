@@ -8,6 +8,7 @@ use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, Lsm};
 use aya::{Btf, Ebpf};
+use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
 use std::cell::UnsafeCell;
 use std::io;
@@ -50,6 +51,7 @@ impl RealSandbox {
     pub(crate) fn run(
         &self,
         command: Command,
+        _mode: Mode,
         deny: &[String],
         layout: &MapsLayout,
     ) -> io::Result<ExitStatus> {
