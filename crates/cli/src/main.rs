@@ -2,9 +2,12 @@ use clap::{Parser, Subcommand};
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
-use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::{Command, exit};
+use std::process::{Command, ExitStatus, exit};
+
+mod sandbox;
+
+use sandbox::Sandbox;
 
 /// Cargo subcommand providing warden functionality.
 #[derive(Parser)]
@@ -151,11 +154,7 @@ fn main() {
 
 fn handle_build(args: Vec<String>, allow: &[String], policy: &[String]) -> io::Result<()> {
     let deny = setup_isolation(allow, policy)?;
-    let mut cmd = build_command(&args);
-    if !deny.is_empty() {
-        apply_seccomp_to_command(&mut cmd, &deny)?;
-    }
-    let status = cmd.status()?;
+    let status = run_in_sandbox(build_command(&args), &deny)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
@@ -215,11 +214,7 @@ fn handle_run(cmd: Vec<String>, allow: &[String], policy: &[String]) -> io::Resu
         ));
     }
     let deny = setup_isolation(allow, policy)?;
-    let mut command = run_command(&cmd);
-    if !deny.is_empty() {
-        apply_seccomp_to_command(&mut command, &deny)?;
-    }
-    let status = command.status()?;
+    let status = run_in_sandbox(run_command(&cmd), &deny)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
@@ -234,19 +229,23 @@ fn run_command(cmd: &[String]) -> Command {
     command
 }
 
-fn apply_seccomp_to_command(cmd: &mut Command, deny: &[String]) -> io::Result<()> {
-    let rules = deny.to_owned();
-    unsafe {
-        cmd.pre_exec(move || {
-            apply_seccomp(&rules)?;
-            Ok(())
-        });
-    }
-    Ok(())
+fn run_in_sandbox(command: Command, deny: &[String]) -> io::Result<ExitStatus> {
+    let mut sandbox = Sandbox::new()?;
+    let run_result = sandbox.run(command, deny);
+    let shutdown_result = sandbox.shutdown();
+    let status = match run_result {
+        Ok(status) => status,
+        Err(err) => {
+            let _ = shutdown_result;
+            return Err(err);
+        }
+    };
+    shutdown_result?;
+    Ok(status)
 }
 
 #[cfg(not(test))]
-fn apply_seccomp(deny: &[String]) -> io::Result<()> {
+pub(crate) fn apply_seccomp(deny: &[String]) -> io::Result<()> {
     use libseccomp::{ScmpAction, ScmpFilterContext, ScmpSyscall};
     let mut filter = ScmpFilterContext::new_filter(ScmpAction::Allow).map_err(io::Error::other)?;
     for name in deny {
@@ -260,7 +259,7 @@ fn apply_seccomp(deny: &[String]) -> io::Result<()> {
 }
 
 #[cfg(test)]
-fn apply_seccomp(_deny: &[String]) -> io::Result<()> {
+pub(crate) fn apply_seccomp(_deny: &[String]) -> io::Result<()> {
     Ok(())
 }
 
