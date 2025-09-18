@@ -309,7 +309,7 @@ fn run_in_sandbox(
     mode: Mode,
     isolation: &IsolationConfig,
 ) -> io::Result<ExitStatus> {
-    let mut sandbox = Sandbox::new()?;
+    let mut sandbox = Sandbox::new(mode)?;
     let run_result = sandbox.run(
         command,
         mode,

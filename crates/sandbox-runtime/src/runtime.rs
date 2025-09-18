@@ -20,15 +20,26 @@ pub struct Sandbox {
 
 impl Sandbox {
     /// Constructs a new sandbox runtime based on the configured environment.
-    pub fn new() -> io::Result<Self> {
+    pub fn new(mode: Mode) -> io::Result<Self> {
         if env::var_os(FAKE_SANDBOX_ENV).is_some() {
-            Ok(Self {
+            return Ok(Self {
                 inner: SandboxImpl::Fake(FakeSandbox::new()?),
-            })
-        } else {
-            Ok(Self {
-                inner: SandboxImpl::Real(RealSandbox::new()?),
-            })
+            });
+        }
+
+        match RealSandbox::new() {
+            Ok(real) => Ok(Self {
+                inner: SandboxImpl::Real(real),
+            }),
+            Err(err) if matches!(mode, Mode::Observe) => {
+                eprintln!(
+                    "warning: failed to initialize real sandbox in observe mode: {err}. Falling back to fake sandbox.",
+                );
+                Ok(Self {
+                    inner: SandboxImpl::Fake(FakeSandbox::new()?),
+                })
+            }
+            Err(err) => Err(err),
         }
     }
 

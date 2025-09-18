@@ -51,12 +51,12 @@ impl RealSandbox {
     pub(crate) fn run(
         &self,
         command: Command,
-        _mode: Mode,
+        mode: Mode,
         deny: &[String],
         layout: &MapsLayout,
     ) -> io::Result<ExitStatus> {
         let mut command = command;
-        self.install_pre_exec(&mut command, deny, layout.clone())?;
+        self.install_pre_exec(&mut command, mode, deny, layout.clone())?;
         let mut child = command.spawn()?;
         child.wait()
     }
@@ -138,6 +138,7 @@ impl RealSandbox {
     fn install_pre_exec(
         &self,
         cmd: &mut Command,
+        mode: Mode,
         deny: &[String],
         layout: MapsLayout,
     ) -> io::Result<()> {
@@ -151,7 +152,7 @@ impl RealSandbox {
                     let bpf = &mut *(bpf_ptr as *mut Ebpf);
                     populate_maps(bpf, &layout)?;
                 }
-                if !rules.is_empty() {
+                if matches!(mode, Mode::Enforce) && !rules.is_empty() {
                     apply_seccomp(&rules)?;
                 }
                 Ok(())
