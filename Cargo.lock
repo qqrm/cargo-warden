@@ -1201,10 +1201,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "event-reporting",
- "libc",
- "libseccomp",
  "qqrm-agent-lite",
- "qqrm-bpf-api",
  "qqrm-policy-compiler",
  "qqrm-policy-core",
  "qqrm-sandbox-runtime",
@@ -1251,6 +1248,8 @@ dependencies = [
  "qqrm-policy-compiler",
  "serde",
  "serde_json",
+ "serial_test",
+ "tempfile",
 ]
 
 [[package]]
