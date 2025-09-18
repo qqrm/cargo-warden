@@ -1,6 +1,8 @@
 use assert_cmd::Command;
+use event_reporting::EventRecord;
 use sandbox_runtime::LayoutSnapshot;
 use std::fs;
+use std::path::Path;
 use tempfile::tempdir;
 
 #[test]
@@ -108,4 +110,100 @@ read_extra = ["/etc/ssl/certs"]
         cgroup_path.display()
     );
     Ok(())
+}
+
+#[test]
+fn observe_mode_allows_denied_fs_but_emits_event() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempdir()?;
+    let events_path = dir.path().join("warden-events.jsonl");
+    let cgroup_path = dir.path().join("fake-cgroup");
+    let policy_path = dir.path().join("policy.toml");
+    let denied_path = dir.path().join("denied.txt");
+    let denied_path_str = denied_path.to_string_lossy().to_string();
+
+    fs::write(
+        &policy_path,
+        r#"
+mode = "enforce"
+
+[fs]
+default = "strict"
+
+[net]
+default = "deny"
+
+[exec]
+default = "allowlist"
+"#,
+    )?;
+
+    let mut enforce = Command::cargo_bin("cargo-warden")?;
+    enforce
+        .arg("run")
+        .arg("--policy")
+        .arg(&policy_path)
+        .arg("--")
+        .arg("sh")
+        .arg("-c")
+        .arg(format!("touch {}", denied_path.display()))
+        .current_dir(dir.path())
+        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
+        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
+        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
+        .env("QQRM_WARDEN_FAKE_DENIED_PATH", &denied_path_str);
+    enforce.assert().failure();
+
+    let events = read_event_records(&events_path)?;
+    assert!(
+        events
+            .iter()
+            .any(|ev| ev.verdict == 1 && ev.path_or_addr == denied_path_str),
+        "expected denied event in enforce mode"
+    );
+
+    if events_path.exists() {
+        fs::remove_file(&events_path)?;
+    }
+
+    let mut observe = Command::cargo_bin("cargo-warden")?;
+    observe
+        .arg("run")
+        .arg("--policy")
+        .arg(&policy_path)
+        .arg("--mode")
+        .arg("observe")
+        .arg("--")
+        .arg("sh")
+        .arg("-c")
+        .arg(format!("touch {}", denied_path.display()))
+        .current_dir(dir.path())
+        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
+        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
+        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
+        .env("QQRM_WARDEN_FAKE_DENIED_PATH", &denied_path_str);
+    observe.assert().success();
+
+    let observe_events = read_event_records(&events_path)?;
+    assert!(
+        observe_events
+            .iter()
+            .any(|ev| ev.verdict == 1 && ev.path_or_addr == denied_path_str),
+        "expected denied event in observe mode"
+    );
+
+    Ok(())
+}
+
+fn read_event_records(path: &Path) -> Result<Vec<EventRecord>, Box<dyn std::error::Error>> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let contents = fs::read_to_string(path)?;
+    let mut records = Vec::new();
+    for line in contents.lines() {
+        if let Ok(event) = serde_json::from_str::<EventRecord>(line) {
+            records.push(event);
+        }
+    }
+    Ok(records)
 }
