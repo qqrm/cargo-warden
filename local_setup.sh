@@ -7,3 +7,10 @@ if ! command -v actionlint >/dev/null 2>&1; then
   curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest "$HOME/.local/bin"
   export PATH="$HOME/.local/bin:$PATH"
 fi
+
+# Ensure the repository remote is configured before working on tasks.
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_setup="$script_dir/repo-setup.sh"
+if [[ -x "$repo_setup" ]]; then
+  "$repo_setup"
+fi
