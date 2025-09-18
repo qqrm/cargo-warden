@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
-bpf-core = { package = "qqrm-bpf-core", path = "../crates/bpf-core", features = ["fuzzing"] }
+bpf-core = { package = "qqrm-bpf-core", version = "0.1.0", path = "../crates/bpf-core", features = ["fuzzing"] }
 
 [[bin]]
 name = "net"

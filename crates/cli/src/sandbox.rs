@@ -5,14 +5,16 @@ use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, Lsm};
 use aya::{Btf, Ebpf, EbpfLoader, Pod};
-use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRuleEntry};
+use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRule, NetRuleEntry};
 use qqrm_agent_lite::{self, Config as AgentConfig, Shutdown, ShutdownHandle};
 use qqrm_policy_compiler::MapsLayout;
+use serde::Serialize;
 use std::cell::UnsafeCell;
 use std::convert::TryFrom;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -419,6 +421,7 @@ impl Drop for Cgroup {
 struct FakeSandbox {
     cgroup_dir: PathBuf,
     agent: Option<FakeAgent>,
+    layout_recorder: Option<LayoutRecorder>,
 }
 
 impl FakeSandbox {
@@ -433,13 +436,18 @@ impl FakeSandbox {
         }
         fs::create_dir_all(&cgroup_dir)?;
         let agent = FakeAgent::spawn(events)?;
+        let layout_recorder = LayoutRecorder::from_env()?;
         Ok(Self {
             cgroup_dir,
             agent: Some(agent),
+            layout_recorder,
         })
     }
 
-    fn run(&mut self, mut command: Command, _layout: &MapsLayout) -> io::Result<ExitStatus> {
+    fn run(&mut self, mut command: Command, layout: &MapsLayout) -> io::Result<ExitStatus> {
+        if let Some(recorder) = &mut self.layout_recorder {
+            recorder.record(layout)?;
+        }
         command.status()
     }
 
@@ -451,6 +459,122 @@ impl FakeSandbox {
             fs::remove_dir_all(&self.cgroup_dir)?;
         }
         Ok(())
+    }
+}
+
+struct LayoutRecorder {
+    file: File,
+}
+
+impl LayoutRecorder {
+    fn from_env() -> io::Result<Option<Self>> {
+        match env::var_os("QQRM_WARDEN_FAKE_LAYOUT_PATH") {
+            Some(path) => {
+                let path = PathBuf::from(path);
+                if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                    fs::create_dir_all(parent)?;
+                }
+                let file = OpenOptions::new().create(true).append(true).open(&path)?;
+                Ok(Some(Self { file }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn record(&mut self, layout: &MapsLayout) -> io::Result<()> {
+        let snapshot = LayoutSnapshot::from(layout);
+        serde_json::to_writer(&mut self.file, &snapshot).map_err(io::Error::other)?;
+        self.file.write_all(b"\n")?;
+        self.file.flush()
+    }
+}
+
+#[derive(Serialize)]
+struct LayoutSnapshot {
+    exec_allowlist: Vec<String>,
+    net_rules: Vec<LayoutNetRule>,
+    net_parents: Vec<LayoutNetParent>,
+    fs_rules: Vec<LayoutFsRule>,
+}
+
+impl From<&MapsLayout> for LayoutSnapshot {
+    fn from(layout: &MapsLayout) -> Self {
+        Self {
+            exec_allowlist: layout
+                .exec_allowlist
+                .iter()
+                .map(|entry| decode_path(&entry.path))
+                .collect(),
+            net_rules: layout.net_rules.iter().map(LayoutNetRule::from).collect(),
+            net_parents: layout
+                .net_parents
+                .iter()
+                .map(LayoutNetParent::from)
+                .collect(),
+            fs_rules: layout.fs_rules.iter().map(LayoutFsRule::from).collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct LayoutNetRule {
+    addr: String,
+    protocol: u8,
+    port: u16,
+}
+
+impl From<&NetRuleEntry> for LayoutNetRule {
+    fn from(entry: &NetRuleEntry) -> Self {
+        Self {
+            addr: decode_net_addr(&entry.rule),
+            protocol: entry.rule.protocol,
+            port: entry.rule.port,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct LayoutNetParent {
+    child: u32,
+    parent: u32,
+}
+
+impl From<&NetParentEntry> for LayoutNetParent {
+    fn from(entry: &NetParentEntry) -> Self {
+        Self {
+            child: entry.child,
+            parent: entry.parent,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct LayoutFsRule {
+    access: u8,
+    path: String,
+}
+
+impl From<&FsRuleEntry> for LayoutFsRule {
+    fn from(entry: &FsRuleEntry) -> Self {
+        Self {
+            access: entry.rule.access,
+            path: decode_path(&entry.rule.path),
+        }
+    }
+}
+
+fn decode_path(bytes: &[u8; 256]) -> String {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
+}
+
+fn decode_net_addr(rule: &NetRule) -> String {
+    if rule.addr[4..].iter().all(|&b| b == 0) {
+        let mut octets = [0u8; 4];
+        octets.copy_from_slice(&rule.addr[..4]);
+        Ipv4Addr::from(octets).to_string()
+    } else {
+        Ipv6Addr::from(rule.addr).to_string()
     }
 }
 
