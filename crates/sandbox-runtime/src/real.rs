@@ -8,6 +8,7 @@ use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, Lsm};
 use aya::{Btf, Ebpf};
+use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
 use std::cell::UnsafeCell;
 use std::io;
@@ -50,11 +51,12 @@ impl RealSandbox {
     pub(crate) fn run(
         &self,
         command: Command,
+        mode: Mode,
         deny: &[String],
         layout: &MapsLayout,
     ) -> io::Result<ExitStatus> {
         let mut command = command;
-        self.install_pre_exec(&mut command, deny, layout.clone())?;
+        self.install_pre_exec(&mut command, mode, deny, layout.clone())?;
         let mut child = command.spawn()?;
         child.wait()
     }
@@ -136,21 +138,23 @@ impl RealSandbox {
     fn install_pre_exec(
         &self,
         cmd: &mut Command,
+        mode: Mode,
         deny: &[String],
         layout: MapsLayout,
     ) -> io::Result<()> {
         let procs_fd = self.cgroup.procs_fd_raw()?;
         let rules = deny.to_vec();
         let bpf_ptr = self.bpf.get() as usize;
+        let sandbox_mode = mode;
         unsafe {
             cmd.pre_exec(move || {
                 join_cgroup_fd(procs_fd)?;
                 {
                     let bpf = &mut *(bpf_ptr as *mut Ebpf);
-                    populate_maps(bpf, &layout)?;
+                    populate_maps(bpf, sandbox_mode, &layout)?;
                 }
                 if !rules.is_empty() {
-                    apply_seccomp(&rules)?;
+                    apply_seccomp(sandbox_mode, &rules)?;
                 }
                 Ok(())
             });

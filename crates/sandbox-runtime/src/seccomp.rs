@@ -1,7 +1,11 @@
+use policy_core::Mode;
 use std::io;
 
 #[cfg(not(test))]
-pub(crate) fn apply_seccomp(deny: &[String]) -> io::Result<()> {
+pub(crate) fn apply_seccomp(mode: Mode, deny: &[String]) -> io::Result<()> {
+    if mode == Mode::Observe {
+        return Ok(());
+    }
     use libseccomp::{ScmpAction, ScmpFilterContext, ScmpSyscall};
     let mut filter = ScmpFilterContext::new_filter(ScmpAction::Allow).map_err(io::Error::other)?;
     for name in deny {
@@ -15,6 +19,6 @@ pub(crate) fn apply_seccomp(deny: &[String]) -> io::Result<()> {
 }
 
 #[cfg(test)]
-pub(crate) fn apply_seccomp(_deny: &[String]) -> io::Result<()> {
+pub(crate) fn apply_seccomp(_mode: Mode, _deny: &[String]) -> io::Result<()> {
     Ok(())
 }

@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use event_reporting::EventRecord;
 use sandbox_runtime::LayoutSnapshot;
 use std::fs;
 use tempfile::tempdir;
@@ -107,5 +108,67 @@ read_extra = ["/etc/ssl/certs"]
         "expected fake cgroup removal: {}",
         cgroup_path.display()
     );
+    Ok(())
+}
+
+#[test]
+fn observe_mode_allows_denied_fs_but_emits_event() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempdir()?;
+    let events_path = dir.path().join("warden-events.jsonl");
+    let layout_path = dir.path().join("fake-layout.jsonl");
+    let cgroup_path = dir.path().join("fake-cgroup");
+    let policy_path = dir.path().join("policy.toml");
+    let denied_path = "/tmp/secret.log";
+
+    fs::write(
+        &policy_path,
+        r#"mode = "observe"
+
+[fs]
+default = "strict"
+
+[net]
+default = "deny"
+
+[exec]
+default = "allowlist"
+"#,
+    )?;
+
+    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    cmd.arg("run")
+        .arg("--allow")
+        .arg("/bin/true")
+        .arg("--policy")
+        .arg(&policy_path)
+        .arg("--")
+        .arg("true")
+        .current_dir(dir.path())
+        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
+        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
+        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
+        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path)
+        .env("QQRM_WARDEN_FAKE_DENIED_PATH", denied_path);
+    cmd.assert().success();
+
+    let contents = fs::read_to_string(&events_path)?;
+    let mut found = false;
+    for line in contents.lines() {
+        if let Ok(event) = serde_json::from_str::<EventRecord>(line)
+            && event.verdict == 1
+            && event.path_or_addr == denied_path
+        {
+            found = true;
+            break;
+        }
+    }
+
+    assert!(
+        found,
+        "expected denied event for {} in {}: {contents}",
+        denied_path,
+        events_path.display()
+    );
+
     Ok(())
 }

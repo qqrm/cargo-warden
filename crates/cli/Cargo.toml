@@ -14,10 +14,8 @@ clap = { version = "4", features = ["derive"] }
 policy-core = { package = "qqrm-policy-core", version = "0.1.0", path = "../policy-core" }
 qqrm-policy-compiler = { version = "0.1.0", path = "../policy-compiler" }
 sandbox-runtime = { package = "qqrm-sandbox-runtime", version = "0.1.0", path = "../sandbox-runtime" }
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
-qqrm-agent-lite = { version = "0.1.0", path = "../agent-lite" }
 event-reporting = { version = "0.1.0", path = "../event-reporting" }
 
 

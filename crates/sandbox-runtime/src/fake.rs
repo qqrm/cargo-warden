@@ -1,7 +1,10 @@
 use crate::layout::LayoutRecorder;
 use crate::util::{events_path, fake_cgroup_dir};
+use event_reporting::EventRecord;
+use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
-use std::fs;
+use std::env;
+use std::fs::{self, OpenOptions};
 use std::io;
 use std::io::Write;
 use std::path::PathBuf;
@@ -11,10 +14,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
+const FAKE_DENIED_PATH_ENV: &str = "QQRM_WARDEN_FAKE_DENIED_PATH";
+
 pub(crate) struct FakeSandbox {
     cgroup_dir: PathBuf,
     agent: Option<FakeAgent>,
     layout_recorder: Option<LayoutRecorder>,
+    events_path: PathBuf,
 }
 
 impl FakeSandbox {
@@ -28,24 +34,31 @@ impl FakeSandbox {
             fs::create_dir_all(parent)?;
         }
         fs::create_dir_all(&cgroup_dir)?;
-        let agent = FakeAgent::spawn(events)?;
+        let agent = FakeAgent::spawn(events.clone())?;
         let layout_recorder = LayoutRecorder::from_env()?;
         Ok(Self {
             cgroup_dir,
             agent: Some(agent),
             layout_recorder,
+            events_path: events,
         })
     }
 
     pub(crate) fn run(
         &mut self,
         mut command: Command,
+        _mode: Mode,
         layout: &MapsLayout,
     ) -> io::Result<ExitStatus> {
         if let Some(recorder) = &mut self.layout_recorder {
             recorder.record(layout)?;
         }
-        command.status()
+        let status = command.status()?;
+        if let Some(path) = env::var_os(FAKE_DENIED_PATH_ENV) {
+            let path = path.to_string_lossy();
+            self.record_fake_event(&path)?;
+        }
+        Ok(status)
     }
 
     pub(crate) fn shutdown(mut self) -> io::Result<()> {
@@ -55,6 +68,28 @@ impl FakeSandbox {
         if self.cgroup_dir.exists() {
             fs::remove_dir_all(&self.cgroup_dir)?;
         }
+        Ok(())
+    }
+}
+
+impl FakeSandbox {
+    fn record_fake_event(&self, path: &str) -> io::Result<()> {
+        let event = EventRecord {
+            pid: 0,
+            unit: 0,
+            action: 0,
+            verdict: 1,
+            container_id: 0,
+            caps: 0,
+            path_or_addr: path.into(),
+        };
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.events_path)?;
+        serde_json::to_writer(&mut file, &event).map_err(io::Error::other)?;
+        file.write_all(b"\n")?;
+        file.flush()?;
         Ok(())
     }
 }

@@ -1,11 +1,12 @@
 use aya::maps::{Array, MapData};
 use aya::{Ebpf, Pod};
 use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRuleEntry};
+use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
 use std::convert::TryFrom;
 use std::io;
 
-pub(crate) fn populate_maps(bpf: &mut Ebpf, layout: &MapsLayout) -> io::Result<()> {
+pub(crate) fn populate_maps(bpf: &mut Ebpf, mode: Mode, layout: &MapsLayout) -> io::Result<()> {
     update_array(
         bpf,
         "EXEC_ALLOWLIST",
@@ -34,6 +35,23 @@ pub(crate) fn populate_maps(bpf: &mut Ebpf, layout: &MapsLayout) -> io::Result<(
         &layout.fs_rules,
         |entry| FsRuleEntryPod(*entry),
     )?;
+    set_mode(bpf, mode)?;
+    Ok(())
+}
+
+fn set_mode(bpf: &mut Ebpf, mode: Mode) -> io::Result<()> {
+    let map = bpf
+        .map_mut("SANDBOX_MODE")
+        .ok_or_else(|| map_not_found("SANDBOX_MODE"))?;
+    let mut array = Array::<&mut MapData, u32>::try_from(map)
+        .map_err(|err| io::Error::other(format!("SANDBOX_MODE: {err}")))?;
+    let value = match mode {
+        Mode::Observe => 1u32,
+        Mode::Enforce => 0u32,
+    };
+    array
+        .set(0, value, 0)
+        .map_err(|err| io::Error::other(format!("set SANDBOX_MODE: {err}")))?;
     Ok(())
 }
 
