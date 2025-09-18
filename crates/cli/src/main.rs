@@ -1,10 +1,9 @@
 use clap::{Parser, Subcommand};
-use policy_core::{AllowSection, ExecPolicy, FsPolicy, Mode, NetPolicy, Policy, SyscallPolicy};
+use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy};
 use qqrm_policy_compiler::{self, MapsLayout};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs::File;
-use std::hash::Hash;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, ExitStatus, exit};
@@ -176,8 +175,10 @@ fn setup_isolation(allow: &[String], policy_paths: &[String]) -> io::Result<Isol
         let extra = load_policy(Path::new(path))?;
         merge_policy(&mut policy, extra);
     }
-    policy.allow.exec.allowed.extend(allow.iter().cloned());
-    dedup_policy_lists(&mut policy);
+    for entry in allow {
+        policy.rules.push(Permission::Exec(entry.clone()));
+    }
+    dedup_policy_rules(&mut policy.rules);
 
     let report = policy.validate();
     if !report.errors.is_empty() {
@@ -197,7 +198,7 @@ fn setup_isolation(allow: &[String], policy_paths: &[String]) -> io::Result<Isol
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
     Ok(IsolationConfig {
-        syscall_deny: policy.syscall.deny.clone(),
+        syscall_deny: policy.syscall_deny().cloned().collect(),
         maps_layout: layout,
     })
 }
@@ -227,41 +228,45 @@ fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
 
 fn merge_policy(base: &mut Policy, extra: Policy) {
     base.mode = extra.mode;
-    base.fs = extra.fs;
-    base.net = extra.net;
-    base.exec = extra.exec;
-    base.syscall.deny.extend(extra.syscall.deny);
-    base.allow.exec.allowed.extend(extra.allow.exec.allowed);
-    base.allow.net.hosts.extend(extra.allow.net.hosts);
-    base.allow.fs.write_extra.extend(extra.allow.fs.write_extra);
-    base.allow.fs.read_extra.extend(extra.allow.fs.read_extra);
+    base.rules.extend(extra.rules);
 }
 
-fn dedup_policy_lists(policy: &mut Policy) {
-    dedup_preserving_order(&mut policy.syscall.deny);
-    dedup_preserving_order(&mut policy.allow.exec.allowed);
-    dedup_preserving_order(&mut policy.allow.net.hosts);
-    dedup_preserving_order(&mut policy.allow.fs.write_extra);
-    dedup_preserving_order(&mut policy.allow.fs.read_extra);
-}
+fn dedup_policy_rules(rules: &mut Vec<Permission>) {
+    use Permission::*;
 
-fn dedup_preserving_order<T>(items: &mut Vec<T>)
-where
-    T: Eq + Hash + Clone,
-{
-    let mut seen = HashSet::new();
-    items.retain(|item| seen.insert(item.clone()));
+    let mut exec_seen = HashSet::new();
+    let mut net_seen = HashSet::new();
+    let mut fs_read_seen = HashSet::new();
+    let mut fs_write_seen = HashSet::new();
+    let mut syscall_seen = HashSet::new();
+    let mut env_seen = HashSet::new();
+
+    let mut deduped = Vec::with_capacity(rules.len());
+    for perm in rules.drain(..) {
+        let keep = match &perm {
+            Exec(path) => exec_seen.insert(path.clone()),
+            NetConnect(host) => net_seen.insert(host.clone()),
+            FsRead(path) => fs_read_seen.insert(path.clone()),
+            FsWrite(path) => fs_write_seen.insert(path.clone()),
+            SyscallDeny(name) => syscall_seen.insert(name.clone()),
+            EnvRead(name) => env_seen.insert(name.clone()),
+            _ => true,
+        };
+        if keep {
+            deduped.push(perm);
+        }
+    }
+    *rules = deduped;
 }
 
 fn empty_policy() -> Policy {
     Policy {
         mode: Mode::Enforce,
-        fs: FsPolicy::default(),
-        net: NetPolicy::default(),
-        exec: ExecPolicy::default(),
-        syscall: SyscallPolicy::default(),
-        allow: AllowSection::default(),
-
+        rules: vec![
+            Permission::FsDefault(FsDefault::Strict),
+            Permission::NetDefault(NetDefault::Deny),
+            Permission::ExecDefault(ExecDefault::Allowlist),
+        ],
     }
 }
 
@@ -422,6 +427,7 @@ mod tests {
         Cli, Commands, EventRecord, build_command, export_sarif, handle_init_with, handle_report,
         read_recent_events, run_command, setup_isolation,
     };
+    use bpf_api::ACTION_FS_DENIED;
     use clap::{CommandFactory, Parser};
     use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
     use serial_test::serial;
@@ -607,13 +613,14 @@ mod tests {
 
         let policy = Policy::from_toml_str(&config).unwrap();
         assert_eq!(policy.mode, Mode::Enforce);
-        assert_eq!(policy.fs.default, FsDefault::Strict);
-        assert_eq!(policy.net.default, NetDefault::Deny);
-        assert_eq!(policy.exec.default, ExecDefault::Allowlist);
-        assert_eq!(policy.allow.exec.allowed, ["foo", "bar"]);
-        assert!(policy.allow.net.hosts.is_empty());
-        assert!(policy.allow.fs.write_extra.is_empty());
-        assert!(policy.allow.fs.read_extra.is_empty());
+        assert_eq!(policy.fs_default(), FsDefault::Strict);
+        assert_eq!(policy.net_default(), NetDefault::Deny);
+        assert_eq!(policy.exec_default(), ExecDefault::Allowlist);
+        let exec: Vec<_> = policy.exec_allowed().cloned().collect();
+        assert_eq!(exec, ["foo", "bar"]);
+        assert!(policy.net_hosts().next().is_none());
+        assert!(policy.fs_write_paths().next().is_none());
+        assert!(policy.fs_read_paths().next().is_none());
     }
 
     #[test]
@@ -665,10 +672,26 @@ mod tests {
             })
         )
         .unwrap();
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({
+                "pid": 3,
+                "unit": 1,
+                "action": ACTION_FS_DENIED,
+                "verdict": 1,
+                "container_id": 0,
+                "caps": 0,
+                "path_or_addr": "/etc/shadow"
+            })
+        )
+        .unwrap();
         let events = read_recent_events(&path, 10).unwrap();
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
         assert_eq!(events[0].pid, 1);
         assert_eq!(events[1].verdict, 1);
+        assert_eq!(events[2].action, ACTION_FS_DENIED);
+        assert_eq!(events[2].path_or_addr, "/etc/shadow");
     }
 
     #[test]
