@@ -25,6 +25,8 @@ runs:
       run: cargo install --path crates/cli
     - name: Run cargo warden ${{ inputs.command }}
       shell: bash
+      env:
+        QQRM_WARDEN_FAKE_SANDBOX: "1"
       run: |
         set -euo pipefail
         MODE="${{ inputs.mode }}"
@@ -48,6 +50,8 @@ runs:
         fi
     - name: Generate SARIF report
       shell: bash
+      env:
+        QQRM_WARDEN_FAKE_SANDBOX: "1"
       run: cargo warden report --output warden.sarif
     - name: Upload SARIF report
       if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}

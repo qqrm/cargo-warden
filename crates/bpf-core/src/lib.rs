@@ -1,4 +1,6 @@
 #![cfg_attr(target_arch = "bpf", no_std)]
+#![cfg_attr(target_arch = "bpf", allow(static_mut_refs))]
+#![cfg_attr(target_arch = "bpf", allow(unsafe_op_in_unsafe_fn))]
 #![cfg_attr(not(target_arch = "bpf"), allow(dead_code))]
 
 #[cfg(target_arch = "bpf")]
@@ -307,7 +309,8 @@ fn increment_event_count() {
     #[cfg(target_arch = "bpf")]
     unsafe {
         if let Some(counter) = EVENT_COUNTS.get_ptr_mut(0) {
-            *counter = counter.wrapping_add(1);
+            let new_value = (*counter).wrapping_add(1);
+            *counter = new_value;
         }
     }
 
