@@ -11,5 +11,6 @@ members = [
     "crates/testkits",
     "examples/network-build",
     "examples/spawn-bash",
+    "crates/event-reporting",
 ]
 resolver = "2"
