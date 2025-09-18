@@ -227,8 +227,9 @@ fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
 }
 
 fn merge_policy(base: &mut Policy, extra: Policy) {
-    base.mode = extra.mode;
-    base.rules.extend(extra.rules);
+    let Policy { mode, mut rules } = extra;
+    base.mode = mode;
+    base.rules.append(&mut rules);
 }
 
 fn dedup_policy_lists(policy: &mut Policy) {
@@ -243,6 +244,8 @@ fn dedup_policy_lists(policy: &mut Policy) {
     let mut seen_syscall: HashSet<&String> = HashSet::new();
     let mut seen_env: HashSet<&String> = HashSet::new();
 
+    // Walk from the end so the last override of each rule type wins while we keep
+    // the rules in their original order.
     for (index, perm) in policy.rules.iter().enumerate().rev() {
         let should_keep = match perm {
             Exec(path) => seen_exec.insert(path),
