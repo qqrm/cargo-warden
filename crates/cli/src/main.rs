@@ -1,11 +1,13 @@
+use bpf_api::{FS_READ, FS_WRITE, FsRule, FsRuleEntry};
+use cargo_metadata::MetadataCommand;
 use clap::{Parser, Subcommand};
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy};
 use qqrm_policy_compiler::{self, MapsLayout};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, exit};
 
 mod sandbox;
@@ -194,12 +196,162 @@ fn setup_isolation(allow: &[String], policy_paths: &[String]) -> io::Result<Isol
         eprintln!("warning: {warn}");
     }
 
-    let layout = qqrm_policy_compiler::compile(&policy)
+    let mut layout = qqrm_policy_compiler::compile(&policy)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    merge_implicit_fs_rules(&mut layout)?;
 
     Ok(IsolationConfig {
         syscall_deny: policy.syscall_deny().cloned().collect(),
         maps_layout: layout,
+    })
+}
+
+struct CargoPaths {
+    workspace: Option<PathBuf>,
+    target: Option<PathBuf>,
+    out_dir: Option<PathBuf>,
+}
+
+fn merge_implicit_fs_rules(layout: &mut MapsLayout) -> io::Result<()> {
+    let mut combined: BTreeMap<(u32, PathBuf), u8> = BTreeMap::new();
+    for entry in layout.fs_rules.drain(..) {
+        let path = decode_fs_rule_path(&entry)?;
+        let key = (entry.unit, path);
+        combined
+            .entry(key)
+            .and_modify(|access| *access |= entry.rule.access)
+            .or_insert(entry.rule.access);
+    }
+
+    let mut units: BTreeSet<u32> = combined.keys().map(|(unit, _)| *unit).collect();
+    if units.is_empty() {
+        units.insert(0);
+    }
+    let units: Vec<u32> = units.into_iter().collect();
+
+    let paths = discover_cargo_paths()?;
+    let mut add_path = |path: &Path, access: u8| {
+        let normalized = path.to_path_buf();
+        for unit in &units {
+            let key = (*unit, normalized.clone());
+            combined
+                .entry(key)
+                .and_modify(|existing| *existing |= access)
+                .or_insert(access);
+        }
+    };
+
+    if let Some(workspace) = paths.workspace.as_deref() {
+        add_path(workspace, FS_READ);
+    }
+    if let Some(target) = paths.target.as_deref() {
+        add_path(target, FS_READ | FS_WRITE);
+    }
+    if let Some(out_dir) = paths.out_dir.as_deref() {
+        add_path(out_dir, FS_READ | FS_WRITE);
+    }
+
+    layout.fs_rules = combined
+        .into_iter()
+        .map(|((unit, path), access)| fs_rule_entry_from_path(&path, access, unit))
+        .collect::<io::Result<Vec<_>>>()?;
+
+    Ok(())
+}
+
+fn discover_cargo_paths() -> io::Result<CargoPaths> {
+    let workspace_env = std::env::var_os("CARGO_WORKSPACE_DIR").map(PathBuf::from);
+    let manifest_env = std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from);
+    let target_env = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from);
+    let out_dir_env = std::env::var_os("OUT_DIR").map(PathBuf::from);
+
+    let metadata_dir_hint = workspace_env.as_deref().or(manifest_env.as_deref());
+    let need_metadata = workspace_env.is_none() || target_env.is_none();
+    let metadata = if need_metadata {
+        Some(load_metadata(metadata_dir_hint)?)
+    } else {
+        None
+    };
+
+    let workspace = if let Some(path) = workspace_env {
+        Some(ensure_absolute(path)?)
+    } else if let Some(meta) = metadata.as_ref() {
+        Some(ensure_absolute(
+            meta.workspace_root.clone().into_std_path_buf(),
+        )?)
+    } else {
+        None
+    };
+
+    let target = if let Some(path) = target_env {
+        Some(ensure_absolute(path)?)
+    } else if let Some(meta) = metadata.as_ref() {
+        Some(ensure_absolute(
+            meta.target_directory.clone().into_std_path_buf(),
+        )?)
+    } else {
+        None
+    };
+
+    let out_dir = if let Some(path) = out_dir_env {
+        Some(ensure_absolute(path)?)
+    } else {
+        None
+    };
+
+    Ok(CargoPaths {
+        workspace,
+        target,
+        out_dir,
+    })
+}
+
+fn load_metadata(dir: Option<&Path>) -> io::Result<cargo_metadata::Metadata> {
+    let mut command = MetadataCommand::new();
+    command.no_deps();
+    if let Some(dir) = dir {
+        command.current_dir(dir);
+    }
+    command.exec().map_err(io::Error::other)
+}
+
+fn ensure_absolute(path: PathBuf) -> io::Result<PathBuf> {
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
+fn decode_fs_rule_path(entry: &FsRuleEntry) -> io::Result<PathBuf> {
+    let len = entry
+        .rule
+        .path
+        .iter()
+        .position(|&byte| byte == 0)
+        .unwrap_or(entry.rule.path.len());
+    let path_slice = &entry.rule.path[..len];
+    let path = std::str::from_utf8(path_slice)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    Ok(PathBuf::from(path))
+}
+
+fn fs_rule_entry_from_path(path: &Path, access: u8, unit: u32) -> io::Result<FsRuleEntry> {
+    let path_str = path.to_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("filesystem path '{path:?}' contains invalid UTF-8"),
+        )
+    })?;
+    let encoded = qqrm_policy_compiler::encode_fs_path(path_str)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    Ok(FsRuleEntry {
+        unit,
+        rule: FsRule {
+            access,
+            reserved: [0; 3],
+            path: encoded,
+        },
     })
 }
 
@@ -438,10 +590,11 @@ mod tests {
         Cli, Commands, EventRecord, build_command, export_sarif, handle_init_with, handle_report,
         read_recent_events, run_command, setup_isolation,
     };
+    use bpf_api::{FS_READ, FS_WRITE};
     use clap::{CommandFactory, Parser};
     use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
     use serial_test::serial;
-    use std::ffi::OsStr;
+    use std::ffi::{OsStr, OsString};
     use std::fs::File;
     use std::io::{Cursor, Write};
     use std::path::{Path, PathBuf};
@@ -465,6 +618,35 @@ mod tests {
     impl Drop for DirGuard {
         fn drop(&mut self) {
             let _ = std::env::set_current_dir(&self.original);
+        }
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set_path(key: &'static str, value: &Path) -> Self {
+            let original = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = &self.original {
+                unsafe {
+                    std::env::set_var(self.key, value);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(self.key);
+                }
+            }
         }
     }
 
@@ -807,5 +989,83 @@ deny = ["execve"]
 
         let exec = exec_paths(&isolation.maps_layout);
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
+    }
+
+    fn fs_rules(layout: &MapsLayout) -> Vec<(u32, PathBuf, u8)> {
+        layout
+            .fs_rules
+            .iter()
+            .map(|entry| {
+                let len = entry
+                    .rule
+                    .path
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(entry.rule.path.len());
+                let path = std::str::from_utf8(&entry.rule.path[..len]).unwrap();
+                (entry.unit, PathBuf::from(path), entry.rule.access)
+            })
+            .collect()
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_adds_implicit_cargo_directories() {
+        let dir = tempdir().unwrap();
+        let workspace = dir.path().join("workspace");
+        let target = dir.path().join("target");
+        let out_dir = dir.path().join("out");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let _workspace_env = EnvGuard::set_path("CARGO_WORKSPACE_DIR", &workspace);
+        let _target_env = EnvGuard::set_path("CARGO_TARGET_DIR", &target);
+        let _out_env = EnvGuard::set_path("OUT_DIR", &out_dir);
+        let _guard = DirGuard::change_to(dir.path());
+
+        let isolation = setup_isolation(&[], &[]).unwrap();
+        let rules = fs_rules(&isolation.maps_layout);
+
+        assert!(rules.contains(&(0, workspace.clone(), FS_READ)));
+        assert!(rules.contains(&(0, target.clone(), FS_READ | FS_WRITE)));
+        assert!(rules.contains(&(0, out_dir.clone(), FS_READ | FS_WRITE)));
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_merges_duplicate_filesystem_rules() {
+        let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        let workspace = dir.path().join("workspace");
+        let target = dir.path().join("target");
+        let out_dir = dir.path().join("out");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        std::fs::write(
+            "warden.toml",
+            format!(
+                "mode = \"enforce\"\nfs.default = \"strict\"\nnet.default = \"deny\"\nexec.default = \"allowlist\"\n\n[allow.fs]\nread_extra = [\"{}\"]\nwrite_extra = []\n",
+                target.to_str().unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let _workspace_env = EnvGuard::set_path("CARGO_WORKSPACE_DIR", &workspace);
+        let _target_env = EnvGuard::set_path("CARGO_TARGET_DIR", &target);
+        let _out_env = EnvGuard::set_path("OUT_DIR", &out_dir);
+
+        let isolation = setup_isolation(&[], &[]).unwrap();
+        let rules = fs_rules(&isolation.maps_layout);
+
+        let target_rules: Vec<_> = rules
+            .iter()
+            .filter(|(unit, path, _)| *unit == 0 && path == &target)
+            .collect();
+        assert_eq!(target_rules.len(), 1);
+        assert_eq!(target_rules[0].2, FS_READ | FS_WRITE);
     }
 }
