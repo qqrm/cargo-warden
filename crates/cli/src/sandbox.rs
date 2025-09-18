@@ -5,14 +5,16 @@ use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, Lsm};
 use aya::{Btf, Ebpf, EbpfLoader, Pod};
-use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRuleEntry};
+use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRule, NetRuleEntry};
 use qqrm_agent_lite::{self, Config as AgentConfig, Shutdown, ShutdownHandle};
 use qqrm_policy_compiler::MapsLayout;
+use serde::Serialize;
 use std::cell::UnsafeCell;
 use std::convert::TryFrom;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -419,6 +421,7 @@ impl Drop for Cgroup {
 struct FakeSandbox {
     cgroup_dir: PathBuf,
     agent: Option<FakeAgent>,
+    layout_recorder: Option<LayoutRecorder>,
 }
 
 impl FakeSandbox {
@@ -433,13 +436,18 @@ impl FakeSandbox {
         }
         fs::create_dir_all(&cgroup_dir)?;
         let agent = FakeAgent::spawn(events)?;
+        let layout_recorder = LayoutRecorder::from_env()?;
         Ok(Self {
             cgroup_dir,
             agent: Some(agent),
+            layout_recorder,
         })
     }
 
-    fn run(&mut self, mut command: Command, _layout: &MapsLayout) -> io::Result<ExitStatus> {
+    fn run(&mut self, mut command: Command, layout: &MapsLayout) -> io::Result<ExitStatus> {
+        if let Some(recorder) = &self.layout_recorder {
+            recorder.record(layout)?;
+        }
         command.status()
     }
 
@@ -462,6 +470,106 @@ impl Drop for FakeSandbox {
         if self.cgroup_dir.exists() {
             let _ = fs::remove_dir_all(&self.cgroup_dir);
         }
+    }
+}
+
+struct LayoutRecorder {
+    path: PathBuf,
+}
+
+impl LayoutRecorder {
+    fn from_env() -> io::Result<Option<Self>> {
+        match env::var_os("QQRM_WARDEN_FAKE_LAYOUT_PATH") {
+            Some(path) => {
+                let path = PathBuf::from(path);
+                if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                    fs::create_dir_all(parent)?;
+                }
+                Ok(Some(Self { path }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn record(&self, layout: &MapsLayout) -> io::Result<()> {
+        let record = RecordedLayout::from(layout);
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        serde_json::to_writer(&mut file, &record).map_err(io::Error::other)?;
+        file.write_all(b"\n")?;
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+struct RecordedLayout {
+    exec_allowlist: Vec<String>,
+    net_rules: Vec<RecordedNetRule>,
+    fs_rules: Vec<RecordedFsRule>,
+}
+
+impl From<&MapsLayout> for RecordedLayout {
+    fn from(layout: &MapsLayout) -> Self {
+        Self {
+            exec_allowlist: layout
+                .exec_allowlist
+                .iter()
+                .map(|entry| decode_null_terminated(&entry.path))
+                .collect(),
+            net_rules: layout.net_rules.iter().map(RecordedNetRule::from).collect(),
+            fs_rules: layout.fs_rules.iter().map(RecordedFsRule::from).collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct RecordedNetRule {
+    addr: String,
+    prefix_len: u8,
+    port: u16,
+    protocol: u8,
+}
+
+impl From<&NetRuleEntry> for RecordedNetRule {
+    fn from(entry: &NetRuleEntry) -> Self {
+        Self {
+            addr: decode_net_addr(&entry.rule),
+            prefix_len: entry.rule.prefix_len,
+            port: entry.rule.port,
+            protocol: entry.rule.protocol,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct RecordedFsRule {
+    path: String,
+    access: u8,
+}
+
+impl From<&FsRuleEntry> for RecordedFsRule {
+    fn from(entry: &FsRuleEntry) -> Self {
+        Self {
+            path: decode_null_terminated(&entry.rule.path),
+            access: entry.rule.access,
+        }
+    }
+}
+
+fn decode_null_terminated(bytes: &[u8]) -> String {
+    let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..len]).to_string()
+}
+
+fn decode_net_addr(rule: &NetRule) -> String {
+    if rule.addr[4..].iter().all(|&b| b == 0) {
+        let mut octets = [0u8; 4];
+        octets.copy_from_slice(&rule.addr[..4]);
+        Ipv4Addr::from(octets).to_string()
+    } else {
+        Ipv6Addr::from(rule.addr).to_string()
     }
 }
 
