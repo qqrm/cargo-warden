@@ -21,7 +21,7 @@ qqrm-policy-compiler = { version = "0.1.0", path = "../policy-compiler" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
-qqrm-agent-lite = { path = "../agent-lite" }
+qqrm-agent-lite = { version = "0.1.0", path = "../agent-lite" }
 
 [dev-dependencies]
 serial_test = "3"
