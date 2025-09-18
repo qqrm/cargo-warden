@@ -446,6 +446,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "event-reporting"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1149,6 +1158,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aya",
+ "event-reporting",
  "futures-core",
  "futures-util",
  "libc",
@@ -1156,7 +1166,6 @@ dependencies = [
  "prometheus",
  "prost",
  "qqrm-bpf-api",
- "serde",
  "serde_json",
  "serial_test",
  "systemd-journal-logger",
@@ -1191,6 +1200,11 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "clap",
+ "event-reporting",
+ "libc",
+ "libseccomp",
+ "qqrm-agent-lite",
+ "qqrm-bpf-api",
  "qqrm-policy-compiler",
  "qqrm-policy-core",
  "qqrm-sandbox-runtime",
