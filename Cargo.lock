@@ -1191,6 +1191,8 @@ dependencies = [
  "libc",
  "libseccomp",
  "qqrm-agent-lite",
+ "qqrm-bpf-api",
+ "qqrm-policy-compiler",
  "qqrm-policy-core",
  "serde",
  "serde_json",

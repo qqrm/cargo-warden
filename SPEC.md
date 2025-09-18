@@ -188,6 +188,9 @@ hosts = ["127.0.0.1:1080"]  # example local proxy
 [allow.fs]
 write_extra = ["/tmp/warden-scratch"]
 read_extra  = ["/usr/include"]
+
+[allow.env]
+read = ["CARGO", "OUT_DIR"]
 ```
 
 Optional declarations in package `Cargo.toml`:

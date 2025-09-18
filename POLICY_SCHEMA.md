@@ -18,6 +18,9 @@ hosts = ["127.0.0.1:1080"]
 write_extra = ["/tmp/warden-scratch"]
 read_extra = ["/usr/include"]
 
+[allow.env]
+read = ["HOME", "CARGO"]
+
 [syscall]
 deny = ["clone"]
 ```
@@ -60,8 +63,19 @@ Additional paths allowed for writing when `fs.default = "strict"`.
 ### `allow.fs.read_extra`
 Additional paths allowed for reading when `fs.default = "strict"`.
 
+### `allow.env.read`
+Environment variables that build scripts are allowed to read explicitly.
+
 ### `syscall.deny`
 System calls blocked via seccomp.
+
+## Internal Representation
+
+`warden.toml` entries are converted into a list of permission rules during
+deserialization. Each rule is represented by the `policy-core` crate as a
+`Permission` enum variant (for example `FsRead`, `Exec`, `NetConnect`, or
+`EnvRead`). A parsed [`Policy`](./crates/policy-core/src/lib.rs) contains the
+requested `mode` and the collected permission rules in evaluation order.
 
 ## Workspace Policy
 `workspace.warden.toml` allows per-package overrides.

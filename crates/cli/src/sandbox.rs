@@ -1,11 +1,15 @@
 use crate::apply_seccomp;
 use anyhow::Error as AnyhowError;
-use aya::maps::{MapData, ring_buf::RingBuf};
+use aya::maps::{Array, MapData, ring_buf::RingBuf};
 use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, Lsm};
-use aya::{Btf, Ebpf, EbpfLoader};
+use aya::{Btf, Ebpf, EbpfLoader, Pod};
+use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRuleEntry};
 use qqrm_agent_lite::{self, Config as AgentConfig, Shutdown, ShutdownHandle};
+use qqrm_policy_compiler::MapsLayout;
+use std::cell::UnsafeCell;
+use std::convert::TryFrom;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -40,10 +44,15 @@ impl Sandbox {
         })
     }
 
-    pub(crate) fn run(&mut self, command: Command, deny: &[String]) -> io::Result<ExitStatus> {
+    pub(crate) fn run(
+        &mut self,
+        command: Command,
+        deny: &[String],
+        layout: &MapsLayout,
+    ) -> io::Result<ExitStatus> {
         match &mut self.inner {
-            SandboxImpl::Real(real) => real.run(command, deny),
-            SandboxImpl::Fake(fake) => fake.run(command),
+            SandboxImpl::Real(real) => real.run(command, deny, layout),
+            SandboxImpl::Fake(fake) => fake.run(command, layout),
         }
     }
 
@@ -56,7 +65,7 @@ impl Sandbox {
 }
 
 struct RealSandbox {
-    bpf: Ebpf,
+    bpf: UnsafeCell<Ebpf>,
     cgroup: Cgroup,
     lsm_links: Vec<LsmLink>,
     cgroup_links: Vec<CgroupSockAddrLink>,
@@ -73,7 +82,7 @@ impl RealSandbox {
         let bpf = load_bpf()?;
         let cgroup = Cgroup::create()?;
         let mut sandbox = RealSandbox {
-            bpf,
+            bpf: UnsafeCell::new(bpf),
             cgroup,
             lsm_links: Vec::new(),
             cgroup_links: Vec::new(),
@@ -82,77 +91,108 @@ impl RealSandbox {
         };
         sandbox.attach_lsm()?;
         sandbox.attach_cgroup()?;
-        let ring = take_events_ring(&mut sandbox.bpf)?;
+        let ring = sandbox.with_bpf(take_events_ring)?;
         sandbox.agent = Some(start_agent(ring, sandbox.events_path.clone())?);
         Ok(sandbox)
     }
 
+    fn with_bpf<R>(&self, func: impl FnOnce(&mut Ebpf) -> io::Result<R>) -> io::Result<R> {
+        let ptr = self.bpf.get();
+        // SAFETY: `RealSandbox` ensures exclusive access to the underlying `Ebpf`
+        // instance. We only call this helper on the main thread or in the pre-exec
+        // hook after `fork`, so no concurrent mutable borrows occur.
+        unsafe { func(&mut *ptr) }
+    }
+
     fn attach_lsm(&mut self) -> io::Result<()> {
         let btf = Btf::from_sys_fs().map_err(io::Error::other)?;
-        for hook in [
-            "bprm_check_security",
-            "file_open",
-            "file_permission",
-            "inode_unlink",
-        ] {
-            let program = self
-                .bpf
-                .program_mut(hook)
-                .ok_or_else(|| program_not_found(hook))?;
-            let program: &mut Lsm = program
-                .try_into()
-                .map_err(|err| io::Error::other(format!("program {hook} type mismatch: {err}")))?;
-            program
-                .load(hook, &btf)
-                .map_err(|err| io::Error::other(format!("load {hook}: {err}")))?;
-            let link_id = program
-                .attach()
-                .map_err(|err| io::Error::other(format!("attach {hook}: {err}")))?;
-            let link = program
-                .take_link(link_id)
-                .map_err(|err| io::Error::other(format!("link {hook}: {err}")))?;
-            self.lsm_links.push(link);
-        }
+        let mut links = Vec::new();
+        self.with_bpf(|bpf| {
+            for hook in [
+                "bprm_check_security",
+                "file_open",
+                "file_permission",
+                "inode_unlink",
+            ] {
+                let program = bpf
+                    .program_mut(hook)
+                    .ok_or_else(|| program_not_found(hook))?;
+                let program: &mut Lsm = program.try_into().map_err(|err| {
+                    io::Error::other(format!("program {hook} type mismatch: {err}"))
+                })?;
+                program
+                    .load(hook, &btf)
+                    .map_err(|err| io::Error::other(format!("load {hook}: {err}")))?;
+                let link_id = program
+                    .attach()
+                    .map_err(|err| io::Error::other(format!("attach {hook}: {err}")))?;
+                let link = program
+                    .take_link(link_id)
+                    .map_err(|err| io::Error::other(format!("link {hook}: {err}")))?;
+                links.push(link);
+            }
+            Ok(())
+        })?;
+        self.lsm_links.extend(links);
         Ok(())
     }
 
     fn attach_cgroup(&mut self) -> io::Result<()> {
         let dir = self.cgroup.dir_file()?;
-        for name in ["connect4", "connect6", "sendmsg4", "sendmsg6"] {
-            let program = self
-                .bpf
-                .program_mut(name)
-                .ok_or_else(|| program_not_found(name))?;
-            let program: &mut CgroupSockAddr = program
-                .try_into()
-                .map_err(|err| io::Error::other(format!("program {name} type mismatch: {err}")))?;
-            program
-                .load()
-                .map_err(|err| io::Error::other(format!("load {name}: {err}")))?;
-            let link_id = program
-                .attach(dir, CgroupAttachMode::Single)
-                .map_err(|err| io::Error::other(format!("attach {name}: {err}")))?;
-            let link = program
-                .take_link(link_id)
-                .map_err(|err| io::Error::other(format!("link {name}: {err}")))?;
-            self.cgroup_links.push(link);
-        }
+        let mut links = Vec::new();
+        self.with_bpf(|bpf| {
+            for name in ["connect4", "connect6", "sendmsg4", "sendmsg6"] {
+                let program = bpf
+                    .program_mut(name)
+                    .ok_or_else(|| program_not_found(name))?;
+                let program: &mut CgroupSockAddr = program.try_into().map_err(|err| {
+                    io::Error::other(format!("program {name} type mismatch: {err}"))
+                })?;
+                program
+                    .load()
+                    .map_err(|err| io::Error::other(format!("load {name}: {err}")))?;
+                let link_id = program
+                    .attach(dir, CgroupAttachMode::Single)
+                    .map_err(|err| io::Error::other(format!("attach {name}: {err}")))?;
+                let link = program
+                    .take_link(link_id)
+                    .map_err(|err| io::Error::other(format!("link {name}: {err}")))?;
+                links.push(link);
+            }
+            Ok(())
+        })?;
+        self.cgroup_links.extend(links);
         Ok(())
     }
 
-    fn run(&self, command: Command, deny: &[String]) -> io::Result<ExitStatus> {
+    fn run(
+        &self,
+        command: Command,
+        deny: &[String],
+        layout: &MapsLayout,
+    ) -> io::Result<ExitStatus> {
         let mut command = command;
-        self.install_pre_exec(&mut command, deny)?;
+        self.install_pre_exec(&mut command, deny, layout.clone())?;
         let mut child = command.spawn()?;
         child.wait()
     }
 
-    fn install_pre_exec(&self, cmd: &mut Command, deny: &[String]) -> io::Result<()> {
+    fn install_pre_exec(
+        &self,
+        cmd: &mut Command,
+        deny: &[String],
+        layout: MapsLayout,
+    ) -> io::Result<()> {
         let procs_fd = self.cgroup.procs_fd_raw()?;
         let rules = deny.to_vec();
+        let bpf_ptr = self.bpf.get() as usize;
         unsafe {
             cmd.pre_exec(move || {
                 join_cgroup_fd(procs_fd)?;
+                {
+                    let bpf = &mut *(bpf_ptr as *mut Ebpf);
+                    populate_maps(bpf, &layout)?;
+                }
                 if !rules.is_empty() {
                     apply_seccomp(&rules)?;
                 }
@@ -170,6 +210,126 @@ impl RealSandbox {
         Ok(())
     }
 }
+
+fn populate_maps(bpf: &mut Ebpf, layout: &MapsLayout) -> io::Result<()> {
+    update_array(
+        bpf,
+        "EXEC_ALLOWLIST",
+        "EXEC_ALLOWLIST_LENGTH",
+        &layout.exec_allowlist,
+        |entry| ExecAllowEntryPod(*entry),
+    )?;
+    update_array(
+        bpf,
+        "NET_RULES",
+        "NET_RULES_LENGTH",
+        &layout.net_rules,
+        |entry| NetRuleEntryPod(*entry),
+    )?;
+    update_array(
+        bpf,
+        "NET_PARENTS",
+        "NET_PARENTS_LENGTH",
+        &layout.net_parents,
+        |entry| NetParentEntryPod(*entry),
+    )?;
+    update_array(
+        bpf,
+        "FS_RULES",
+        "FS_RULES_LENGTH",
+        &layout.fs_rules,
+        |entry| FsRuleEntryPod(*entry),
+    )?;
+    Ok(())
+}
+
+fn update_array<T, P, F>(
+    bpf: &mut Ebpf,
+    map_name: &str,
+    len_map_name: &str,
+    entries: &[T],
+    convert: F,
+) -> io::Result<()>
+where
+    P: Pod,
+    F: Fn(&T) -> P,
+{
+    {
+        let len_map = bpf
+            .map_mut(len_map_name)
+            .ok_or_else(|| map_not_found(len_map_name))?;
+        let mut len_array = Array::<&mut MapData, u32>::try_from(len_map)
+            .map_err(|err| io::Error::other(format!("{len_map_name}: {err}")))?;
+        len_array
+            .set(0, 0, 0)
+            .map_err(|err| io::Error::other(format!("set {len_map_name}: {err}")))?;
+    }
+
+    {
+        let map = bpf
+            .map_mut(map_name)
+            .ok_or_else(|| map_not_found(map_name))?;
+        let mut array = Array::<&mut MapData, P>::try_from(map)
+            .map_err(|err| io::Error::other(format!("{map_name}: {err}")))?;
+        let capacity = array.len() as usize;
+        if entries.len() > capacity {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "map {map_name} capacity {capacity} exceeded by {} entries",
+                    entries.len()
+                ),
+            ));
+        }
+        for (idx, entry) in entries.iter().enumerate() {
+            array
+                .set(idx as u32, convert(entry), 0)
+                .map_err(|err| io::Error::other(format!("set {map_name}[{idx}]: {err}")))?;
+        }
+    }
+
+    let len = u32::try_from(entries.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("too many entries for map {map_name}"),
+        )
+    })?;
+    {
+        let len_map = bpf
+            .map_mut(len_map_name)
+            .ok_or_else(|| map_not_found(len_map_name))?;
+        let mut len_array = Array::<&mut MapData, u32>::try_from(len_map)
+            .map_err(|err| io::Error::other(format!("{len_map_name}: {err}")))?;
+        len_array
+            .set(0, len, 0)
+            .map_err(|err| io::Error::other(format!("set {len_map_name}: {err}")))?;
+    }
+    Ok(())
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct ExecAllowEntryPod(ExecAllowEntry);
+
+unsafe impl Pod for ExecAllowEntryPod {}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct NetRuleEntryPod(NetRuleEntry);
+
+unsafe impl Pod for NetRuleEntryPod {}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct NetParentEntryPod(NetParentEntry);
+
+unsafe impl Pod for NetParentEntryPod {}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct FsRuleEntryPod(FsRuleEntry);
+
+unsafe impl Pod for FsRuleEntryPod {}
 
 struct AgentHandle {
     shutdown: ShutdownHandle,
@@ -279,7 +439,7 @@ impl FakeSandbox {
         })
     }
 
-    fn run(&mut self, mut command: Command) -> io::Result<ExitStatus> {
+    fn run(&mut self, mut command: Command, _layout: &MapsLayout) -> io::Result<ExitStatus> {
         command.status()
     }
 
@@ -439,6 +599,10 @@ fn fake_cgroup_dir() -> PathBuf {
             unique_suffix()
         ))
     }
+}
+
+fn map_not_found(name: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::NotFound, format!("missing BPF map {name}"))
 }
 
 fn program_not_found(name: &str) -> io::Error {

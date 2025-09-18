@@ -1,8 +1,12 @@
 use clap::{Parser, Subcommand};
+use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy};
+use qqrm_policy_compiler::{self, MapsLayout};
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::fs::File;
+use std::hash::Hash;
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, exit};
 
 mod sandbox;
@@ -81,6 +85,11 @@ impl std::fmt::Display for EventRecord {
     }
 }
 
+struct IsolationConfig {
+    syscall_deny: Vec<String>,
+    maps_layout: MapsLayout,
+}
+
 fn sarif_from_events(events: &[EventRecord]) -> serde_json::Value {
     let results: Vec<_> = events
         .iter()
@@ -153,34 +162,145 @@ fn main() {
 }
 
 fn handle_build(args: Vec<String>, allow: &[String], policy: &[String]) -> io::Result<()> {
-    let deny = setup_isolation(allow, policy)?;
-    let status = run_in_sandbox(build_command(&args), &deny)?;
+    let isolation = setup_isolation(allow, policy)?;
+    let status = run_in_sandbox(build_command(&args), &isolation)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
     Ok(())
 }
 
-fn setup_isolation(_allow: &[String], policy: &[String]) -> io::Result<Vec<String>> {
-    use std::collections::HashSet;
-    let mut deny = HashSet::new();
-    for path in policy {
-        let text = std::fs::read_to_string(path)?;
-        let policy = policy_core::Policy::from_toml_str(&text)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let report = policy.validate();
-        if !report.errors.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("{:?}", report.errors),
-            ));
-        }
-        for warn in report.warnings {
-            eprintln!("warning: {warn}");
-        }
-        deny.extend(policy.syscall.deny);
+fn setup_isolation(allow: &[String], policy_paths: &[String]) -> io::Result<IsolationConfig> {
+    let mut policies = Vec::new();
+    policies.push(load_default_policy()?);
+    for path in policy_paths {
+        policies.push(load_policy(Path::new(path))?);
     }
-    Ok(deny.into_iter().collect())
+    let policy = merge_policies(policies, allow);
+
+    let report = policy.validate();
+    if !report.errors.is_empty() {
+        let message = report
+            .errors
+            .into_iter()
+            .map(|err| err.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, message));
+    }
+    for warn in report.warnings {
+        eprintln!("warning: {warn}");
+    }
+
+    let layout = qqrm_policy_compiler::compile(&policy)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+
+    Ok(IsolationConfig {
+        syscall_deny: policy.syscall_deny().cloned().collect(),
+        maps_layout: layout,
+    })
+}
+
+fn load_default_policy() -> io::Result<Policy> {
+    let path = Path::new("warden.toml");
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse_policy_from_str(path, &text),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(empty_policy()),
+        Err(err) => Err(err),
+    }
+}
+
+fn load_policy(path: &Path) -> io::Result<Policy> {
+    let text = std::fs::read_to_string(path)?;
+    parse_policy_from_str(path, &text)
+}
+
+fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
+    Policy::from_toml_str(text).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{}: {err}", path.display()),
+        )
+    })
+}
+
+fn merge_policies(policies: Vec<Policy>, cli_allow: &[String]) -> Policy {
+    let mut mode = Mode::Enforce;
+    let mut fs_default = FsDefault::Strict;
+    let mut net_default = NetDefault::Deny;
+    let mut exec_default = ExecDefault::Allowlist;
+    let mut fs_reads: Vec<PathBuf> = Vec::new();
+    let mut fs_writes: Vec<PathBuf> = Vec::new();
+    let mut exec_allowed: Vec<String> = Vec::new();
+    let mut net_hosts: Vec<String> = Vec::new();
+    let mut syscall_deny: Vec<String> = Vec::new();
+    let mut env_read: Vec<String> = Vec::new();
+
+    for policy in policies {
+        mode = policy.mode;
+        fs_default = policy.fs_default();
+        net_default = policy.net_default();
+        exec_default = policy.exec_default();
+        fs_reads.extend(policy.fs_read_paths().cloned());
+        fs_writes.extend(policy.fs_write_paths().cloned());
+        exec_allowed.extend(policy.exec_allowed().cloned());
+        net_hosts.extend(policy.net_hosts().cloned());
+        syscall_deny.extend(policy.syscall_deny().cloned());
+        env_read.extend(policy.env_read_vars().cloned());
+    }
+
+    exec_allowed.extend(cli_allow.iter().cloned());
+
+    dedup_preserving_order(&mut fs_reads);
+    dedup_preserving_order(&mut fs_writes);
+    dedup_preserving_order(&mut exec_allowed);
+    dedup_preserving_order(&mut net_hosts);
+    dedup_preserving_order(&mut syscall_deny);
+    dedup_preserving_order(&mut env_read);
+
+    let mut rules = Vec::new();
+    rules.push(Permission::FsDefault(fs_default));
+    rules.push(Permission::NetDefault(net_default));
+    rules.push(Permission::ExecDefault(exec_default));
+    for path in fs_writes {
+        rules.push(Permission::FsWrite(path));
+    }
+    for path in fs_reads {
+        rules.push(Permission::FsRead(path));
+    }
+    for host in net_hosts {
+        rules.push(Permission::NetConnect(host));
+    }
+    for exec in exec_allowed {
+        rules.push(Permission::Exec(exec));
+    }
+    for env in env_read {
+        rules.push(Permission::EnvRead(env));
+    }
+    for syscall in syscall_deny {
+        rules.push(Permission::SyscallDeny(syscall));
+    }
+
+    Policy { mode, rules }
+}
+
+fn dedup_preserving_order<T>(items: &mut Vec<T>)
+where
+    T: Eq + Hash + Clone,
+{
+    let mut seen = HashSet::new();
+    items.retain(|item| seen.insert(item.clone()));
+}
+
+fn empty_policy() -> Policy {
+    Policy {
+        mode: Mode::Enforce,
+        rules: vec![
+            Permission::FsDefault(FsDefault::Strict),
+            Permission::NetDefault(NetDefault::Deny),
+            Permission::ExecDefault(ExecDefault::Allowlist),
+        ],
+    }
 }
 
 fn build_command(args: &[String]) -> Command {
@@ -213,8 +333,8 @@ fn handle_run(cmd: Vec<String>, allow: &[String], policy: &[String]) -> io::Resu
             "missing command",
         ));
     }
-    let deny = setup_isolation(allow, policy)?;
-    let status = run_in_sandbox(run_command(&cmd), &deny)?;
+    let isolation = setup_isolation(allow, policy)?;
+    let status = run_in_sandbox(run_command(&cmd), &isolation)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
@@ -229,9 +349,9 @@ fn run_command(cmd: &[String]) -> Command {
     command
 }
 
-fn run_in_sandbox(command: Command, deny: &[String]) -> io::Result<ExitStatus> {
+fn run_in_sandbox(command: Command, isolation: &IsolationConfig) -> io::Result<ExitStatus> {
     let mut sandbox = Sandbox::new()?;
-    let run_result = sandbox.run(command, deny);
+    let run_result = sandbox.run(command, &isolation.syscall_deny, &isolation.maps_layout);
     let shutdown_result = sandbox.shutdown();
     let status = match run_result {
         Ok(status) => status,
@@ -348,6 +468,8 @@ mod tests {
     use std::io::{Cursor, Write};
     use std::path::{Path, PathBuf};
 
+    use qqrm_policy_compiler::MapsLayout;
+
     use tempfile::{NamedTempFile, tempdir};
 
     struct DirGuard {
@@ -366,6 +488,21 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::env::set_current_dir(&self.original);
         }
+    }
+
+    fn exec_paths(layout: &MapsLayout) -> Vec<String> {
+        layout
+            .exec_allowlist
+            .iter()
+            .map(|entry| {
+                let len = entry
+                    .path
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(entry.path.len());
+                String::from_utf8_lossy(&entry.path[..len]).into_owned()
+            })
+            .collect()
     }
 
     #[test]
@@ -508,13 +645,14 @@ mod tests {
 
         let policy = Policy::from_toml_str(&config).unwrap();
         assert_eq!(policy.mode, Mode::Enforce);
-        assert_eq!(policy.fs.default, FsDefault::Strict);
-        assert_eq!(policy.net.default, NetDefault::Deny);
-        assert_eq!(policy.exec.default, ExecDefault::Allowlist);
-        assert_eq!(policy.allow.exec.allowed, ["foo", "bar"]);
-        assert!(policy.allow.net.hosts.is_empty());
-        assert!(policy.allow.fs.write_extra.is_empty());
-        assert!(policy.allow.fs.read_extra.is_empty());
+        assert_eq!(policy.fs_default(), FsDefault::Strict);
+        assert_eq!(policy.net_default(), NetDefault::Deny);
+        assert_eq!(policy.exec_default(), ExecDefault::Allowlist);
+        let exec_allowed: Vec<_> = policy.exec_allowed().cloned().collect();
+        assert_eq!(exec_allowed, ["foo", "bar"]);
+        assert_eq!(policy.net_hosts().count(), 0);
+        assert_eq!(policy.fs_write_paths().count(), 0);
+        assert_eq!(policy.fs_read_paths().count(), 0);
     }
 
     #[test]
@@ -602,17 +740,94 @@ mod tests {
     }
 
     #[test]
-    fn setup_isolation_merges_syscalls() {
+    #[serial]
+    fn setup_isolation_merges_syscalls_and_allow_entries() {
         use std::fs::write;
         let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        write(
+            "warden.toml",
+            r#"mode = "enforce"
+fs.default = "strict"
+net.default = "deny"
+exec.default = "allowlist"
+
+[allow.exec]
+allowed = ["/usr/bin/rustc"]
+"#,
+        )
+        .unwrap();
+
         let p1 = dir.path().join("p1.toml");
+        write(
+            &p1,
+            r#"mode = "enforce"
+fs.default = "strict"
+net.default = "deny"
+exec.default = "allowlist"
+
+[syscall]
+deny = ["clone"]
+
+[allow.exec]
+allowed = ["/bin/bash"]
+"#,
+        )
+        .unwrap();
+
         let p2 = dir.path().join("p2.toml");
-        write(&p1, "mode = \"enforce\"\n[syscall]\ndeny = [\"clone\"]").unwrap();
-        write(&p2, "mode = \"enforce\"\n[syscall]\ndeny = [\"execve\"]").unwrap();
+        write(
+            &p2,
+            r#"mode = "enforce"
+fs.default = "strict"
+net.default = "deny"
+exec.default = "allowlist"
+
+[syscall]
+deny = ["execve"]
+"#,
+        )
+        .unwrap();
+
         let paths = [p1.to_str().unwrap().into(), p2.to_str().unwrap().into()];
-        let deny = setup_isolation(&[], &paths).unwrap();
-        assert!(deny.contains(&"clone".to_string()));
-        assert!(deny.contains(&"execve".to_string()));
-        assert_eq!(deny.len(), 2);
+        let allow = vec!["/usr/bin/rustc".to_string(), "/usr/bin/git".to_string()];
+        let isolation = setup_isolation(&allow, &paths).unwrap();
+
+        assert!(isolation.syscall_deny.contains(&"clone".to_string()));
+        assert!(isolation.syscall_deny.contains(&"execve".to_string()));
+        assert_eq!(isolation.syscall_deny.len(), 2);
+
+        let exec = exec_paths(&isolation.maps_layout);
+        assert!(exec.contains(&"/usr/bin/rustc".to_string()));
+        assert!(exec.contains(&"/bin/bash".to_string()));
+        assert!(exec.contains(&"/usr/bin/git".to_string()));
+        assert_eq!(exec.len(), 3);
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_defaults_to_empty_policy() {
+        let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        let isolation = setup_isolation(&[], &[]).unwrap();
+
+        assert!(isolation.syscall_deny.is_empty());
+        assert!(isolation.maps_layout.exec_allowlist.is_empty());
+        assert!(isolation.maps_layout.net_rules.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_uses_cli_allow_when_no_file() {
+        let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        let allow = vec!["/bin/bash".to_string()];
+        let isolation = setup_isolation(&allow, &[]).unwrap();
+
+        let exec = exec_paths(&isolation.maps_layout);
+        assert_eq!(exec, vec!["/bin/bash".to_string()]);
     }
 }

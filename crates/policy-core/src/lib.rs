@@ -12,7 +12,7 @@ pub enum Mode {
     Enforce,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum FsDefault {
     Strict,
@@ -25,7 +25,7 @@ impl Default for FsDefault {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum NetDefault {
     Deny,
@@ -38,7 +38,7 @@ impl Default for NetDefault {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecDefault {
     Allowlist,
@@ -51,114 +51,367 @@ impl Default for ExecDefault {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Permission {
+    FsDefault(FsDefault),
+    FsRead(PathBuf),
+    FsWrite(PathBuf),
+    NetDefault(NetDefault),
+    NetConnect(String),
+    ExecDefault(ExecDefault),
+    Exec(String),
+    SyscallDeny(String),
+    EnvRead(String),
+}
+
+#[derive(Debug, Clone)]
 pub struct Policy {
     pub mode: Mode,
-    #[serde(default)]
-    pub fs: FsPolicy,
-    #[serde(default)]
-    pub net: NetPolicy,
-    #[serde(default)]
-    pub exec: ExecPolicy,
-    #[serde(default)]
-    pub syscall: SyscallPolicy,
-    #[serde(default)]
-    pub allow: AllowSection,
+    pub rules: Vec<Permission>,
 }
 
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct FsPolicy {
-    #[serde(default)]
-    pub default: FsDefault,
+impl Policy {
+    pub fn from_toml_str(toml_str: &str) -> Result<Self, toml::de::Error> {
+        toml::from_str(toml_str)
+    }
+
+    pub fn rules(&self) -> &[Permission] {
+        &self.rules
+    }
+
+    pub fn fs_default(&self) -> FsDefault {
+        self.rules
+            .iter()
+            .rev()
+            .find_map(|perm| match perm {
+                Permission::FsDefault(default) => Some(*default),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn net_default(&self) -> NetDefault {
+        self.rules
+            .iter()
+            .rev()
+            .find_map(|perm| match perm {
+                Permission::NetDefault(default) => Some(*default),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn exec_default(&self) -> ExecDefault {
+        self.rules
+            .iter()
+            .rev()
+            .find_map(|perm| match perm {
+                Permission::ExecDefault(default) => Some(*default),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn fs_read_paths(&self) -> impl Iterator<Item = &PathBuf> {
+        self.rules.iter().filter_map(|perm| match perm {
+            Permission::FsRead(path) => Some(path),
+            _ => None,
+        })
+    }
+
+    pub fn fs_write_paths(&self) -> impl Iterator<Item = &PathBuf> {
+        self.rules.iter().filter_map(|perm| match perm {
+            Permission::FsWrite(path) => Some(path),
+            _ => None,
+        })
+    }
+
+    pub fn exec_allowed(&self) -> impl Iterator<Item = &String> {
+        self.rules.iter().filter_map(|perm| match perm {
+            Permission::Exec(path) => Some(path),
+            _ => None,
+        })
+    }
+
+    pub fn net_hosts(&self) -> impl Iterator<Item = &String> {
+        self.rules.iter().filter_map(|perm| match perm {
+            Permission::NetConnect(host) => Some(host),
+            _ => None,
+        })
+    }
+
+    pub fn syscall_deny(&self) -> impl Iterator<Item = &String> {
+        self.rules.iter().filter_map(|perm| match perm {
+            Permission::SyscallDeny(name) => Some(name),
+            _ => None,
+        })
+    }
+
+    pub fn env_read_vars(&self) -> impl Iterator<Item = &String> {
+        self.rules.iter().filter_map(|perm| match perm {
+            Permission::EnvRead(name) => Some(name),
+            _ => None,
+        })
+    }
+
+    pub fn validate(&self) -> ValidationReport {
+        use ValidationError::*;
+        use ValidationWarning::*;
+
+        let mut errors = Vec::new();
+        let mut warnings = Vec::new();
+
+        let exec_allowed: Vec<String> = self.exec_allowed().cloned().collect();
+        if let Some(dup) = find_first_duplicate(&exec_allowed) {
+            errors.push(DuplicateExec(dup));
+        }
+
+        let net_hosts: Vec<String> = self.net_hosts().cloned().collect();
+        if let Some(dup) = find_first_duplicate(&net_hosts) {
+            errors.push(DuplicateNet(dup));
+        }
+
+        let fs_writes: Vec<PathBuf> = self.fs_write_paths().cloned().collect();
+        if let Some(dup) = find_first_duplicate(&fs_writes) {
+            errors.push(DuplicateFsWrite(dup.to_string_lossy().into()));
+        }
+
+        let fs_reads: Vec<PathBuf> = self.fs_read_paths().cloned().collect();
+        if let Some(dup) = find_first_duplicate(&fs_reads) {
+            errors.push(DuplicateFsRead(dup.to_string_lossy().into()));
+        }
+
+        let syscalls: Vec<String> = self.syscall_deny().cloned().collect();
+        if let Some(dup) = find_first_duplicate(&syscalls) {
+            errors.push(DuplicateSyscall(dup));
+        }
+
+        let read_set: HashSet<_> = fs_reads.iter().cloned().collect();
+        for w in &fs_writes {
+            if read_set.contains(w) {
+                errors.push(FsReadWriteConflict(w.to_string_lossy().into()));
+            }
+        }
+
+        if self.exec_default() == ExecDefault::Allow && !exec_allowed.is_empty() {
+            warnings.push(UnusedExecAllow);
+        }
+
+        if self.net_default() == NetDefault::Allow && !net_hosts.is_empty() {
+            warnings.push(UnusedNetAllow);
+        }
+
+        if self.fs_default() == FsDefault::Unrestricted
+            && (!fs_reads.is_empty() || !fs_writes.is_empty())
+        {
+            warnings.push(UnusedFsAllow);
+        }
+
+        ValidationReport { errors, warnings }
+    }
 }
 
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct NetPolicy {
-    #[serde(default)]
-    pub default: NetDefault,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct ExecPolicy {
-    #[serde(default)]
-    pub default: ExecDefault,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct SyscallPolicy {
-    #[serde(default)]
-    pub deny: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct AllowSection {
-    #[serde(default)]
-    pub exec: ExecAllow,
-    #[serde(default)]
-    pub net: NetAllow,
-    #[serde(default)]
-    pub fs: FsAllow,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct ExecAllow {
-    #[serde(default)]
-    pub allowed: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct NetAllow {
-    #[serde(default)]
-    pub hosts: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct FsAllow {
-    #[serde(default)]
-    pub write_extra: Vec<PathBuf>,
-    #[serde(default)]
-    pub read_extra: Vec<PathBuf>,
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-pub struct PolicyOverride {
-    pub fs: Option<FsPolicy>,
-    pub net: Option<NetPolicy>,
-    pub exec: Option<ExecPolicy>,
-    pub syscall: Option<SyscallPolicy>,
-    #[serde(default)]
-    pub allow: Option<AllowSection>,
+impl<'de> Deserialize<'de> for Policy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        let raw = RawPolicy::deserialize(deserializer)?;
+        Ok(raw.into())
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct WorkspacePolicy {
-    pub root: Policy,
+struct RawPolicy {
+    mode: Mode,
     #[serde(default)]
+    fs: RawFsPolicy,
+    #[serde(default)]
+    net: RawNetPolicy,
+    #[serde(default)]
+    exec: RawExecPolicy,
+    #[serde(default)]
+    syscall: RawSyscallPolicy,
+    #[serde(default)]
+    allow: RawAllowSection,
+}
+
+impl From<RawPolicy> for Policy {
+    fn from(raw: RawPolicy) -> Self {
+        let RawPolicy {
+            mode,
+            fs,
+            net,
+            exec,
+            syscall,
+            allow,
+        } = raw;
+
+        let mut rules = Vec::new();
+        rules.push(Permission::FsDefault(fs.default));
+        rules.push(Permission::NetDefault(net.default));
+        rules.push(Permission::ExecDefault(exec.default));
+        rules.extend(allow.fs.read_extra.into_iter().map(Permission::FsRead));
+        rules.extend(allow.fs.write_extra.into_iter().map(Permission::FsWrite));
+        rules.extend(allow.net.hosts.into_iter().map(Permission::NetConnect));
+        rules.extend(allow.exec.allowed.into_iter().map(Permission::Exec));
+        rules.extend(allow.env.read.into_iter().map(Permission::EnvRead));
+        rules.extend(syscall.deny.into_iter().map(Permission::SyscallDeny));
+
+        Policy { mode, rules }
+    }
+}
+
+impl RawPolicy {
+    fn apply_override(&mut self, override_policy: &RawPolicyOverride) {
+        if let Some(fs) = &override_policy.fs {
+            self.fs = fs.clone();
+        }
+        if let Some(net) = &override_policy.net {
+            self.net = net.clone();
+        }
+        if let Some(exec) = &override_policy.exec {
+            self.exec = exec.clone();
+        }
+        if let Some(syscall) = &override_policy.syscall {
+            self.syscall = syscall.clone();
+        }
+        if let Some(allow) = &override_policy.allow {
+            self.allow = allow.clone();
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct RawFsPolicy {
+    #[serde(default)]
+    default: FsDefault,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct RawNetPolicy {
+    #[serde(default)]
+    default: NetDefault,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct RawExecPolicy {
+    #[serde(default)]
+    default: ExecDefault,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct RawSyscallPolicy {
+    #[serde(default)]
+    deny: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct RawAllowSection {
+    #[serde(default)]
+    exec: RawExecAllow,
+    #[serde(default)]
+    net: RawNetAllow,
+    #[serde(default)]
+    fs: RawFsAllow,
+    #[serde(default)]
+    env: RawEnvAllow,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct RawExecAllow {
+    #[serde(default)]
+    allowed: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct RawNetAllow {
+    #[serde(default)]
+    hosts: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct RawFsAllow {
+    #[serde(default)]
+    write_extra: Vec<PathBuf>,
+    #[serde(default)]
+    read_extra: Vec<PathBuf>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct RawEnvAllow {
+    #[serde(default)]
+    read: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PolicyOverride {
+    raw: RawPolicyOverride,
+}
+
+impl PolicyOverride {
+    fn raw(&self) -> &RawPolicyOverride {
+        &self.raw
+    }
+}
+
+impl From<RawPolicyOverride> for PolicyOverride {
+    fn from(raw: RawPolicyOverride) -> Self {
+        Self { raw }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct RawPolicyOverride {
+    fs: Option<RawFsPolicy>,
+    net: Option<RawNetPolicy>,
+    exec: Option<RawExecPolicy>,
+    syscall: Option<RawSyscallPolicy>,
+    allow: Option<RawAllowSection>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspacePolicy {
+    raw_root: RawPolicy,
+    pub root: Policy,
     pub members: HashMap<String, PolicyOverride>,
 }
 
 impl WorkspacePolicy {
     pub fn policy_for(&self, member: &str) -> Policy {
-        let mut policy = self.root.clone();
-        if let Some(ovr) = self.members.get(member) {
-            if let Some(fs) = &ovr.fs {
-                policy.fs = fs.clone();
-            }
-            if let Some(net) = &ovr.net {
-                policy.net = net.clone();
-            }
-            if let Some(exec) = &ovr.exec {
-                policy.exec = exec.clone();
-            }
-            if let Some(sys) = &ovr.syscall {
-                policy.syscall = sys.clone();
-            }
-            if let Some(allow) = &ovr.allow {
-                policy.allow = allow.clone();
-            }
+        let mut raw = self.raw_root.clone();
+        if let Some(override_policy) = self.members.get(member) {
+            raw.apply_override(override_policy.raw());
         }
-        policy
+        raw.into()
     }
+}
+
+impl<'de> Deserialize<'de> for WorkspacePolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        let raw = RawWorkspacePolicy::deserialize(deserializer)?;
+        let root_policy = raw.root.clone().into();
+        let members = raw
+            .members
+            .into_iter()
+            .map(|(name, override_policy)| (name, PolicyOverride::from(override_policy)))
+            .collect();
+        Ok(Self {
+            raw_root: raw.root,
+            root: root_policy,
+            members,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawWorkspacePolicy {
+    root: RawPolicy,
+    #[serde(default)]
+    members: HashMap<String, RawPolicyOverride>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -190,56 +443,6 @@ pub enum ValidationWarning {
 pub struct ValidationReport {
     pub errors: Vec<ValidationError>,
     pub warnings: Vec<ValidationWarning>,
-}
-
-impl Policy {
-    pub fn from_toml_str(toml_str: &str) -> Result<Self, toml::de::Error> {
-        toml::from_str(toml_str)
-    }
-
-    pub fn validate(&self) -> ValidationReport {
-        use ValidationError::*;
-        use ValidationWarning::*;
-        let mut errors = Vec::new();
-        let mut warnings = Vec::new();
-
-        if let Some(dup) = find_first_duplicate(&self.allow.exec.allowed) {
-            errors.push(DuplicateExec(dup));
-        }
-        if let Some(dup) = find_first_duplicate(&self.allow.net.hosts) {
-            errors.push(DuplicateNet(dup));
-        }
-        if let Some(dup) = find_first_duplicate(&self.allow.fs.write_extra) {
-            errors.push(DuplicateFsWrite(dup.to_string_lossy().into()));
-        }
-        if let Some(dup) = find_first_duplicate(&self.allow.fs.read_extra) {
-            errors.push(DuplicateFsRead(dup.to_string_lossy().into()));
-        }
-        if let Some(dup) = find_first_duplicate(&self.syscall.deny) {
-            errors.push(DuplicateSyscall(dup));
-        }
-
-        let read_set: HashSet<_> = self.allow.fs.read_extra.iter().collect();
-        for w in &self.allow.fs.write_extra {
-            if read_set.contains(w) {
-                errors.push(FsReadWriteConflict(w.to_string_lossy().into()));
-            }
-        }
-
-        if self.exec.default == ExecDefault::Allow && !self.allow.exec.allowed.is_empty() {
-            warnings.push(UnusedExecAllow);
-        }
-        if self.net.default == NetDefault::Allow && !self.allow.net.hosts.is_empty() {
-            warnings.push(UnusedNetAllow);
-        }
-        if self.fs.default == FsDefault::Unrestricted
-            && (!self.allow.fs.read_extra.is_empty() || !self.allow.fs.write_extra.is_empty())
-        {
-            warnings.push(UnusedFsAllow);
-        }
-
-        ValidationReport { errors, warnings }
-    }
 }
 
 fn find_first_duplicate<T>(items: &[T]) -> Option<T>
@@ -275,6 +478,17 @@ mod tests {
         None
     }
 
+    fn base_policy() -> Policy {
+        Policy {
+            mode: Mode::Enforce,
+            rules: vec![
+                Permission::FsDefault(FsDefault::Strict),
+                Permission::NetDefault(NetDefault::Deny),
+                Permission::ExecDefault(ExecDefault::Allowlist),
+            ],
+        }
+    }
+
     proptest! {
         #[test]
         fn first_duplicate_matches_naive(xs in proptest::collection::vec(any::<u8>(), 0..100)) {
@@ -286,18 +500,10 @@ mod tests {
         #[test]
         fn exec_duplicates_flagged(xs in proptest::collection::vec(any::<u8>(), 0..20)) {
             let allowed: Vec<String> = xs.iter().map(|b| b.to_string()).collect();
-            let policy = Policy {
-                mode: Mode::Enforce,
-                fs: FsPolicy::default(),
-                net: NetPolicy::default(),
-                exec: ExecPolicy::default(),
-                syscall: SyscallPolicy::default(),
-                allow: AllowSection {
-                    exec: ExecAllow { allowed: allowed.clone() },
-                    net: NetAllow::default(),
-                    fs: FsAllow::default(),
-                },
-            };
+            let mut policy = base_policy();
+            policy
+                .rules
+                .extend(allowed.iter().cloned().map(Permission::Exec));
             let report = policy.validate();
             let mut seen = HashSet::new();
             let has_dup = allowed.iter().any(|x| !seen.insert(x));
@@ -324,6 +530,12 @@ hosts = ["127.0.0.1:1080"]
 [allow.fs]
 write_extra = ["/tmp/warden-scratch"]
 read_extra = ["/usr/include"]
+
+[allow.env]
+read = ["HOME"]
+
+[syscall]
+deny = ["clone"]
 "#;
 
     #[test]
@@ -333,6 +545,11 @@ read_extra = ["/usr/include"]
         assert!(report.errors.is_empty());
         assert!(report.warnings.is_empty());
         assert_eq!(policy.mode, Mode::Enforce);
+        assert_eq!(policy.exec_default(), ExecDefault::Allowlist);
+        assert_eq!(policy.net_default(), NetDefault::Deny);
+        assert_eq!(policy.fs_default(), FsDefault::Strict);
+        assert!(policy.exec_allowed().any(|bin| bin == "rustc"));
+        assert!(policy.env_read_vars().any(|var| var == "HOME"));
     }
 
     const SYSCALL_DUP: &str = r#"
@@ -450,10 +667,10 @@ allowed = ["bash"]
     fn workspace_member_overrides() {
         let ws: WorkspacePolicy = toml::from_str(WORKSPACE).unwrap();
         let pkg = ws.policy_for("pkg");
-        assert_eq!(pkg.exec.default, ExecDefault::Allow);
-        assert_eq!(pkg.allow.exec.allowed, vec!["bash".to_string()]);
+        assert_eq!(pkg.exec_default(), ExecDefault::Allow);
+        assert!(pkg.exec_allowed().any(|bin| bin == "bash"));
         let other = ws.policy_for("other");
-        assert_eq!(other.exec.default, ExecDefault::Allowlist);
-        assert_eq!(other.allow.exec.allowed, vec!["rustc".to_string()]);
+        assert_eq!(other.exec_default(), ExecDefault::Allowlist);
+        assert!(other.exec_allowed().any(|bin| bin == "rustc"));
     }
 }
