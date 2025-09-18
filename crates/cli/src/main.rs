@@ -1,6 +1,10 @@
 use clap::{Parser, Subcommand};
+use policy_core::{AllowSection, ExecPolicy, FsPolicy, Mode, NetPolicy, Policy, SyscallPolicy};
+use qqrm_policy_compiler::{self, MapsLayout};
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::fs::File;
+use std::hash::Hash;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, ExitStatus, exit};
@@ -81,6 +85,11 @@ impl std::fmt::Display for EventRecord {
     }
 }
 
+struct IsolationConfig {
+    syscall_deny: Vec<String>,
+    maps_layout: MapsLayout,
+}
+
 fn sarif_from_events(events: &[EventRecord]) -> serde_json::Value {
     let results: Vec<_> = events
         .iter()
@@ -153,34 +162,107 @@ fn main() {
 }
 
 fn handle_build(args: Vec<String>, allow: &[String], policy: &[String]) -> io::Result<()> {
-    let deny = setup_isolation(allow, policy)?;
-    let status = run_in_sandbox(build_command(&args), &deny)?;
+    let isolation = setup_isolation(allow, policy)?;
+    let status = run_in_sandbox(build_command(&args), &isolation)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
     Ok(())
 }
 
-fn setup_isolation(_allow: &[String], policy: &[String]) -> io::Result<Vec<String>> {
-    use std::collections::HashSet;
-    let mut deny = HashSet::new();
-    for path in policy {
-        let text = std::fs::read_to_string(path)?;
-        let policy = policy_core::Policy::from_toml_str(&text)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let report = policy.validate();
-        if !report.errors.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("{:?}", report.errors),
-            ));
-        }
-        for warn in report.warnings {
-            eprintln!("warning: {warn}");
-        }
-        deny.extend(policy.syscall_deny().cloned());
+fn setup_isolation(allow: &[String], policy_paths: &[String]) -> io::Result<IsolationConfig> {
+    let mut policy = load_default_policy()?;
+    for path in policy_paths {
+        let extra = load_policy(Path::new(path))?;
+        merge_policy(&mut policy, extra);
     }
-    Ok(deny.into_iter().collect())
+    policy.allow.exec.allowed.extend(allow.iter().cloned());
+    dedup_policy_lists(&mut policy);
+
+    let report = policy.validate();
+    if !report.errors.is_empty() {
+        let message = report
+            .errors
+            .into_iter()
+            .map(|err| err.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, message));
+    }
+    for warn in report.warnings {
+        eprintln!("warning: {warn}");
+    }
+
+    let layout = qqrm_policy_compiler::compile(&policy)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+
+    Ok(IsolationConfig {
+        syscall_deny: policy.syscall.deny.clone(),
+        maps_layout: layout,
+    })
+}
+
+fn load_default_policy() -> io::Result<Policy> {
+    let path = Path::new("warden.toml");
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse_policy_from_str(path, &text),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(empty_policy()),
+        Err(err) => Err(err),
+    }
+}
+
+fn load_policy(path: &Path) -> io::Result<Policy> {
+    let text = std::fs::read_to_string(path)?;
+    parse_policy_from_str(path, &text)
+}
+
+fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
+    Policy::from_toml_str(text).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{}: {err}", path.display()),
+        )
+    })
+}
+
+fn merge_policy(base: &mut Policy, extra: Policy) {
+    base.mode = extra.mode;
+    base.fs = extra.fs;
+    base.net = extra.net;
+    base.exec = extra.exec;
+    base.syscall.deny.extend(extra.syscall.deny);
+    base.allow.exec.allowed.extend(extra.allow.exec.allowed);
+    base.allow.net.hosts.extend(extra.allow.net.hosts);
+    base.allow.fs.write_extra.extend(extra.allow.fs.write_extra);
+    base.allow.fs.read_extra.extend(extra.allow.fs.read_extra);
+}
+
+fn dedup_policy_lists(policy: &mut Policy) {
+    dedup_preserving_order(&mut policy.syscall.deny);
+    dedup_preserving_order(&mut policy.allow.exec.allowed);
+    dedup_preserving_order(&mut policy.allow.net.hosts);
+    dedup_preserving_order(&mut policy.allow.fs.write_extra);
+    dedup_preserving_order(&mut policy.allow.fs.read_extra);
+}
+
+fn dedup_preserving_order<T>(items: &mut Vec<T>)
+where
+    T: Eq + Hash + Clone,
+{
+    let mut seen = HashSet::new();
+    items.retain(|item| seen.insert(item.clone()));
+}
+
+fn empty_policy() -> Policy {
+    Policy {
+        mode: Mode::Enforce,
+        fs: FsPolicy::default(),
+        net: NetPolicy::default(),
+        exec: ExecPolicy::default(),
+        syscall: SyscallPolicy::default(),
+        allow: AllowSection::default(),
+
+    }
 }
 
 fn build_command(args: &[String]) -> Command {
@@ -213,8 +295,8 @@ fn handle_run(cmd: Vec<String>, allow: &[String], policy: &[String]) -> io::Resu
             "missing command",
         ));
     }
-    let deny = setup_isolation(allow, policy)?;
-    let status = run_in_sandbox(run_command(&cmd), &deny)?;
+    let isolation = setup_isolation(allow, policy)?;
+    let status = run_in_sandbox(run_command(&cmd), &isolation)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
@@ -229,9 +311,9 @@ fn run_command(cmd: &[String]) -> Command {
     command
 }
 
-fn run_in_sandbox(command: Command, deny: &[String]) -> io::Result<ExitStatus> {
+fn run_in_sandbox(command: Command, isolation: &IsolationConfig) -> io::Result<ExitStatus> {
     let mut sandbox = Sandbox::new()?;
-    let run_result = sandbox.run(command, deny);
+    let run_result = sandbox.run(command, &isolation.syscall_deny, &isolation.maps_layout);
     let shutdown_result = sandbox.shutdown();
     let status = match run_result {
         Ok(status) => status,
@@ -348,6 +430,8 @@ mod tests {
     use std::io::{Cursor, Write};
     use std::path::{Path, PathBuf};
 
+    use qqrm_policy_compiler::MapsLayout;
+
     use tempfile::{NamedTempFile, tempdir};
 
     struct DirGuard {
@@ -366,6 +450,21 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::env::set_current_dir(&self.original);
         }
+    }
+
+    fn exec_paths(layout: &MapsLayout) -> Vec<String> {
+        layout
+            .exec_allowlist
+            .iter()
+            .map(|entry| {
+                let len = entry
+                    .path
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(entry.path.len());
+                String::from_utf8_lossy(&entry.path[..len]).into_owned()
+            })
+            .collect()
     }
 
     #[test]
@@ -602,17 +701,94 @@ mod tests {
     }
 
     #[test]
-    fn setup_isolation_merges_syscalls() {
+    #[serial]
+    fn setup_isolation_merges_syscalls_and_allow_entries() {
         use std::fs::write;
         let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        write(
+            "warden.toml",
+            r#"mode = "enforce"
+fs.default = "strict"
+net.default = "deny"
+exec.default = "allowlist"
+
+[allow.exec]
+allowed = ["/usr/bin/rustc"]
+"#,
+        )
+        .unwrap();
+
         let p1 = dir.path().join("p1.toml");
+        write(
+            &p1,
+            r#"mode = "enforce"
+fs.default = "strict"
+net.default = "deny"
+exec.default = "allowlist"
+
+[syscall]
+deny = ["clone"]
+
+[allow.exec]
+allowed = ["/bin/bash"]
+"#,
+        )
+        .unwrap();
+
         let p2 = dir.path().join("p2.toml");
-        write(&p1, "mode = \"enforce\"\n[syscall]\ndeny = [\"clone\"]").unwrap();
-        write(&p2, "mode = \"enforce\"\n[syscall]\ndeny = [\"execve\"]").unwrap();
+        write(
+            &p2,
+            r#"mode = "enforce"
+fs.default = "strict"
+net.default = "deny"
+exec.default = "allowlist"
+
+[syscall]
+deny = ["execve"]
+"#,
+        )
+        .unwrap();
+
         let paths = [p1.to_str().unwrap().into(), p2.to_str().unwrap().into()];
-        let deny = setup_isolation(&[], &paths).unwrap();
-        assert!(deny.contains(&"clone".to_string()));
-        assert!(deny.contains(&"execve".to_string()));
-        assert_eq!(deny.len(), 2);
+        let allow = vec!["/usr/bin/rustc".to_string(), "/usr/bin/git".to_string()];
+        let isolation = setup_isolation(&allow, &paths).unwrap();
+
+        assert!(isolation.syscall_deny.contains(&"clone".to_string()));
+        assert!(isolation.syscall_deny.contains(&"execve".to_string()));
+        assert_eq!(isolation.syscall_deny.len(), 2);
+
+        let exec = exec_paths(&isolation.maps_layout);
+        assert!(exec.contains(&"/usr/bin/rustc".to_string()));
+        assert!(exec.contains(&"/bin/bash".to_string()));
+        assert!(exec.contains(&"/usr/bin/git".to_string()));
+        assert_eq!(exec.len(), 3);
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_defaults_to_empty_policy() {
+        let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        let isolation = setup_isolation(&[], &[]).unwrap();
+
+        assert!(isolation.syscall_deny.is_empty());
+        assert!(isolation.maps_layout.exec_allowlist.is_empty());
+        assert!(isolation.maps_layout.net_rules.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_uses_cli_allow_when_no_file() {
+        let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        let allow = vec!["/bin/bash".to_string()];
+        let isolation = setup_isolation(&allow, &[]).unwrap();
+
+        let exec = exec_paths(&isolation.maps_layout);
+        assert_eq!(exec, vec!["/bin/bash".to_string()]);
     }
 }
