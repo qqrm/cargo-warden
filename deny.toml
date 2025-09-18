@@ -8,6 +8,10 @@ wildcards = "allow"
 allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib"]
 confidence-threshold = 0.8
 
+[advisories]
+# proc-macro-error is pulled in by aya-ebpf-macros; aya 0.13.1 has no maintained replacement yet.
+ignore = ["RUSTSEC-2024-0370"]
+
 [sources]
 unknown-registry = "warn"
 unknown-git = "warn"
