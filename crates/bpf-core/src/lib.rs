@@ -970,6 +970,28 @@ mod tests {
     }
 
     #[test]
+    fn file_open_truncates_long_paths() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        let suffix = "a".repeat(300);
+        let path = format!("/{}", suffix);
+        let path_bytes = c_string(&path);
+        let mut file = TestFile {
+            path: path_bytes.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
+        assert_ne!(result, 0);
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let expected: String = path.chars().take(255).collect();
+        assert_eq!(bytes_to_string(&event.path_or_addr), expected);
+        assert_eq!(event.path_or_addr[expected.len()], 0);
+    }
+
+    #[test]
     fn file_permission_respects_access_bits() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
