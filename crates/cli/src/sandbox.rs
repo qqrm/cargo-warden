@@ -5,16 +5,20 @@ use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, Lsm};
 use aya::{Btf, Ebpf, EbpfLoader, Pod};
-use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRuleEntry};
-use qqrm_agent_lite::{self, Config as AgentConfig, Shutdown, ShutdownHandle};
+use bpf_api::{Event, ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRuleEntry};
+use qqrm_agent_lite::{
+    self, Config as AgentConfig, EventRecord as AgentEventRecord, Shutdown, ShutdownHandle,
+};
+use qqrm_bpf_core::host::{Harness as HostHarness, Operation as HostOperation};
 use qqrm_policy_compiler::MapsLayout;
+use serde_json::to_writer;
 use std::cell::UnsafeCell;
 use std::convert::TryFrom;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::fd::{AsRawFd, RawFd};
-use std::os::unix::process::CommandExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::PathBuf;
 use std::process::{self, Command, ExitStatus};
 use std::sync::Arc;
@@ -30,10 +34,20 @@ pub(crate) struct Sandbox {
 enum SandboxImpl {
     Real(RealSandbox),
     Fake(FakeSandbox),
+    Host(HostSandbox),
 }
+
+const ACTION_OPEN: u8 = 0;
+const ACTION_UNLINK: u8 = 2;
+const VERDICT_DENIED: u8 = 1;
 
 impl Sandbox {
     pub(crate) fn new() -> io::Result<Self> {
+        if env::var_os("QQRM_WARDEN_HOST_HARNESS").is_some() {
+            return Ok(Self {
+                inner: SandboxImpl::Host(HostSandbox::new()?),
+            });
+        }
         if env::var_os("QQRM_WARDEN_FAKE_SANDBOX").is_some() {
             return Ok(Self {
                 inner: SandboxImpl::Fake(FakeSandbox::new()?),
@@ -53,6 +67,7 @@ impl Sandbox {
         match &mut self.inner {
             SandboxImpl::Real(real) => real.run(command, deny, layout),
             SandboxImpl::Fake(fake) => fake.run(command, layout),
+            SandboxImpl::Host(host) => host.run(command, layout),
         }
     }
 
@@ -60,6 +75,7 @@ impl Sandbox {
         match self.inner {
             SandboxImpl::Real(real) => real.shutdown(),
             SandboxImpl::Fake(fake) => fake.shutdown(),
+            SandboxImpl::Host(host) => host.shutdown(),
         }
     }
 }
@@ -414,6 +430,182 @@ impl Drop for Cgroup {
     fn drop(&mut self) {
         let _ = self.cleanup();
     }
+}
+
+struct HostSandbox {
+    harness: HostHarness,
+    events_path: PathBuf,
+}
+
+impl HostSandbox {
+    fn new() -> io::Result<Self> {
+        let events_path = events_path();
+        if let Some(parent) = events_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        Ok(Self {
+            harness: HostHarness::new(),
+            events_path,
+        })
+    }
+
+    fn run(&mut self, mut command: Command, layout: &MapsLayout) -> io::Result<ExitStatus> {
+        self.harness.reset();
+        self.harness.load_fs_rules(&layout.fs_rules);
+        self.harness.load_net_parents(&layout.net_parents);
+
+        let status = command.status()?;
+
+        let mut records = Vec::new();
+        let mut denied = false;
+
+        let read_paths = env_paths("QQRM_WARDEN_HOST_READ_PATHS")?;
+        let write_paths = env_paths("QQRM_WARDEN_HOST_WRITE_PATHS")?;
+        let unlink_paths = env_paths("QQRM_WARDEN_HOST_UNLINK_PATHS")?;
+
+        denied |= self.process_paths(&read_paths, HostOperation::Read, &mut records);
+        denied |= self.process_paths(&write_paths, HostOperation::Write, &mut records);
+        denied |= self.process_paths(&unlink_paths, HostOperation::Unlink, &mut records);
+
+        self.write_events(&records)?;
+        self.emit_diagnostics(&records);
+
+        if denied {
+            Ok(failure_status())
+        } else {
+            Ok(status)
+        }
+    }
+
+    fn shutdown(self) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn process_paths(
+        &self,
+        paths: &[String],
+        op: HostOperation,
+        records: &mut Vec<AgentEventRecord>,
+    ) -> bool {
+        let mut denied = false;
+        for path in paths {
+            let evaluation = self.harness.check(path, op);
+            let denied_eval = evaluation.denied();
+            let mut events: Vec<AgentEventRecord> = evaluation
+                .into_events()
+                .into_iter()
+                .map(to_agent_record)
+                .collect();
+            if events.is_empty() && denied_eval {
+                events.push(synthetic_record(path, op));
+            }
+            denied |= denied_eval;
+            records.extend(events);
+        }
+        denied
+    }
+
+    fn write_events(&self, records: &[AgentEventRecord]) -> io::Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        if let Some(parent) = self.events_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.events_path)?;
+        for record in records {
+            to_writer(&mut file, record).map_err(io::Error::other)?;
+            writeln!(file)?;
+        }
+        Ok(())
+    }
+
+    fn emit_diagnostics(&self, records: &[AgentEventRecord]) {
+        for record in records {
+            if let Some(message) = diagnostic_message(record) {
+                eprintln!("{message}");
+            }
+        }
+    }
+}
+
+fn env_paths(name: &str) -> io::Result<Vec<String>> {
+    let Some(value) = env::var_os(name) else {
+        return Ok(Vec::new());
+    };
+    let mut entries = Vec::new();
+    for path in env::split_paths(&value) {
+        let os = path.into_os_string();
+        if os.is_empty() {
+            continue;
+        }
+        let value = os.into_string().map_err(|invalid| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{name} contains non-UTF-8 path: {invalid:?}"),
+            )
+        })?;
+        if !value.is_empty() {
+            entries.push(value);
+        }
+    }
+    Ok(entries)
+}
+
+fn failure_status() -> ExitStatus {
+    ExitStatus::from_raw(1 << 8)
+}
+
+fn to_agent_record(event: Event) -> AgentEventRecord {
+    let len = event
+        .path_or_addr
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(event.path_or_addr.len());
+    let path_or_addr = String::from_utf8_lossy(&event.path_or_addr[..len]).to_string();
+    AgentEventRecord {
+        pid: event.pid,
+        unit: event.unit,
+        action: event.action,
+        verdict: event.verdict,
+        container_id: event.container_id,
+        caps: event.caps,
+        path_or_addr,
+    }
+}
+
+fn synthetic_record(path: &str, op: HostOperation) -> AgentEventRecord {
+    AgentEventRecord {
+        pid: 0,
+        unit: 0,
+        action: action_for_operation(op),
+        verdict: VERDICT_DENIED,
+        container_id: 0,
+        caps: 0,
+        path_or_addr: path.to_string(),
+    }
+}
+
+fn action_for_operation(op: HostOperation) -> u8 {
+    match op {
+        HostOperation::Read | HostOperation::Write => ACTION_OPEN,
+        HostOperation::Unlink => ACTION_UNLINK,
+    }
+}
+
+fn diagnostic_message(record: &AgentEventRecord) -> Option<String> {
+    if record.verdict != VERDICT_DENIED {
+        return None;
+    }
+    let message = match record.action {
+        ACTION_OPEN => format!("Denied filesystem access: {}", record.path_or_addr),
+        ACTION_UNLINK => format!("Denied filesystem unlink: {}", record.path_or_addr),
+        other => format!("Denied action {other}: {}", record.path_or_addr),
+    };
+    Some(message)
 }
 
 struct FakeSandbox {

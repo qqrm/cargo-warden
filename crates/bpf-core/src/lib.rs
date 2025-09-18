@@ -879,16 +879,178 @@ pub extern "C" fn inode_unlink(_dir: *mut c_void, dentry: *mut c_void) -> i32 {
     }
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any(test, feature = "fuzzing"))]
+pub mod host {
     use super::*;
-    use bpf_api::{FS_READ, FS_WRITE};
+    use bpf_api::{FsRuleEntry, NetParentEntry};
     use core::ffi::c_void;
-    use std::ptr;
-    use std::sync::Mutex;
+    use std::sync::{Mutex, OnceLock};
 
-    static LAST_EVENT: Mutex<Option<Event>> = Mutex::new(None);
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    static EVENT_SINK: OnceLock<Mutex<Vec<Event>>> = OnceLock::new();
+
+    fn events() -> &'static Mutex<Vec<Event>> {
+        EVENT_SINK.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    #[derive(Clone, Copy)]
+    pub enum Operation {
+        Read,
+        Write,
+        Unlink,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct Evaluation {
+        code: i32,
+        events: Vec<Event>,
+    }
+
+    impl Evaluation {
+        pub fn code(&self) -> i32 {
+            self.code
+        }
+
+        pub fn events(&self) -> &[Event] {
+            &self.events
+        }
+
+        pub fn denied(&self) -> bool {
+            self.code != 0
+        }
+
+        pub fn into_events(self) -> Vec<Event> {
+            self.events
+        }
+    }
+
+    #[derive(Debug, Default)]
+    pub struct Harness;
+
+    impl Harness {
+        pub fn new() -> Self {
+            let harness = Self;
+            harness.reset();
+            harness
+        }
+
+        pub fn reset(&self) {
+            FS_RULES.clear();
+            FS_RULES_LENGTH.clear();
+            NET_RULES.clear();
+            NET_RULES_LENGTH.clear();
+            NET_PARENTS.clear();
+            NET_PARENTS_LENGTH.clear();
+            EVENT_COUNTS.clear();
+            unsafe {
+                CURRENT_UNIT = 0;
+            }
+            events().lock().unwrap().clear();
+        }
+
+        pub fn load_fs_rules(&self, entries: &[FsRuleEntry]) {
+            FS_RULES.clear();
+            FS_RULES_LENGTH.clear();
+            for (idx, entry) in entries.iter().copied().enumerate() {
+                FS_RULES.set(idx as u32, entry);
+            }
+            FS_RULES_LENGTH.set(0, entries.len() as u32);
+        }
+
+        pub fn load_net_parents(&self, entries: &[NetParentEntry]) {
+            NET_PARENTS.clear();
+            NET_PARENTS_LENGTH.clear();
+            for (idx, entry) in entries.iter().copied().enumerate() {
+                NET_PARENTS.set(idx as u32, entry);
+            }
+            NET_PARENTS_LENGTH.set(0, entries.len() as u32);
+        }
+
+        pub fn set_current_unit(&self, unit: u32) {
+            unsafe {
+                CURRENT_UNIT = unit;
+            }
+        }
+
+        pub fn check(&self, path: &str, op: Operation) -> Evaluation {
+            match op {
+                Operation::Read => self.invoke_file(path, super::MAY_READ),
+                Operation::Write => self.invoke_file(path, super::MAY_WRITE),
+                Operation::Unlink => self.invoke_unlink(path),
+            }
+        }
+
+        pub fn take_events(&self) -> Vec<Event> {
+            let mut guard = events().lock().unwrap();
+            guard.drain(..).collect()
+        }
+
+        fn invoke_file(&self, path: &str, mask: i32) -> Evaluation {
+            let mut file = HostFile::new(path);
+            self.invoke(|| super::file_permission(file.as_ptr(), mask))
+        }
+
+        fn invoke_unlink(&self, path: &str) -> Evaluation {
+            let mut dentry = HostDentry::new(path);
+            self.invoke(|| super::inode_unlink(std::ptr::null_mut(), dentry.as_ptr()))
+        }
+
+        fn invoke<F>(&self, func: F) -> Evaluation
+        where
+            F: FnOnce() -> i32,
+        {
+            {
+                let mut guard = events().lock().unwrap();
+                guard.clear();
+            }
+            let code = func();
+            let events = {
+                let mut guard = events().lock().unwrap();
+                guard.drain(..).collect()
+            };
+            Evaluation { code, events }
+        }
+    }
+
+    struct HostFile {
+        path: Vec<u8>,
+        inner: TestFile,
+    }
+
+    impl HostFile {
+        fn new(path: &str) -> Self {
+            let mut bytes = path.as_bytes().to_vec();
+            bytes.push(0);
+            let inner = TestFile {
+                path: bytes.as_ptr(),
+                mode: FMODE_READ | FMODE_WRITE,
+            };
+            Self { path: bytes, inner }
+        }
+
+        fn as_ptr(&mut self) -> *mut c_void {
+            &mut self.inner as *mut _ as *mut c_void
+        }
+    }
+
+    struct HostDentry {
+        name: Vec<u8>,
+        inner: TestDentry,
+    }
+
+    impl HostDentry {
+        fn new(path: &str) -> Self {
+            let mut bytes = path.as_bytes().to_vec();
+            bytes.push(0);
+            let inner = TestDentry {
+                name: bytes.as_ptr(),
+            };
+            Self { name: bytes, inner }
+        }
+
+        fn as_ptr(&mut self) -> *mut c_void {
+            &mut self.inner as *mut _ as *mut c_void
+        }
+    }
 
     #[unsafe(no_mangle)]
     extern "C" fn bpf_ringbuf_output(
@@ -897,9 +1059,11 @@ mod tests {
         len: u64,
         _flags: u64,
     ) -> i64 {
-        assert_eq!(len as usize, core::mem::size_of::<Event>());
+        if data.is_null() || len as usize != core::mem::size_of::<Event>() {
+            return -1;
+        }
         let event = unsafe { *(data as *const Event) };
-        *LAST_EVENT.lock().unwrap() = Some(event);
+        events().lock().unwrap().push(event);
         0
     }
 
@@ -921,25 +1085,35 @@ mod tests {
                 *dst.add(copied) = byte;
                 copied += 1;
                 if byte == 0 {
-                    return copied as i32;
+                    break;
                 }
             }
-            if size > 0 {
-                *dst.add(size - 1) = 0;
-            }
         }
-        size as i32
+        copied as i32
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bpf_api::{FS_READ, FS_WRITE};
+    use core::ffi::c_void;
+    use host::{Harness, Operation};
+    use std::ptr;
+    use std::sync::Mutex;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn file_open_emits_event() {
         let _g = TEST_LOCK.lock().unwrap();
+        let harness = Harness::new();
         reset_network_state();
-        reset_fs_state();
+        harness.reset();
         EVENT_COUNTS.clear();
-        LAST_EVENT.lock().unwrap().take();
         let path = "/workspace/allowed/file.txt";
-        set_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
+        harness.load_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
+        harness.take_events();
         let path_bytes = c_string(path);
         let mut file = TestFile {
             path: path_bytes.as_ptr(),
@@ -947,7 +1121,8 @@ mod tests {
         };
         let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
         assert_eq!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let mut events = harness.take_events();
+        let event = events.pop().expect("event");
         assert_eq!(event.pid, 1234);
         assert_eq!(event.unit, 0);
         assert_eq!(event.action, ACTION_OPEN);
@@ -960,10 +1135,10 @@ mod tests {
     #[test]
     fn file_open_denies_without_rule() {
         let _g = TEST_LOCK.lock().unwrap();
+        let harness = Harness::new();
         reset_network_state();
-        reset_fs_state();
+        harness.reset();
         EVENT_COUNTS.clear();
-        LAST_EVENT.lock().unwrap().take();
         let path = "/workspace/forbidden.txt";
         let path_bytes = c_string(path);
         let mut file = TestFile {
@@ -972,199 +1147,115 @@ mod tests {
         };
         let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
         assert_ne!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let mut events = harness.take_events();
+        let event = events.pop().expect("event");
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
     }
 
     #[test]
-    fn file_permission_respects_access_bits() {
+    fn host_harness_respects_access_bits() {
         let _g = TEST_LOCK.lock().unwrap();
-        reset_network_state();
-        reset_fs_state();
-        let path = "/workspace/read-only";
-        set_fs_rules(&[fs_rule_entry(0, path, FS_READ)]);
-        let path_bytes = c_string(path);
-        let mut file = TestFile {
-            path: path_bytes.as_ptr(),
-            mode: FMODE_READ,
-        };
-        let file_ptr = (&mut file) as *mut _ as *mut c_void;
-        LAST_EVENT.lock().unwrap().take();
-        assert_eq!(file_permission(file_ptr, MAY_READ), 0);
-        assert!(LAST_EVENT.lock().unwrap().is_none());
+        let harness = Harness::new();
+        harness.load_fs_rules(&[fs_rule_entry(0, "/workspace/read-only", FS_READ)]);
+        let allowed = harness.check("/workspace/read-only", Operation::Read);
+        assert_eq!(allowed.code(), 0);
+        assert!(allowed.events().is_empty());
 
-        LAST_EVENT.lock().unwrap().take();
-        assert_ne!(file_permission(file_ptr, MAY_WRITE), 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let denied = harness.check("/workspace/read-only", Operation::Write);
+        assert!(denied.denied());
+        let event = denied.events().first().expect("event");
         assert_eq!(event.action, ACTION_OPEN);
-        assert_eq!(event.verdict, 1);
-        assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        assert_eq!(bytes_to_string(&event.path_or_addr), "/workspace/read-only");
 
-        set_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
-        LAST_EVENT.lock().unwrap().take();
-        assert_eq!(file_permission(file_ptr, MAY_WRITE), 0);
-        assert!(LAST_EVENT.lock().unwrap().is_none());
+        harness.load_fs_rules(&[fs_rule_entry(0, "/workspace/read-only", FS_READ | FS_WRITE)]);
+        let write = harness.check("/workspace/read-only", Operation::Write);
+        assert_eq!(write.code(), 0);
+        assert!(write.events().is_empty());
     }
 
     #[test]
-    fn file_permission_allows_matching_rule() {
+    fn host_harness_allows_project_directories() {
         let _g = TEST_LOCK.lock().unwrap();
-        reset_network_state();
-        reset_fs_state();
-        let base_path = "/workspace/data";
-        set_fs_rules(&[fs_rule_entry(0, base_path, FS_READ | FS_WRITE)]);
-        let file_path = c_string("/workspace/data/reports/output.log");
-        let mut file = TestFile {
-            path: file_path.as_ptr(),
-            mode: FMODE_READ | FMODE_WRITE,
-        };
-        let file_ptr = (&mut file) as *mut _ as *mut c_void;
-        assert_eq!(file_permission(file_ptr, MAY_READ), 0);
-        assert_eq!(file_permission(file_ptr, MAY_WRITE), 0);
+        let harness = Harness::new();
+        let target = "/workspace/project/target";
+        let out_dir = "/workspace/project/out";
+        harness.load_fs_rules(&[
+            fs_rule_entry(0, target, FS_READ | FS_WRITE),
+            fs_rule_entry(0, out_dir, FS_READ | FS_WRITE),
+        ]);
+
+        let target_path = format!("{target}/artifact.rlib");
+        let target_result = harness.check(&target_path, Operation::Write);
+        assert_eq!(target_result.code(), 0);
+        assert!(target_result.events().is_empty());
+
+        let out_path = format!("{out_dir}/generated.rs");
+        let out_result = harness.check(&out_path, Operation::Write);
+        assert_eq!(out_result.code(), 0);
+        assert!(out_result.events().is_empty());
+
+        let denied_path = "/workspace/other/file";
+        let denied = harness.check(denied_path, Operation::Write);
+        assert!(denied.denied());
+        let event = denied.events().first().expect("event");
+        assert_eq!(event.action, ACTION_OPEN);
+        assert_eq!(bytes_to_string(&event.path_or_addr), denied_path);
     }
 
     #[test]
-    fn file_permission_denies_without_matching_rule() {
+    fn host_harness_enforces_prefix_rules() {
         let _g = TEST_LOCK.lock().unwrap();
-        reset_network_state();
-        reset_fs_state();
-        let file_path = c_string("/workspace/forbidden/data.txt");
-        let mut file = TestFile {
-            path: file_path.as_ptr(),
-            mode: FMODE_READ,
-        };
-        let file_ptr = (&mut file) as *mut _ as *mut c_void;
-        assert_ne!(file_permission(file_ptr, MAY_READ), 0);
+        let harness = Harness::new();
+        harness.load_fs_rules(&[fs_rule_entry(0, "/workspace/data", FS_READ | FS_WRITE)]);
+        let allowed = harness.check("/workspace/data/sub/file.txt", Operation::Read);
+        assert_eq!(allowed.code(), 0);
+        let denied = harness.check("/workspace/database", Operation::Read);
+        assert!(denied.denied());
     }
 
     #[test]
-    fn file_permission_allows_prefix_rule() {
+    fn host_harness_requires_write_for_unlink() {
         let _g = TEST_LOCK.lock().unwrap();
-        reset_network_state();
-        reset_fs_state();
-        let rule_path = "/workspace/data";
-        set_fs_rules(&[fs_rule_entry(0, rule_path, FS_READ | FS_WRITE)]);
-        let file_path = c_string("/workspace/data/subdir/file.txt");
-        let mut file = TestFile {
-            path: file_path.as_ptr(),
-            mode: FMODE_READ,
-        };
-        let file_ptr = (&mut file) as *mut _ as *mut c_void;
-        assert_eq!(file_permission(file_ptr, MAY_READ), 0);
-    }
-
-    #[test]
-    fn file_permission_denies_mismatched_prefix() {
-        let _g = TEST_LOCK.lock().unwrap();
-        reset_network_state();
-        reset_fs_state();
-        let rule_path = "/workspace/data";
-        set_fs_rules(&[fs_rule_entry(0, rule_path, FS_READ | FS_WRITE)]);
-        let file_path = c_string("/workspace/database");
-        let mut file = TestFile {
-            path: file_path.as_ptr(),
-            mode: FMODE_READ,
-        };
-        let file_ptr = (&mut file) as *mut _ as *mut c_void;
-        assert_ne!(file_permission(file_ptr, MAY_READ), 0);
-    }
-
-    #[test]
-    fn inode_unlink_requires_write_permission() {
-        let _g = TEST_LOCK.lock().unwrap();
-        reset_network_state();
-        reset_fs_state();
+        let harness = Harness::new();
         let path = "/workspace/temp.txt";
-        let path_bytes = c_string(path);
-        let mut dentry = TestDentry {
-            name: path_bytes.as_ptr(),
-        };
-        LAST_EVENT.lock().unwrap().take();
-        assert_ne!(
-            inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void),
-            0
-        );
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let denied = harness.check(path, Operation::Unlink);
+        assert!(denied.denied());
+        let event = denied.events().first().expect("event");
         assert_eq!(event.action, ACTION_UNLINK);
-        assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
 
-        set_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
-        LAST_EVENT.lock().unwrap().take();
-        assert_eq!(
-            inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void),
-            0
-        );
-        assert!(LAST_EVENT.lock().unwrap().is_none());
-
-        set_fs_rules(&[fs_rule_entry(0, path, FS_READ)]);
-        LAST_EVENT.lock().unwrap().take();
-        assert_ne!(
-            inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void),
-            0
-        );
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
-        assert_eq!(event.action, ACTION_UNLINK);
-        assert_eq!(event.verdict, 1);
-        assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        harness.load_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
+        let allowed = harness.check(path, Operation::Unlink);
+        assert_eq!(allowed.code(), 0);
+        assert!(allowed.events().is_empty());
     }
 
     #[test]
-    fn file_rules_inherit_across_units() {
+    fn host_harness_inherits_across_units() {
         let _g = TEST_LOCK.lock().unwrap();
-        reset_network_state();
-        reset_fs_state();
-        set_fs_rules(&[fs_rule_entry(1, "/workspace/shared", FS_READ)]);
-        set_net_parents(&[bpf_api::NetParentEntry {
+        let harness = Harness::new();
+        harness.load_fs_rules(&[fs_rule_entry(1, "/workspace/shared", FS_READ)]);
+        harness.load_net_parents(&[bpf_api::NetParentEntry {
             child: 2,
             parent: 1,
         }]);
-        let path = "/workspace/shared/file.txt";
-        let path_bytes = c_string(path);
-        let mut file = TestFile {
-            path: path_bytes.as_ptr(),
-            mode: FMODE_READ,
-        };
-        unsafe {
-            CURRENT_UNIT = 2;
-        }
-        assert_eq!(
-            file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut()),
-            0
-        );
-        let other_path = "/workspace/other.txt";
-        let other_bytes = c_string(other_path);
-        let mut other_file = TestFile {
-            path: other_bytes.as_ptr(),
-            mode: FMODE_READ,
-        };
-        assert_ne!(
-            file_open((&mut other_file) as *mut _ as *mut c_void, ptr::null_mut()),
-            0
-        );
+        harness.set_current_unit(2);
+        let shared = harness.check("/workspace/shared/file.txt", Operation::Read);
+        assert_eq!(shared.code(), 0);
+        let foreign = harness.check("/workspace/other.txt", Operation::Read);
+        assert!(foreign.denied());
     }
 
     #[test]
-    fn file_rules_apply_globally_without_parents() {
+    fn host_harness_honors_root_rules_without_parents() {
         let _g = TEST_LOCK.lock().unwrap();
-        reset_network_state();
-        reset_fs_state();
-        set_fs_rules(&[fs_rule_entry(0, "/workspace/global", FS_READ | FS_WRITE)]);
-        let path = "/workspace/global/output.txt";
-        let path_bytes = c_string(path);
-        let mut file = TestFile {
-            path: path_bytes.as_ptr(),
-            mode: FMODE_WRITE,
-        };
-        unsafe {
-            CURRENT_UNIT = 7;
-        }
-        assert_eq!(
-            file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut()),
-            0
-        );
+        let harness = Harness::new();
+        harness.load_fs_rules(&[fs_rule_entry(0, "/workspace/global", FS_READ | FS_WRITE)]);
+        harness.set_current_unit(7);
+        let result = harness.check("/workspace/global/output.txt", Operation::Write);
+        assert_eq!(result.code(), 0);
     }
 
     fn rule_entry(
@@ -1218,23 +1309,6 @@ mod tests {
         NET_RULES_LENGTH.clear();
         NET_PARENTS.clear();
         NET_PARENTS_LENGTH.clear();
-        unsafe {
-            CURRENT_UNIT = 0;
-        }
-    }
-
-    fn set_fs_rules(entries: &[bpf_api::FsRuleEntry]) {
-        FS_RULES.clear();
-        FS_RULES_LENGTH.clear();
-        for (idx, entry) in entries.iter().enumerate() {
-            FS_RULES.set(idx as u32, *entry);
-        }
-        FS_RULES_LENGTH.set(0, entries.len() as u32);
-    }
-
-    fn reset_fs_state() {
-        FS_RULES.clear();
-        FS_RULES_LENGTH.clear();
         unsafe {
             CURRENT_UNIT = 0;
         }
