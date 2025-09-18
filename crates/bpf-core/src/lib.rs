@@ -9,7 +9,10 @@ use aya_bpf::{
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 use bpf_api::{self, Event};
 #[cfg(any(test, feature = "fuzzing"))]
-use core::cell::UnsafeCell;
+use bpf_host::{
+    fs::{dentry_path_ptr, file_mode_bits, file_path_ptr},
+    maps::{DummyRingBuf, TestArray},
+};
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 use core::{ffi::c_void, mem::size_of};
 
@@ -34,49 +37,6 @@ fn deny() -> i32 {
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-struct TestArray<T: Copy, const N: usize> {
-    data: UnsafeCell<[Option<T>; N]>,
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-unsafe impl<T: Copy, const N: usize> Sync for TestArray<T, N> {}
-
-#[cfg(any(test, feature = "fuzzing"))]
-impl<T: Copy, const N: usize> TestArray<T, N> {
-    const fn new() -> Self {
-        Self {
-            data: UnsafeCell::new([None; N]),
-        }
-    }
-
-    fn get(&self, index: u32) -> Option<T> {
-        let idx = index as usize;
-        if idx >= N {
-            return None;
-        }
-        unsafe { (*self.data.get())[idx] }
-    }
-
-    fn set(&self, index: u32, value: T) {
-        let idx = index as usize;
-        if idx >= N {
-            return;
-        }
-        unsafe {
-            (*self.data.get())[idx] = Some(value);
-        }
-    }
-
-    fn clear(&self) {
-        unsafe {
-            for slot in (*self.data.get()).iter_mut() {
-                *slot = None;
-            }
-        }
-    }
 }
 
 #[cfg(target_arch = "bpf")]
@@ -112,9 +72,6 @@ type EventCountsMap = TestArray<u64, { bpf_api::EVENT_COUNT_SLOTS as usize }>;
 
 #[cfg(target_arch = "bpf")]
 type EventsMap = RingBuf;
-#[cfg(any(test, feature = "fuzzing"))]
-#[derive(Copy, Clone)]
-struct DummyRingBuf;
 #[cfg(any(test, feature = "fuzzing"))]
 type EventsMap = DummyRingBuf;
 
@@ -555,19 +512,6 @@ fn fs_allowed(path: &[u8; 256], needed: u8) -> bool {
     false
 }
 
-#[cfg(any(test, feature = "fuzzing"))]
-#[repr(C)]
-struct TestFile {
-    path: *const u8,
-    mode: u32,
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-#[repr(C)]
-struct TestDentry {
-    name: *const u8,
-}
-
 const FMODE_READ: u32 = 1;
 const FMODE_WRITE: u32 = 2;
 const MAY_WRITE: i32 = 2;
@@ -611,44 +555,14 @@ fn read_user_path(path_ptr: *const u8) -> Option<[u8; 256]> {
     if res < 0 { None } else { Some(buf) }
 }
 
-#[cfg(any(test, feature = "fuzzing"))]
-fn file_path_ptr(file: *mut c_void) -> Option<*const u8> {
-    if file.is_null() {
-        None
-    } else {
-        let file = unsafe { &*(file as *const TestFile) };
-        Some(file.path)
-    }
-}
-
 #[cfg(target_arch = "bpf")]
 fn file_path_ptr(_file: *mut c_void) -> Option<*const u8> {
     None
 }
 
-#[cfg(any(test, feature = "fuzzing"))]
-fn file_mode_bits(file: *mut c_void) -> Option<u32> {
-    if file.is_null() {
-        None
-    } else {
-        let file = unsafe { &*(file as *const TestFile) };
-        Some(file.mode)
-    }
-}
-
 #[cfg(target_arch = "bpf")]
 fn file_mode_bits(_file: *mut c_void) -> Option<u32> {
     None
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-fn dentry_path_ptr(dentry: *mut c_void) -> Option<*const u8> {
-    if dentry.is_null() {
-        None
-    } else {
-        let dentry = unsafe { &*(dentry as *const TestDentry) };
-        Some(dentry.name)
-    }
 }
 
 #[cfg(target_arch = "bpf")]
@@ -755,14 +669,6 @@ unsafe extern "C" {
     fn bpf_probe_read_user_str(dst: *mut u8, size: u32, src: *const u8) -> i32;
     fn bpf_ringbuf_output(ringbuf: *mut c_void, data: *const c_void, len: u64, flags: u64) -> i64;
     fn bpf_get_current_pid_tgid() -> u64;
-}
-
-#[cfg(not(target_arch = "bpf"))]
-pub fn resolve_host(host: &str) -> std::io::Result<Vec<std::net::IpAddr>> {
-    use std::net::ToSocketAddrs;
-    (host, 0)
-        .to_socket_addrs()
-        .map(|iter| iter.map(|s| s.ip()).collect())
 }
 
 #[cfg(target_arch = "bpf")]
@@ -883,6 +789,10 @@ pub extern "C" fn inode_unlink(_dir: *mut c_void, dentry: *mut c_void) -> i32 {
 mod tests {
     use super::*;
     use bpf_api::{FS_READ, FS_WRITE};
+    use bpf_host::{
+        fs::{TestDentry, TestFile},
+        resolve_host,
+    };
     use core::ffi::c_void;
     use std::ptr;
     use std::sync::Mutex;
