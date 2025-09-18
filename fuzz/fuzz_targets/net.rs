@@ -1,6 +1,7 @@
 #![no_main]
 use arbitrary::Arbitrary;
 use bpf_core::connect4;
+use bpf_host::maps::TestArray;
 use core::ffi::c_void;
 use libfuzzer_sys::fuzz_target;
 
@@ -15,6 +16,7 @@ struct SockAddr {
 }
 
 fuzz_target!(|addr: SockAddr| {
+    let _ = TestArray::<u8, 1>::default();
     let mut data = addr;
     let ctx = &mut data as *mut SockAddr as *mut c_void;
     let _ = connect4(ctx);
