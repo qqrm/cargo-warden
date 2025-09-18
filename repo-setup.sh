@@ -1,6 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+install_actionlint() {
+  if command -v actionlint >/dev/null 2>&1; then
+    return
+  fi
+
+  echo "Installing actionlint..."
+  curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash \
+    | bash -s -- latest "$HOME/.local/bin"
+  export PATH="$HOME/.local/bin:$PATH"
+}
+
+ensure_libseccomp() {
+  if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists libseccomp; then
+    return
+  fi
+
+  if command -v dpkg-query >/dev/null 2>&1 \
+    && dpkg-query --show --showformat='${Status}' libseccomp-dev 2>/dev/null | grep -q "install ok installed"; then
+    return
+  fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "Installing libseccomp-dev..."
+    apt-get update -y
+    apt-get install -y --no-install-recommends libseccomp-dev
+    return
+  fi
+
+  echo "Warning: libseccomp not found and could not be installed automatically." >&2
+}
+
+install_actionlint
+ensure_libseccomp
+
 REMOTE_NAME="${REMOTE_NAME:-origin}"
 FETCH_URL="${REMOTE_FETCH_URL:-}"
 PUSH_URL="${REMOTE_PUSH_URL:-}"
