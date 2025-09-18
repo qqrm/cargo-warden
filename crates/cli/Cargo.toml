@@ -18,9 +18,11 @@ libc = "0.2"
 policy-core = { package = "qqrm-policy-core", version = "0.1.0", path = "../policy-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-qqrm-agent-lite = { path = "../agent-lite" }
+toml = "0.8"
 
 [dev-dependencies]
+serial_test = "3"
+qqrm-agent-lite = { path = "../agent-lite" }
 assert_cmd = "2"
 tempfile = "3"
 
