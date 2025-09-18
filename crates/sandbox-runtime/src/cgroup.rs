@@ -20,9 +20,11 @@ impl Cgroup {
         let path = prefix.join(identifier);
         fs::create_dir(&path)?;
         let dir = File::open(&path)?;
-        let procs = OpenOptions::new()
-            .write(true)
-            .open(path.join("cgroup.procs"))?;
+        let procs_path = path.join("cgroup.procs");
+        if !procs_path.exists() {
+            File::create(&procs_path)?;
+        }
+        let procs = OpenOptions::new().write(true).open(&procs_path)?;
         Ok(Self {
             path,
             dir: Some(dir),
@@ -46,6 +48,13 @@ impl Cgroup {
     pub(crate) fn cleanup(&mut self) -> io::Result<()> {
         self.procs.take();
         self.dir.take();
+        let procs_path = self.path.join("cgroup.procs");
+        if let Err(err) = fs::remove_file(&procs_path) {
+            match err.kind() {
+                io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => {}
+                _ => return Err(err),
+            }
+        }
         match fs::remove_dir(&self.path) {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -57,5 +66,81 @@ impl Cgroup {
 impl Drop for Cgroup {
     fn drop(&mut self) {
         let _ = self.cleanup();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::CGROUP_ROOT_ENV;
+    use serial_test::serial;
+    use std::env;
+    use std::fs;
+    use tempfile::tempdir;
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let original = env::var_os(key);
+            unsafe { env::set_var(key, value) };
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(val) = &self.original {
+                unsafe { env::set_var(self.key, val) };
+            } else {
+                unsafe { env::remove_var(self.key) };
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn create_and_cleanup_cgroup_under_fake_root() -> io::Result<()> {
+        let temp = tempdir()?;
+        let fake_root = temp.path().join("fake-cgroup-root");
+        fs::create_dir_all(&fake_root)?;
+        let _guard = EnvGuard::set(CGROUP_ROOT_ENV, &fake_root);
+
+        let mut cgroup = Cgroup::create()?;
+        let path = cgroup.path.clone();
+        let procs_path = path.join("cgroup.procs");
+
+        assert!(path.exists(), "cgroup directory should exist");
+        assert!(procs_path.exists(), "cgroup.procs should be created");
+        assert!(cgroup.procs_fd_raw()? >= 0);
+
+        cgroup.cleanup()?;
+        assert!(!path.exists(), "cgroup directory should be removed");
+        assert!(
+            !procs_path.exists(),
+            "cgroup.procs should be removed during cleanup"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[serial]
+    fn cleanup_tolerates_missing_directories() -> io::Result<()> {
+        let temp = tempdir()?;
+        let fake_root = temp.path().join("fake-cgroup-root");
+        fs::create_dir_all(&fake_root)?;
+        let _guard = EnvGuard::set(CGROUP_ROOT_ENV, &fake_root);
+
+        let mut cgroup = Cgroup::create()?;
+        let path = cgroup.path.clone();
+
+        fs::remove_dir_all(&path)?;
+        assert!(!path.exists());
+
+        cgroup.cleanup()?;
+        Ok(())
     }
 }
