@@ -178,7 +178,7 @@ fn setup_isolation(_allow: &[String], policy: &[String]) -> io::Result<Vec<Strin
         for warn in report.warnings {
             eprintln!("warning: {warn}");
         }
-        deny.extend(policy.syscall.deny);
+        deny.extend(policy.syscall_deny().cloned());
     }
     Ok(deny.into_iter().collect())
 }
