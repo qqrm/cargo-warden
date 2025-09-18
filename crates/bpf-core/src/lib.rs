@@ -992,6 +992,38 @@ mod tests {
     }
 
     #[test]
+    fn file_permission_allows_prefix_rule() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        let rule_path = "/workspace/data";
+        set_fs_rules(&[fs_rule_entry(0, rule_path, FS_READ | FS_WRITE)]);
+        let file_path = c_string("/workspace/data/subdir/file.txt");
+        let mut file = TestFile {
+            path: file_path.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        assert_eq!(file_permission(file_ptr, MAY_READ), 0);
+    }
+
+    #[test]
+    fn file_permission_denies_mismatched_prefix() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        let rule_path = "/workspace/data";
+        set_fs_rules(&[fs_rule_entry(0, rule_path, FS_READ | FS_WRITE)]);
+        let file_path = c_string("/workspace/database");
+        let mut file = TestFile {
+            path: file_path.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        assert_ne!(file_permission(file_ptr, MAY_READ), 0);
+    }
+
+    #[test]
     fn inode_unlink_requires_write_permission() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
