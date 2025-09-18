@@ -1,41 +1,7 @@
 use assert_cmd::Command;
-use serde::Deserialize;
+use sandbox_runtime::LayoutSnapshot;
 use std::fs;
 use tempfile::tempdir;
-
-#[derive(Debug, Deserialize)]
-struct LayoutSnapshot {
-    exec: Vec<String>,
-    net: Vec<NetRuleSnapshot>,
-    net_parents: Vec<NetParentSnapshot>,
-    fs: Vec<FsRuleSnapshot>,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct NetRuleSnapshot {
-    unit: u32,
-    protocol: u8,
-    prefix_len: u8,
-    port: u16,
-    addr: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct NetParentSnapshot {
-    child: u32,
-    parent: u32,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct FsRuleSnapshot {
-    unit: u32,
-    path: String,
-    read: bool,
-    write: bool,
-}
 
 #[test]
 fn run_fake_sandbox_records_layout() -> Result<(), Box<dyn std::error::Error>> {
