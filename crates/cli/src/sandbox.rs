@@ -5,7 +5,7 @@ use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, Lsm};
 use aya::{Btf, Ebpf, EbpfLoader, Pod};
-use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRuleEntry};
+use bpf_api::{ExecAllowEntry, FS_READ, FS_WRITE, FsRuleEntry, NetParentEntry, NetRuleEntry};
 use qqrm_agent_lite::{self, Config as AgentConfig, Shutdown, ShutdownHandle};
 use qqrm_policy_compiler::MapsLayout;
 use serde::Serialize;
@@ -13,7 +13,7 @@ use std::cell::UnsafeCell;
 use std::convert::TryFrom;
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
@@ -421,7 +421,7 @@ impl Drop for Cgroup {
 struct FakeSandbox {
     cgroup_dir: PathBuf,
     agent: Option<FakeAgent>,
-    layout_recorder: LayoutRecorder,
+    layout_recorder: Option<LayoutRecorder>,
 }
 
 impl FakeSandbox {
@@ -436,7 +436,7 @@ impl FakeSandbox {
         }
         fs::create_dir_all(&cgroup_dir)?;
         let agent = FakeAgent::spawn(events)?;
-        let layout_recorder = LayoutRecorder::new(fake_layout_path())?;
+        let layout_recorder = LayoutRecorder::from_env()?;
         Ok(Self {
             cgroup_dir,
             agent: Some(agent),
@@ -445,7 +445,9 @@ impl FakeSandbox {
     }
 
     fn run(&mut self, mut command: Command, layout: &MapsLayout) -> io::Result<ExitStatus> {
-        self.layout_recorder.record(layout)?;
+        if let Some(recorder) = &mut self.layout_recorder {
+            recorder.record(layout)?;
+        }
         command.status()
     }
 
@@ -471,108 +473,132 @@ impl Drop for FakeSandbox {
     }
 }
 
-struct FakeAgent {
-    stop: Arc<AtomicBool>,
-    handle: Option<thread::JoinHandle<io::Result<()>>>,
-}
-
 struct LayoutRecorder {
-    path: PathBuf,
+    writer: BufWriter<File>,
 }
 
 impl LayoutRecorder {
-    fn new(path: PathBuf) -> io::Result<Self> {
+    fn from_env() -> io::Result<Option<Self>> {
+        let Some(path) = env::var_os("QQRM_WARDEN_FAKE_LAYOUT_PATH") else {
+            return Ok(None);
+        };
+        let path = PathBuf::from(path);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err),
-        }
-        Ok(Self { path })
+        let file = OpenOptions::new().create(true).append(true).open(path)?;
+        Ok(Some(Self {
+            writer: BufWriter::new(file),
+        }))
     }
 
-    fn record(&self, layout: &MapsLayout) -> io::Result<()> {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        let record = SerializableLayout::from(layout);
-        serde_json::to_writer(&mut file, &record).map_err(io::Error::other)?;
-        writeln!(file)?;
-        Ok(())
+    fn record(&mut self, layout: &MapsLayout) -> io::Result<()> {
+        let snapshot = LayoutSnapshot::from(layout);
+        serde_json::to_writer(&mut self.writer, &snapshot).map_err(io::Error::other)?;
+        self.writer.write_all(b"\n")?;
+        self.writer.flush()
     }
 }
 
 #[derive(Serialize)]
-struct SerializableLayout {
-    exec_allowlist: Vec<String>,
-    net_rules: Vec<SerializableNetRule>,
-    net_parents: Vec<SerializableNetParent>,
-    fs_rules: Vec<SerializableFsRule>,
+struct LayoutSnapshot {
+    exec: Vec<String>,
+    net: Vec<NetRuleSnapshot>,
+    net_parents: Vec<NetParentSnapshot>,
+    fs: Vec<FsRuleSnapshot>,
 }
 
 #[derive(Serialize)]
-struct SerializableNetRule {
+struct NetRuleSnapshot {
     unit: u32,
-    addr: String,
     protocol: u8,
     prefix_len: u8,
     port: u16,
+    addr: String,
 }
 
 #[derive(Serialize)]
-struct SerializableNetParent {
+struct NetParentSnapshot {
     child: u32,
     parent: u32,
 }
 
 #[derive(Serialize)]
-struct SerializableFsRule {
+struct FsRuleSnapshot {
     unit: u32,
-    access: u8,
     path: String,
+    read: bool,
+    write: bool,
 }
 
-impl From<&MapsLayout> for SerializableLayout {
+impl From<&MapsLayout> for LayoutSnapshot {
     fn from(layout: &MapsLayout) -> Self {
         Self {
-            exec_allowlist: layout
+            exec: layout
                 .exec_allowlist
                 .iter()
-                .map(|entry| decode_c_string(&entry.path))
+                .map(|entry| decode_path(&entry.path))
                 .collect(),
-            net_rules: layout
-                .net_rules
-                .iter()
-                .map(|entry| SerializableNetRule {
-                    unit: entry.unit,
-                    addr: decode_net_addr(&entry.rule.addr),
-                    protocol: entry.rule.protocol,
-                    prefix_len: entry.rule.prefix_len,
-                    port: entry.rule.port,
-                })
-                .collect(),
+            net: layout.net_rules.iter().map(NetRuleSnapshot::from).collect(),
             net_parents: layout
                 .net_parents
                 .iter()
-                .map(|entry| SerializableNetParent {
+                .map(|entry| NetParentSnapshot {
                     child: entry.child,
                     parent: entry.parent,
                 })
                 .collect(),
-            fs_rules: layout
-                .fs_rules
-                .iter()
-                .map(|entry| SerializableFsRule {
-                    unit: entry.unit,
-                    access: entry.rule.access,
-                    path: decode_c_string(&entry.rule.path),
-                })
-                .collect(),
+            fs: layout.fs_rules.iter().map(FsRuleSnapshot::from).collect(),
         }
     }
+}
+
+impl From<&NetRuleEntry> for NetRuleSnapshot {
+    fn from(entry: &NetRuleEntry) -> Self {
+        Self {
+            unit: entry.unit,
+            protocol: entry.rule.protocol,
+            prefix_len: entry.rule.prefix_len,
+            port: entry.rule.port,
+            addr: decode_net_addr(entry),
+        }
+    }
+}
+
+impl From<&FsRuleEntry> for FsRuleSnapshot {
+    fn from(entry: &FsRuleEntry) -> Self {
+        let access = entry.rule.access;
+        Self {
+            unit: entry.unit,
+            path: decode_path(&entry.rule.path),
+            read: access & FS_READ != 0,
+            write: access & FS_WRITE != 0,
+        }
+    }
+}
+
+fn decode_path(bytes: &[u8]) -> String {
+    let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..len]).to_string()
+}
+
+fn decode_net_addr(entry: &NetRuleEntry) -> String {
+    if entry.rule.prefix_len <= 32 {
+        Ipv4Addr::new(
+            entry.rule.addr[0],
+            entry.rule.addr[1],
+            entry.rule.addr[2],
+            entry.rule.addr[3],
+        )
+        .to_string()
+    } else {
+        Ipv6Addr::from(entry.rule.addr).to_string()
+    }
+}
+
+struct FakeAgent {
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<io::Result<()>>>,
 }
 
 impl FakeAgent {
@@ -703,27 +729,6 @@ fn fake_cgroup_dir() -> PathBuf {
             process::id(),
             unique_suffix()
         ))
-    }
-}
-
-fn fake_layout_path() -> PathBuf {
-    if let Some(path) = env::var_os("QQRM_WARDEN_FAKE_LAYOUT_PATH") {
-        PathBuf::from(path)
-    } else {
-        PathBuf::from("fake-maps-layout.jsonl")
-    }
-}
-
-fn decode_c_string(bytes: &[u8]) -> String {
-    let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
-    String::from_utf8_lossy(&bytes[..len]).to_string()
-}
-
-fn decode_net_addr(addr: &[u8; 16]) -> String {
-    if addr[4..].iter().all(|&b| b == 0) {
-        Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]).to_string()
-    } else {
-        Ipv6Addr::from(*addr).to_string()
     }
 }
 

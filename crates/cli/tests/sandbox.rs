@@ -1,34 +1,48 @@
 use assert_cmd::Command;
-use bpf_api::{FS_READ, FS_WRITE};
 use serde::Deserialize;
 use std::fs;
 use tempfile::tempdir;
 
 #[derive(Debug, Deserialize)]
-struct RecordedLayout {
-    exec_allowlist: Vec<String>,
-    net_rules: Vec<RecordedNetRule>,
-    fs_rules: Vec<RecordedFsRule>,
+struct LayoutSnapshot {
+    exec: Vec<String>,
+    net: Vec<NetRuleSnapshot>,
+    net_parents: Vec<NetParentSnapshot>,
+    fs: Vec<FsRuleSnapshot>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-struct RecordedNetRule {
-    addr: String,
+struct NetRuleSnapshot {
+    unit: u32,
+    protocol: u8,
+    prefix_len: u8,
     port: u16,
+    addr: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-struct RecordedFsRule {
-    access: u8,
+struct NetParentSnapshot {
+    child: u32,
+    parent: u32,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct FsRuleSnapshot {
+    unit: u32,
     path: String,
+    read: bool,
+    write: bool,
 }
 
 #[test]
-fn run_fake_sandbox_records_events() -> Result<(), Box<dyn std::error::Error>> {
+fn run_fake_sandbox_records_layout() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempdir()?;
     let events_path = dir.path().join("warden-events.jsonl");
+    let layout_path = dir.path().join("fake-layout.jsonl");
     let cgroup_path = dir.path().join("fake-cgroup");
-    let layout_path = dir.path().join("maps-layout.jsonl");
     let policy_path = dir.path().join("policy.toml");
 
     fs::write(
@@ -49,69 +63,78 @@ default = "allowlist"
 hosts = ["127.0.0.1:8080"]
 
 [allow.fs]
-read_extra = ["/etc/hosts"]
 write_extra = ["/tmp/logs"]
+read_extra = ["/etc/ssl/certs"]
 "#,
     )?;
 
     let mut cmd = Command::cargo_bin("cargo-warden")?;
-    cmd.current_dir(dir.path())
+    cmd.arg("run")
         .arg("--allow")
-        .arg("/usr/bin/true")
+        .arg("/bin/echo")
         .arg("--policy")
-        .arg(policy_path.as_os_str())
-        .arg("run")
+        .arg(&policy_path)
         .arg("--")
-        .arg("/usr/bin/true")
+        .arg("true")
+        .current_dir(dir.path())
         .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
-        .env("QQRM_WARDEN_EVENTS_PATH", events_path.as_os_str())
-        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", cgroup_path.as_os_str())
-        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", layout_path.as_os_str());
+        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
+        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
+        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path);
     cmd.assert().success();
+
+    let layout_contents = fs::read_to_string(&layout_path)?;
+    let snapshots: Vec<LayoutSnapshot> = layout_contents
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    assert!(
+        !snapshots.is_empty(),
+        "expected at least one layout snapshot in {}",
+        layout_path.display()
+    );
+    let snapshot = snapshots.last().unwrap();
+
+    assert!(
+        snapshot.exec.iter().any(|path| path == "/bin/echo"),
+        "expected exec allowlist entry for /bin/echo: {:?}",
+        snapshot.exec
+    );
+    assert!(
+        snapshot
+            .net
+            .iter()
+            .any(|rule| rule.addr == "127.0.0.1" && rule.port == 8080),
+        "expected net rule for 127.0.0.1:8080: {:?}",
+        snapshot.net
+    );
+    assert!(
+        snapshot.net_parents.is_empty(),
+        "expected no net parents: {:?}",
+        snapshot.net_parents
+    );
+    assert!(
+        snapshot
+            .fs
+            .iter()
+            .any(|rule| rule.path == "/tmp/logs" && rule.write),
+        "expected write rule for /tmp/logs: {:?}",
+        snapshot.fs
+    );
+    assert!(
+        snapshot
+            .fs
+            .iter()
+            .any(|rule| rule.path == "/etc/ssl/certs" && rule.read && !rule.write),
+        "expected read-only rule for /etc/ssl/certs: {:?}",
+        snapshot.fs
+    );
 
     let contents = fs::read_to_string(&events_path)?;
     assert!(
         contents.lines().any(|line| line.contains("\"fake\":true")),
         "expected fake event in {}: {contents}",
         events_path.display()
-    );
-
-    let layout_contents = fs::read_to_string(&layout_path)?;
-    let mut layouts = Vec::new();
-    for line in layout_contents.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        layouts.push(serde_json::from_str::<RecordedLayout>(line)?);
-    }
-    let recorded = layouts.last().expect("expected recorded layout entry");
-    assert!(
-        recorded
-            .exec_allowlist
-            .iter()
-            .any(|path| path == "/usr/bin/true"),
-        "expected exec allowlist to include /usr/bin/true: {recorded:?}"
-    );
-    assert!(
-        recorded
-            .net_rules
-            .iter()
-            .any(|rule| rule.addr == "127.0.0.1" && rule.port == 8080),
-        "expected network rule for 127.0.0.1:8080: {recorded:?}"
-    );
-    assert!(
-        recorded
-            .fs_rules
-            .iter()
-            .any(|rule| rule.path == "/etc/hosts" && rule.access == FS_READ),
-        "expected filesystem read rule for /etc/hosts: {recorded:?}"
-    );
-    assert!(
-        recorded
-            .fs_rules
-            .iter()
-            .any(|rule| { rule.path == "/tmp/logs" && rule.access == (FS_READ | FS_WRITE) }),
-        "expected filesystem write rule for /tmp/logs: {recorded:?}"
     );
     assert!(
         !cgroup_path.exists(),
