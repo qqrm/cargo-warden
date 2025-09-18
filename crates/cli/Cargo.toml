@@ -16,13 +16,15 @@ clap = { version = "4", features = ["derive"] }
 libseccomp = "0.3"
 libc = "0.2"
 policy-core = { package = "qqrm-policy-core", version = "0.1.0", path = "../policy-core" }
+policy-compiler = { package = "qqrm-policy-compiler", version = "0.1.0", path = "../policy-compiler" }
+bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
+qqrm-agent-lite = { path = "../agent-lite" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 
 [dev-dependencies]
 serial_test = "3"
-qqrm-agent-lite = { path = "../agent-lite" }
 assert_cmd = "2"
 tempfile = "3"
 

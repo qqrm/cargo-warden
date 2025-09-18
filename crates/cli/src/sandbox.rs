@@ -1,10 +1,12 @@
 use crate::apply_seccomp;
 use anyhow::Error as AnyhowError;
-use aya::maps::{MapData, ring_buf::RingBuf};
+use aya::maps::{Array, MapData, ring_buf::RingBuf};
 use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, Lsm};
-use aya::{Btf, Ebpf, EbpfLoader};
+use aya::{Btf, Ebpf, EbpfLoader, Pod};
+use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRuleEntry};
+use policy_compiler::MapsLayout;
 use qqrm_agent_lite::{self, Config as AgentConfig, Shutdown, ShutdownHandle};
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -18,6 +20,54 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+struct ExecAllowEntryPod(ExecAllowEntry);
+
+unsafe impl Pod for ExecAllowEntryPod {}
+
+impl From<ExecAllowEntry> for ExecAllowEntryPod {
+    fn from(entry: ExecAllowEntry) -> Self {
+        Self(entry)
+    }
+}
+
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+struct NetRuleEntryPod(NetRuleEntry);
+
+unsafe impl Pod for NetRuleEntryPod {}
+
+impl From<NetRuleEntry> for NetRuleEntryPod {
+    fn from(entry: NetRuleEntry) -> Self {
+        Self(entry)
+    }
+}
+
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+struct NetParentEntryPod(NetParentEntry);
+
+unsafe impl Pod for NetParentEntryPod {}
+
+impl From<NetParentEntry> for NetParentEntryPod {
+    fn from(entry: NetParentEntry) -> Self {
+        Self(entry)
+    }
+}
+
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+struct FsRuleEntryPod(FsRuleEntry);
+
+unsafe impl Pod for FsRuleEntryPod {}
+
+impl From<FsRuleEntry> for FsRuleEntryPod {
+    fn from(entry: FsRuleEntry) -> Self {
+        Self(entry)
+    }
+}
+
 /// Wrapper responsible for BPF setup, agent management and cleanup.
 pub(crate) struct Sandbox {
     inner: SandboxImpl,
@@ -29,14 +79,14 @@ enum SandboxImpl {
 }
 
 impl Sandbox {
-    pub(crate) fn new() -> io::Result<Self> {
+    pub(crate) fn new(layout: &MapsLayout) -> io::Result<Self> {
         if env::var_os("QQRM_WARDEN_FAKE_SANDBOX").is_some() {
             return Ok(Self {
                 inner: SandboxImpl::Fake(FakeSandbox::new()?),
             });
         }
         Ok(Self {
-            inner: SandboxImpl::Real(RealSandbox::new()?),
+            inner: SandboxImpl::Real(RealSandbox::new(layout)?),
         })
     }
 
@@ -65,7 +115,7 @@ struct RealSandbox {
 }
 
 impl RealSandbox {
-    fn new() -> io::Result<Self> {
+    fn new(layout: &MapsLayout) -> io::Result<Self> {
         let events_path = events_path();
         if let Some(parent) = events_path.parent() {
             fs::create_dir_all(parent)?;
@@ -80,11 +130,56 @@ impl RealSandbox {
             agent: None,
             events_path,
         };
+        sandbox.load_maps(layout)?;
         sandbox.attach_lsm()?;
         sandbox.attach_cgroup()?;
         let ring = take_events_ring(&mut sandbox.bpf)?;
         sandbox.agent = Some(start_agent(ring, sandbox.events_path.clone())?);
         Ok(sandbox)
+    }
+
+    fn load_maps(&mut self, layout: &MapsLayout) -> io::Result<()> {
+        populate_array_map::<ExecAllowEntry, ExecAllowEntryPod>(
+            &mut self.bpf,
+            "EXEC_ALLOWLIST",
+            &layout.exec_allowlist,
+        )?;
+        set_length_map(
+            &mut self.bpf,
+            "EXEC_ALLOWLIST_LENGTH",
+            layout.exec_allowlist.len() as u32,
+        )?;
+        populate_array_map::<NetRuleEntry, NetRuleEntryPod>(
+            &mut self.bpf,
+            "NET_RULES",
+            &layout.net_rules,
+        )?;
+        set_length_map(
+            &mut self.bpf,
+            "NET_RULES_LENGTH",
+            layout.net_rules.len() as u32,
+        )?;
+        populate_array_map::<NetParentEntry, NetParentEntryPod>(
+            &mut self.bpf,
+            "NET_PARENTS",
+            &layout.net_parents,
+        )?;
+        set_length_map(
+            &mut self.bpf,
+            "NET_PARENTS_LENGTH",
+            layout.net_parents.len() as u32,
+        )?;
+        populate_array_map::<FsRuleEntry, FsRuleEntryPod>(
+            &mut self.bpf,
+            "FS_RULES",
+            &layout.fs_rules,
+        )?;
+        set_length_map(
+            &mut self.bpf,
+            "FS_RULES_LENGTH",
+            layout.fs_rules.len() as u32,
+        )?;
+        Ok(())
     }
 
     fn attach_lsm(&mut self) -> io::Result<()> {
@@ -169,6 +264,36 @@ impl RealSandbox {
         self.cgroup.cleanup()?;
         Ok(())
     }
+}
+
+fn populate_array_map<T, P>(bpf: &mut Ebpf, name: &str, entries: &[T]) -> io::Result<()>
+where
+    T: Copy,
+    P: From<T> + Pod,
+{
+    let map = bpf.map_mut(name).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, format!("BPF map {name} not found"))
+    })?;
+    let mut array = Array::<_, P>::try_from(map)
+        .map_err(|err| io::Error::other(format!("map {name} type mismatch: {err}")))?;
+    for (idx, entry) in entries.iter().copied().enumerate() {
+        let pod = P::from(entry);
+        array
+            .set(idx as u32, pod, 0)
+            .map_err(|err| io::Error::other(format!("failed to update {name}[{idx}]: {err}")))?;
+    }
+    Ok(())
+}
+
+fn set_length_map(bpf: &mut Ebpf, name: &str, len: u32) -> io::Result<()> {
+    let map = bpf.map_mut(name).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, format!("BPF map {name} not found"))
+    })?;
+    let mut array = Array::<_, u32>::try_from(map)
+        .map_err(|err| io::Error::other(format!("map {name} type mismatch: {err}")))?;
+    array
+        .set(0, len, 0)
+        .map_err(|err| io::Error::other(format!("failed to set {name}: {err}")))
 }
 
 struct AgentHandle {
