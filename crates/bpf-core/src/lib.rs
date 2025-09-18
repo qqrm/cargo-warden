@@ -106,6 +106,11 @@ type LengthMap = Array<u32>;
 type LengthMap = TestArray<u32, 1>;
 
 #[cfg(target_arch = "bpf")]
+type ModeMap = Array<u32>;
+#[cfg(any(test, feature = "fuzzing"))]
+type ModeMap = TestArray<u32, 1>;
+
+#[cfg(target_arch = "bpf")]
 type EventCountsMap = Array<u64>;
 #[cfg(any(test, feature = "fuzzing"))]
 type EventCountsMap = TestArray<u64, { bpf_api::EVENT_COUNT_SLOTS as usize }>;
@@ -169,6 +174,16 @@ const fn length_map() -> LengthMap {
 }
 
 #[cfg(target_arch = "bpf")]
+const fn mode_map() -> ModeMap {
+    Array::with_max_entries(1, 0)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+const fn mode_map() -> ModeMap {
+    TestArray::new()
+}
+
+#[cfg(target_arch = "bpf")]
 const fn events_map() -> EventsMap {
     RingBuf::with_byte_size(bpf_api::EVENT_RINGBUF_CAPACITY_BYTES, 0)
 }
@@ -201,6 +216,13 @@ static mut EXEC_ALLOWLIST_LENGTH: LengthMap = length_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static EXEC_ALLOWLIST_LENGTH: LengthMap = length_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "MODE")]
+static mut MODE: ModeMap = mode_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static MODE: ModeMap = mode_map();
 
 #[cfg(target_arch = "bpf")]
 #[map(name = "NET_RULES")]
@@ -359,6 +381,26 @@ fn increment_event_count() {
         let current = EVENT_COUNTS.get(0).unwrap_or(0);
         EVENT_COUNTS.set(0, current.wrapping_add(1));
     }
+}
+
+#[cfg(target_arch = "bpf")]
+unsafe fn load_mode() -> u32 {
+    MODE.get(0).copied().unwrap_or(bpf_api::MODE_ENFORCE)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+unsafe fn load_mode() -> u32 {
+    MODE.get(0).unwrap_or(bpf_api::MODE_ENFORCE)
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn enforcement_enabled() -> bool {
+    unsafe { load_mode() != bpf_api::MODE_OBSERVE }
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn deny_or_allow() -> i32 {
+    if enforcement_enabled() { deny() } else { 0 }
 }
 
 #[cfg(target_arch = "bpf")]
@@ -730,7 +772,7 @@ fn check4(ctx: *mut c_void) -> i32 {
     if net_allowed(&addr, port, proto) {
         0
     } else {
-        deny()
+        deny_or_allow()
     }
 }
 
@@ -746,7 +788,7 @@ fn check6(ctx: *mut c_void) -> i32 {
     if net_allowed(&addr, port, proto) {
         0
     } else {
-        deny()
+        deny_or_allow()
     }
 }
 
@@ -772,7 +814,7 @@ pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
     let filename_ptr = unsafe { *(ctx as *const *const u8) };
     let mut buf = [0u8; 256];
     if unsafe { bpf_probe_read_user_str(buf.as_mut_ptr(), buf.len() as u32, filename_ptr) } < 0 {
-        return deny();
+        return deny_or_allow();
     }
     let len = exec_allowlist_len();
     let mut i = 0;
@@ -784,7 +826,7 @@ pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
         }
         i += 1;
     }
-    deny()
+    deny_or_allow()
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -821,10 +863,10 @@ pub extern "C" fn sendmsg6(ctx: *mut c_void) -> i32 {
 pub extern "C" fn file_open(file: *mut c_void, _cred: *mut c_void) -> i32 {
     let path_ptr = match file_path_ptr(file) {
         Some(ptr) => ptr,
-        None => return deny(),
+        None => return deny_or_allow(),
     };
     let Some(path) = read_user_path(path_ptr) else {
-        return deny();
+        return deny_or_allow();
     };
     let access = file_mode_bits(file)
         .map(access_from_mode)
@@ -832,7 +874,7 @@ pub extern "C" fn file_open(file: *mut c_void, _cred: *mut c_void) -> i32 {
     let allowed = fs_allowed(&path, access);
     let event = fs_event(ACTION_OPEN, &path, allowed);
     publish_event(&event);
-    if allowed { 0 } else { deny() }
+    if allowed { 0 } else { deny_or_allow() }
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -845,17 +887,17 @@ pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
     }
     let path_ptr = match file_path_ptr(file) {
         Some(ptr) => ptr,
-        None => return deny(),
+        None => return deny_or_allow(),
     };
     let Some(path) = read_user_path(path_ptr) else {
-        return deny();
+        return deny_or_allow();
     };
     if fs_allowed(&path, access) {
         0
     } else {
         let event = fs_event(ACTION_OPEN, &path, false);
         publish_event(&event);
-        deny()
+        deny_or_allow()
     }
 }
 
@@ -865,17 +907,17 @@ pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
 pub extern "C" fn inode_unlink(_dir: *mut c_void, dentry: *mut c_void) -> i32 {
     let path_ptr = match dentry_path_ptr(dentry) {
         Some(ptr) => ptr,
-        None => return deny(),
+        None => return deny_or_allow(),
     };
     let Some(path) = read_user_path(path_ptr) else {
-        return deny();
+        return deny_or_allow();
     };
     if fs_allowed(&path, bpf_api::FS_WRITE) {
         0
     } else {
         let event = fs_event(ACTION_UNLINK, &path, false);
         publish_event(&event);
-        deny()
+        deny_or_allow()
     }
 }
 
@@ -976,6 +1018,29 @@ mod tests {
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
+    }
+
+    #[test]
+    fn file_open_observe_mode_allows_without_rule() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        set_mode(bpf_api::MODE_OBSERVE);
+        let path = "/workspace/observe.txt";
+        let path_bytes = c_string(path);
+        let mut file = TestFile {
+            path: path_bytes.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
+        assert_eq!(result, 0);
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_OPEN);
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        reset_mode();
     }
 
     #[test]
@@ -1218,6 +1283,7 @@ mod tests {
         NET_RULES_LENGTH.clear();
         NET_PARENTS.clear();
         NET_PARENTS_LENGTH.clear();
+        reset_mode();
         unsafe {
             CURRENT_UNIT = 0;
         }
@@ -1235,9 +1301,20 @@ mod tests {
     fn reset_fs_state() {
         FS_RULES.clear();
         FS_RULES_LENGTH.clear();
+        reset_mode();
         unsafe {
             CURRENT_UNIT = 0;
         }
+    }
+
+    fn reset_mode() {
+        MODE.clear();
+        MODE.set(0, bpf_api::MODE_ENFORCE);
+    }
+
+    fn set_mode(value: u32) {
+        MODE.clear();
+        MODE.set(0, value);
     }
 
     fn fs_rule_entry(unit: u32, path: &str, access: u8) -> bpf_api::FsRuleEntry {

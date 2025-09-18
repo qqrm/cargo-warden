@@ -22,6 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: owner/warden-ci@v1
+        # Runs `cargo warden --mode observe` so CI continues even without eBPF privileges.
         with:
           command: build
 ```

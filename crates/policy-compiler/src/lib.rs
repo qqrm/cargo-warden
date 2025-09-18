@@ -4,9 +4,10 @@ use std::{
 };
 
 use bpf_api::{
-    ExecAllowEntry, FS_READ, FS_WRITE, FsRule, FsRuleEntry, NetParentEntry, NetRule, NetRuleEntry,
+    ExecAllowEntry, FS_READ, FS_WRITE, FsRule, FsRuleEntry, MODE_ENFORCE, MODE_OBSERVE,
+    NetParentEntry, NetRule, NetRuleEntry,
 };
-use policy_core::{ExecDefault, FsDefault, NetDefault, Policy};
+use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
 use thiserror::Error;
 
 const TCP_PROTOCOL: u8 = 6;
@@ -40,6 +41,8 @@ pub struct MapsLayout {
     pub net_parents: Vec<NetParentEntry>,
     /// Entries for the `fs_rules` map.
     pub fs_rules: Vec<FsRuleEntry>,
+    /// Operational mode of the sandbox.
+    pub mode: Mode,
 }
 
 impl MapsLayout {
@@ -50,6 +53,7 @@ impl MapsLayout {
             net_rules: slice_to_bytes(&self.net_rules),
             net_parents: slice_to_bytes(&self.net_parents),
             fs_rules: slice_to_bytes(&self.fs_rules),
+            mode: encode_mode(self.mode),
         }
     }
 }
@@ -61,6 +65,7 @@ pub struct MapsBinary {
     pub net_rules: Vec<u8>,
     pub net_parents: Vec<u8>,
     pub fs_rules: Vec<u8>,
+    pub mode: u32,
 }
 
 /// Compile a [`Policy`] into serialized BPF map entries.
@@ -70,7 +75,15 @@ pub fn compile(policy: &Policy) -> Result<MapsLayout, CompileError> {
         net_rules: compile_net_rules(policy)?,
         net_parents: Vec::new(),
         fs_rules: compile_fs_rules(policy)?,
+        mode: policy.mode,
     })
+}
+
+fn encode_mode(mode: Mode) -> u32 {
+    match mode {
+        Mode::Observe => MODE_OBSERVE,
+        Mode::Enforce => MODE_ENFORCE,
+    }
 }
 
 fn compile_exec_allowlist(policy: &Policy) -> Result<Vec<ExecAllowEntry>, CompileError> {
@@ -200,6 +213,7 @@ mod tests {
         };
 
         let layout = compile(&policy).expect("compile");
+        assert_eq!(layout.mode, Mode::Enforce);
 
         assert_eq!(layout.exec_allowlist.len(), 2);
         assert_eq!(to_string(&layout.exec_allowlist[0].path), "/usr/bin/rustc");
@@ -240,6 +254,9 @@ mod tests {
 
         let layout = compile(&policy).expect("compile");
         let binary = layout.to_binary();
+
+        assert_eq!(layout.mode, Mode::Enforce);
+        assert_eq!(binary.mode, MODE_ENFORCE);
 
         assert_eq!(
             binary.exec_allowlist.len(),

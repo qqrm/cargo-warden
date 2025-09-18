@@ -21,7 +21,7 @@ runs:
       run: cargo install --path crates/cli
     - name: Enforce ${{ inputs.command }}
       shell: bash
-      run: cargo warden ${{ inputs.command }} || true
+      run: cargo warden --mode observe ${{ inputs.command }} || true
     - name: Generate SARIF report
       shell: bash
       run: cargo warden report --output warden.sarif

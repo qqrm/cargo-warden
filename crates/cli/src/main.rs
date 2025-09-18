@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy};
 use qqrm_policy_compiler::{self, MapsLayout};
 use serde::Deserialize;
@@ -27,8 +27,26 @@ struct Cli {
     /// Policy files referenced via CLI.
     #[arg(long = "policy", value_name = "FILE", global = true)]
     policy: Vec<String>,
+    /// Override sandbox mode (enforce or observe).
+    #[arg(long = "mode", value_enum, value_name = "MODE", global = true)]
+    mode: Option<ModeArg>,
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum ModeArg {
+    Observe,
+    Enforce,
+}
+
+impl From<ModeArg> for Mode {
+    fn from(value: ModeArg) -> Self {
+        match value {
+            ModeArg::Observe => Mode::Observe,
+            ModeArg::Enforce => Mode::Enforce,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -128,13 +146,13 @@ fn main() {
     let cli = Cli::parse_from(args);
     match cli.command {
         Commands::Build { args } => {
-            if let Err(e) = handle_build(args, &cli.allow, &cli.policy) {
+            if let Err(e) = handle_build(args, &cli.allow, &cli.policy, cli.mode.map(Into::into)) {
                 eprintln!("build failed: {e}");
                 exit(1);
             }
         }
         Commands::Run { cmd } => {
-            if let Err(e) = handle_run(cmd, &cli.allow, &cli.policy) {
+            if let Err(e) = handle_run(cmd, &cli.allow, &cli.policy, cli.mode.map(Into::into)) {
                 eprintln!("run failed: {e}");
                 exit(1);
             }
@@ -160,8 +178,13 @@ fn main() {
     }
 }
 
-fn handle_build(args: Vec<String>, allow: &[String], policy: &[String]) -> io::Result<()> {
-    let isolation = setup_isolation(allow, policy)?;
+fn handle_build(
+    args: Vec<String>,
+    allow: &[String],
+    policy: &[String],
+    mode: Option<Mode>,
+) -> io::Result<()> {
+    let isolation = setup_isolation(allow, policy, mode)?;
     let status = run_in_sandbox(build_command(&args), &isolation)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
@@ -169,11 +192,18 @@ fn handle_build(args: Vec<String>, allow: &[String], policy: &[String]) -> io::R
     Ok(())
 }
 
-fn setup_isolation(allow: &[String], policy_paths: &[String]) -> io::Result<IsolationConfig> {
+fn setup_isolation(
+    allow: &[String],
+    policy_paths: &[String],
+    mode_override: Option<Mode>,
+) -> io::Result<IsolationConfig> {
     let mut policy = load_default_policy()?;
     for path in policy_paths {
         let extra = load_policy(Path::new(path))?;
         merge_policy(&mut policy, extra);
+    }
+    if let Some(mode) = mode_override {
+        policy.mode = mode;
     }
     policy
         .rules
@@ -304,14 +334,19 @@ fn read_recent_events(path: &Path, limit: usize) -> io::Result<Vec<EventRecord>>
     Ok(events)
 }
 
-fn handle_run(cmd: Vec<String>, allow: &[String], policy: &[String]) -> io::Result<()> {
+fn handle_run(
+    cmd: Vec<String>,
+    allow: &[String],
+    policy: &[String],
+    mode: Option<Mode>,
+) -> io::Result<()> {
     if cmd.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "missing command",
         ));
     }
-    let isolation = setup_isolation(allow, policy)?;
+    let isolation = setup_isolation(allow, policy, mode)?;
     let status = run_in_sandbox(run_command(&cmd), &isolation)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
@@ -328,7 +363,7 @@ fn run_command(cmd: &[String]) -> Command {
 }
 
 fn run_in_sandbox(command: Command, isolation: &IsolationConfig) -> io::Result<ExitStatus> {
-    let mut sandbox = Sandbox::new()?;
+    let mut sandbox = Sandbox::new(isolation.maps_layout.mode)?;
     let run_result = sandbox.run(command, &isolation.syscall_deny, &isolation.maps_layout);
     let shutdown_result = sandbox.shutdown();
     let status = match run_result {
@@ -435,8 +470,8 @@ fn handle_init_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> io::
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, Commands, EventRecord, build_command, export_sarif, handle_init_with, handle_report,
-        read_recent_events, run_command, setup_isolation,
+        Cli, Commands, EventRecord, ModeArg, build_command, export_sarif, handle_init_with,
+        handle_report, read_recent_events, run_command, setup_isolation,
     };
     use clap::{CommandFactory, Parser};
     use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
@@ -522,6 +557,16 @@ mod tests {
             Commands::Build { args } => {
                 assert_eq!(args, vec!["--verbose".to_string()]);
             }
+            _ => panic!("expected build command"),
+        }
+    }
+
+    #[test]
+    fn parse_mode_override() {
+        let cli = Cli::parse_from(["cargo-warden", "--mode", "observe", "build"]);
+        assert!(matches!(cli.mode, Some(ModeArg::Observe)));
+        match cli.command {
+            Commands::Build { .. } => {}
             _ => panic!("expected build command"),
         }
     }
@@ -770,7 +815,7 @@ deny = ["execve"]
 
         let paths = [p1.to_str().unwrap().into(), p2.to_str().unwrap().into()];
         let allow = vec!["/usr/bin/rustc".to_string(), "/usr/bin/git".to_string()];
-        let isolation = setup_isolation(&allow, &paths).unwrap();
+        let isolation = setup_isolation(&allow, &paths, None).unwrap();
 
         assert!(isolation.syscall_deny.contains(&"clone".to_string()));
         assert!(isolation.syscall_deny.contains(&"execve".to_string()));
@@ -789,7 +834,7 @@ deny = ["execve"]
         let dir = tempdir().unwrap();
         let _guard = DirGuard::change_to(dir.path());
 
-        let isolation = setup_isolation(&[], &[]).unwrap();
+        let isolation = setup_isolation(&[], &[], None).unwrap();
 
         assert!(isolation.syscall_deny.is_empty());
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
@@ -803,9 +848,19 @@ deny = ["execve"]
         let _guard = DirGuard::change_to(dir.path());
 
         let allow = vec!["/bin/bash".to_string()];
-        let isolation = setup_isolation(&allow, &[]).unwrap();
+        let isolation = setup_isolation(&allow, &[], None).unwrap();
 
         let exec = exec_paths(&isolation.maps_layout);
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_applies_mode_override() {
+        let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        let isolation = setup_isolation(&[], &[], Some(Mode::Observe)).unwrap();
+        assert_eq!(isolation.maps_layout.mode, Mode::Observe);
     }
 }

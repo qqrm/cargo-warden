@@ -17,6 +17,10 @@ pub const FS_RULES_CAPACITY: u32 = 256;
 pub const EVENT_RINGBUF_CAPACITY_BYTES: u32 = 4096;
 /// Number of slots tracked for emitted event counters.
 pub const EVENT_COUNT_SLOTS: u32 = 1;
+/// Value stored in the MODE map for observe behavior.
+pub const MODE_OBSERVE: u32 = 0;
+/// Value stored in the MODE map for enforce behavior.
+pub const MODE_ENFORCE: u32 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

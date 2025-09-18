@@ -5,7 +5,10 @@ use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, Lsm};
 use aya::{Btf, Ebpf, EbpfLoader, Pod};
-use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRuleEntry};
+use bpf_api::{
+    ExecAllowEntry, FsRuleEntry, MODE_ENFORCE, MODE_OBSERVE, NetParentEntry, NetRuleEntry,
+};
+use policy_core::Mode;
 use qqrm_agent_lite::{self, Config as AgentConfig, Shutdown, ShutdownHandle};
 use qqrm_policy_compiler::MapsLayout;
 use std::cell::UnsafeCell;
@@ -33,15 +36,24 @@ enum SandboxImpl {
 }
 
 impl Sandbox {
-    pub(crate) fn new() -> io::Result<Self> {
+    pub(crate) fn new(mode: Mode) -> io::Result<Self> {
         if env::var_os("QQRM_WARDEN_FAKE_SANDBOX").is_some() {
             return Ok(Self {
                 inner: SandboxImpl::Fake(FakeSandbox::new()?),
             });
         }
-        Ok(Self {
-            inner: SandboxImpl::Real(RealSandbox::new()?),
-        })
+        match RealSandbox::new() {
+            Ok(real) => Ok(Self {
+                inner: SandboxImpl::Real(real),
+            }),
+            Err(err) if mode == Mode::Observe => {
+                eprintln!("warning: falling back to fake sandbox: {err}");
+                Ok(Self {
+                    inner: SandboxImpl::Fake(FakeSandbox::new()?),
+                })
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub(crate) fn run(
@@ -240,6 +252,21 @@ fn populate_maps(bpf: &mut Ebpf, layout: &MapsLayout) -> io::Result<()> {
         &layout.fs_rules,
         |entry| FsRuleEntryPod(*entry),
     )?;
+    set_mode(bpf, layout.mode)?;
+    Ok(())
+}
+
+fn set_mode(bpf: &mut Ebpf, mode: Mode) -> io::Result<()> {
+    let map = bpf.map_mut("MODE").ok_or_else(|| map_not_found("MODE"))?;
+    let mut array = Array::<&mut MapData, u32>::try_from(map)
+        .map_err(|err| io::Error::other(format!("MODE: {err}")))?;
+    let value = match mode {
+        Mode::Observe => MODE_OBSERVE,
+        Mode::Enforce => MODE_ENFORCE,
+    };
+    array
+        .set(0, value, 0)
+        .map_err(|err| io::Error::other(format!("set MODE: {err}")))?;
     Ok(())
 }
 
