@@ -11,6 +11,8 @@ pub const EXEC_ALLOWLIST_CAPACITY: u32 = 64;
 pub const NET_RULES_CAPACITY: u32 = 256;
 /// Maximum number of parent relationships supported by the eBPF map.
 pub const NET_PARENTS_CAPACITY: u32 = 256;
+/// Maximum number of filesystem rules supported by the eBPF map.
+pub const FS_RULES_CAPACITY: u32 = 256;
 /// Size of the event ring buffer in bytes.
 pub const EVENT_RINGBUF_CAPACITY_BYTES: u32 = 4096;
 /// Number of slots tracked for emitted event counters.
