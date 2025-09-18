@@ -11,3 +11,5 @@ readme = "../../README.md"
 
 [dependencies]
 policy-core = { package = "qqrm-policy-core", version = "0.1.0", path = "../policy-core" }
+bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
+thiserror = "1.0"

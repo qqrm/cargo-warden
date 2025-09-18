@@ -1072,7 +1072,9 @@ version = "0.1.0"
 name = "qqrm-policy-compiler"
 version = "0.1.0"
 dependencies = [
+ "qqrm-bpf-api",
  "qqrm-policy-core",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
