@@ -11,6 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 bpf-core = { package = "qqrm-bpf-core", version = "0.1.0", path = "../crates/bpf-core", features = ["fuzzing"] }
+bpf-host = { package = "qqrm-bpf-host", version = "0.1.0", path = "../crates/bpf-host" }
 
 [[bin]]
 name = "net"

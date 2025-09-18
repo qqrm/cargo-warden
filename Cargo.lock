@@ -1187,15 +1187,18 @@ version = "0.1.0"
 dependencies = [
  "aya-ebpf",
  "qqrm-bpf-api",
+ "qqrm-bpf-host",
 ]
+
+[[package]]
+name = "qqrm-bpf-host"
+version = "0.1.0"
 
 [[package]]
 name = "qqrm-cargo-warden"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "assert_cmd",
- "aya",
  "clap",
  "event-reporting",
  "libc",
@@ -1204,6 +1207,7 @@ dependencies = [
  "qqrm-bpf-api",
  "qqrm-policy-compiler",
  "qqrm-policy-core",
+ "qqrm-sandbox-runtime",
  "serde",
  "serde_json",
  "serial_test",
@@ -1232,6 +1236,21 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
  "toml",
+]
+
+[[package]]
+name = "qqrm-sandbox-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aya",
+ "libc",
+ "libseccomp",
+ "qqrm-agent-lite",
+ "qqrm-bpf-api",
+ "qqrm-policy-compiler",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
