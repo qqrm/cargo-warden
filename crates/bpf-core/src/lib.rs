@@ -534,14 +534,23 @@ fn fs_allowed(path: &[u8; 256], needed: u8) -> bool {
         return true;
     }
     let mut unit = current_unit();
+    let mut checked_root = unit == 0;
     loop {
         if unit_fs_allowed(unit, path, needed) {
             return true;
         }
         match get_parent(unit) {
-            Some(parent) => unit = parent,
+            Some(parent) => {
+                unit = parent;
+                if unit == 0 {
+                    checked_root = true;
+                }
+            }
             None => break,
         }
+    }
+    if !checked_root && unit_fs_allowed(0, path, needed) {
+        return true;
     }
     false
 }
@@ -1133,6 +1142,27 @@ mod tests {
         };
         assert_ne!(
             file_open((&mut other_file) as *mut _ as *mut c_void, ptr::null_mut()),
+            0
+        );
+    }
+
+    #[test]
+    fn file_rules_apply_globally_without_parents() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        set_fs_rules(&[fs_rule_entry(0, "/workspace/global", FS_READ | FS_WRITE)]);
+        let path = "/workspace/global/output.txt";
+        let path_bytes = c_string(path);
+        let mut file = TestFile {
+            path: path_bytes.as_ptr(),
+            mode: FMODE_WRITE,
+        };
+        unsafe {
+            CURRENT_UNIT = 7;
+        }
+        assert_eq!(
+            file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut()),
             0
         );
     }
