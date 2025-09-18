@@ -1,11 +1,13 @@
+use bpf_api::{FS_READ, FS_WRITE, FsRule, FsRuleEntry};
+use cargo_metadata::MetadataCommand;
 use clap::{Parser, Subcommand, ValueEnum};
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy};
 use qqrm_policy_compiler::{self, MapsLayout};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, exit};
 
 mod sandbox;
@@ -226,14 +228,138 @@ fn setup_isolation(
         eprintln!("warning: {warn}");
     }
 
-    let layout = qqrm_policy_compiler::compile(&policy)
+    let mut layout = qqrm_policy_compiler::compile(&policy)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+
+    if policy.fs_default() == FsDefault::Strict {
+        let cargo_dirs = discover_cargo_directories()?;
+        let implicit_paths = implicit_fs_permissions(&cargo_dirs);
+        merge_fs_rules_with_implicit(&mut layout, &implicit_paths)?;
+    }
 
     Ok(IsolationConfig {
         #[cfg(test)]
         mode: policy.mode,
         syscall_deny: policy.syscall_deny().cloned().collect(),
         maps_layout: layout,
+    })
+}
+
+struct CargoDirectories {
+    workspace: PathBuf,
+    target: PathBuf,
+    out_dir: Option<PathBuf>,
+}
+
+fn discover_cargo_directories() -> io::Result<CargoDirectories> {
+    let metadata = MetadataCommand::new()
+        .no_deps()
+        .exec()
+        .map_err(io::Error::other)
+        .ok();
+    let workspace = metadata
+        .as_ref()
+        .map(|meta| PathBuf::from(meta.workspace_root.clone()))
+        .unwrap_or(std::env::current_dir()?);
+
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            metadata
+                .as_ref()
+                .map(|meta| meta.target_directory.clone().into_std_path_buf())
+        })
+        .unwrap_or_else(|| workspace.join("target"));
+    let target = absolutize_path(target, &workspace);
+
+    let out_dir = std::env::var_os("OUT_DIR")
+        .map(PathBuf::from)
+        .map(|dir| absolutize_path(dir, &workspace));
+
+    Ok(CargoDirectories {
+        workspace,
+        target,
+        out_dir,
+    })
+}
+
+fn absolutize_path(path: PathBuf, base: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        base.join(path)
+    }
+}
+
+fn implicit_fs_permissions(dirs: &CargoDirectories) -> Vec<(PathBuf, u8)> {
+    let mut entries = vec![
+        (dirs.workspace.clone(), FS_READ),
+        (dirs.target.clone(), FS_READ | FS_WRITE),
+    ];
+    if let Some(out_dir) = &dirs.out_dir {
+        entries.push((out_dir.clone(), FS_READ | FS_WRITE));
+    }
+    entries
+}
+
+fn merge_fs_rules_with_implicit(
+    layout: &mut MapsLayout,
+    implicit: &[(PathBuf, u8)],
+) -> io::Result<()> {
+    let mut merged = Vec::new();
+    let mut index: HashMap<(u32, [u8; 256]), usize> = HashMap::new();
+
+    for entry in layout.fs_rules.drain(..) {
+        insert_fs_rule(&mut merged, &mut index, entry);
+    }
+
+    let mut units: Vec<u32> = merged.iter().map(|entry| entry.unit).collect();
+    if !units.contains(&0) {
+        units.push(0);
+    }
+    units.sort_unstable();
+    units.dedup();
+
+    for &unit in &units {
+        for (path, access) in implicit {
+            let entry = fs_rule_entry_from_path(unit, path, *access)?;
+            insert_fs_rule(&mut merged, &mut index, entry);
+        }
+    }
+
+    layout.fs_rules = merged;
+    Ok(())
+}
+
+fn insert_fs_rule(
+    entries: &mut Vec<FsRuleEntry>,
+    index: &mut HashMap<(u32, [u8; 256]), usize>,
+    entry: FsRuleEntry,
+) {
+    let key = (entry.unit, entry.rule.path);
+    if let Some(position) = index.get(&key) {
+        entries[*position].rule.access |= entry.rule.access;
+    } else {
+        index.insert(key, entries.len());
+        entries.push(entry);
+    }
+}
+
+fn fs_rule_entry_from_path(unit: u32, path: &Path, access: u8) -> io::Result<FsRuleEntry> {
+    let path_str = path.to_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("filesystem path contains invalid UTF-8: {}", path.display()),
+        )
+    })?;
+    let encoded = qqrm_policy_compiler::encode_fs_path(path_str).map_err(io::Error::other)?;
+    Ok(FsRuleEntry {
+        unit,
+        rule: FsRule {
+            access,
+            reserved: [0; 3],
+            path: encoded,
+        },
     })
 }
 
@@ -477,10 +603,11 @@ mod tests {
         Cli, CliMode, Commands, EventRecord, build_command, export_sarif, handle_init_with,
         handle_report, read_recent_events, run_command, setup_isolation,
     };
+    use bpf_api::{FS_READ, FS_WRITE};
     use clap::{CommandFactory, Parser};
     use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
     use serial_test::serial;
-    use std::ffi::OsStr;
+    use std::ffi::{OsStr, OsString};
     use std::fs::File;
     use std::io::{Cursor, Write};
     use std::path::{Path, PathBuf};
@@ -507,6 +634,38 @@ mod tests {
         }
     }
 
+    struct EnvGuard {
+        key: String,
+        original: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &str, value: &OsStr) -> Self {
+            let original = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self {
+                key: key.to_string(),
+                original,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.original.take() {
+                unsafe {
+                    std::env::set_var(&self.key, value);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var(&self.key);
+                }
+            }
+        }
+    }
+
     fn exec_paths(layout: &MapsLayout) -> Vec<String> {
         layout
             .exec_allowlist
@@ -518,6 +677,26 @@ mod tests {
                     .position(|&b| b == 0)
                     .unwrap_or(entry.path.len());
                 String::from_utf8_lossy(&entry.path[..len]).into_owned()
+            })
+            .collect()
+    }
+
+    fn fs_rules(layout: &MapsLayout) -> Vec<(u32, String, u8)> {
+        layout
+            .fs_rules
+            .iter()
+            .map(|entry| {
+                let len = entry
+                    .rule
+                    .path
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(entry.rule.path.len());
+                (
+                    entry.unit,
+                    String::from_utf8_lossy(&entry.rule.path[..len]).into_owned(),
+                    entry.rule.access,
+                )
             })
             .collect()
     }
@@ -861,6 +1040,105 @@ deny = ["execve"]
 
         let exec = exec_paths(&isolation.maps_layout);
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_includes_cargo_directories() {
+        let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        std::fs::write(
+            "Cargo.toml",
+            r#"[package]
+name = "sample"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all("src").unwrap();
+        std::fs::write("src/lib.rs", "pub fn dummy() {}\n").unwrap();
+
+        let target_dir = dir.path().join("custom-target");
+        let out_dir = dir.path().join("custom-target/build-out");
+        let _target_guard = EnvGuard::set("CARGO_TARGET_DIR", target_dir.as_os_str());
+        let _out_guard = EnvGuard::set("OUT_DIR", out_dir.as_os_str());
+
+        let isolation = setup_isolation(&[], &[], None).unwrap();
+        let rules = fs_rules(&isolation.maps_layout);
+
+        let workspace = dir.path().to_string_lossy().to_string();
+        assert!(
+            rules
+                .iter()
+                .any(|(unit, path, access)| *unit == 0 && path == &workspace && *access == FS_READ)
+        );
+
+        let target_path = target_dir.to_string_lossy().to_string();
+        assert!(rules.iter().any(|(unit, path, access)| {
+            *unit == 0
+                && path == &target_path
+                && (*access & (FS_READ | FS_WRITE)) == (FS_READ | FS_WRITE)
+        }));
+
+        let out_path = out_dir.to_string_lossy().to_string();
+        assert!(rules.iter().any(|(unit, path, access)| {
+            *unit == 0
+                && path == &out_path
+                && (*access & (FS_READ | FS_WRITE)) == (FS_READ | FS_WRITE)
+        }));
+    }
+
+    #[test]
+    #[serial]
+    fn implicit_permissions_merge_with_policy_entries() {
+        let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        std::fs::write(
+            "Cargo.toml",
+            r#"[package]
+name = "sample"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all("src").unwrap();
+        std::fs::write("src/lib.rs", "pub fn dummy() {}\n").unwrap();
+
+        let target_dir = dir.path().join("custom-target");
+        let _target_guard = EnvGuard::set("CARGO_TARGET_DIR", target_dir.as_os_str());
+
+        let target_toml = target_dir.to_str().unwrap().replace('\\', "\\\\");
+        std::fs::write(
+            "warden.toml",
+            format!(
+                r#"mode = "enforce"
+fs.default = "strict"
+net.default = "deny"
+exec.default = "allowlist"
+
+[allow.fs]
+write_extra = ["{path}"]
+read_extra = []
+"#,
+                path = target_toml
+            ),
+        )
+        .unwrap();
+
+        let isolation = setup_isolation(&[], &[], None).unwrap();
+        let rules = fs_rules(&isolation.maps_layout);
+
+        let target_path = target_dir.to_string_lossy().to_string();
+        let matches: Vec<_> = rules
+            .iter()
+            .filter(|(_, path, _)| path == &target_path)
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].2 & (FS_READ | FS_WRITE), FS_READ | FS_WRITE);
     }
 
     #[test]
