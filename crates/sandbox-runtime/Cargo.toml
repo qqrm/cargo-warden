@@ -12,8 +12,10 @@ documentation = "https://docs.rs/qqrm-sandbox-runtime"
 anyhow = "1"
 aya = "0.13"
 bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
+event-reporting = { version = "0.1.0", path = "../event-reporting" }
 libc = "0.2"
 libseccomp = "0.3"
+policy-core = { package = "qqrm-policy-core", version = "0.1.0", path = "../policy-core" }
 qqrm-agent-lite = { version = "0.1.0", path = "../agent-lite" }
 qqrm-policy-compiler = { version = "0.1.0", path = "../policy-compiler" }
 serde = { version = "1", features = ["derive"] }

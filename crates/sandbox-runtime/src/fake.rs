@@ -1,20 +1,28 @@
 use crate::layout::LayoutRecorder;
 use crate::util::{events_path, fake_cgroup_dir};
+use event_reporting::EventRecord;
+use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
-use std::fs;
+use std::env;
+use std::fs::{self, OpenOptions};
 use std::io;
 use std::io::Write;
-use std::path::PathBuf;
+use std::os::unix::process::ExitStatusExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
+const FAKE_DENIED_PATH_ENV: &str = "QQRM_WARDEN_FAKE_DENIED_PATH";
+
 pub(crate) struct FakeSandbox {
     cgroup_dir: PathBuf,
     agent: Option<FakeAgent>,
     layout_recorder: Option<LayoutRecorder>,
+    events_path: PathBuf,
+    denied_path: Option<String>,
 }
 
 impl FakeSandbox {
@@ -28,12 +36,14 @@ impl FakeSandbox {
             fs::create_dir_all(parent)?;
         }
         fs::create_dir_all(&cgroup_dir)?;
-        let agent = FakeAgent::spawn(events)?;
+        let agent = FakeAgent::spawn(events.clone())?;
         let layout_recorder = LayoutRecorder::from_env()?;
         Ok(Self {
             cgroup_dir,
             agent: Some(agent),
             layout_recorder,
+            events_path: events,
+            denied_path: env::var(FAKE_DENIED_PATH_ENV).ok(),
         })
     }
 
@@ -41,11 +51,19 @@ impl FakeSandbox {
         &mut self,
         mut command: Command,
         layout: &MapsLayout,
+        mode: Mode,
     ) -> io::Result<ExitStatus> {
         if let Some(recorder) = &mut self.layout_recorder {
             recorder.record(layout)?;
         }
-        command.status()
+        let status = command.status()?;
+        if let Some(path) = &self.denied_path {
+            append_event(&self.events_path, path)?;
+            if matches!(mode, Mode::Enforce) && status.success() {
+                return Ok(ExitStatus::from_raw(1 << 8));
+            }
+        }
+        Ok(status)
     }
 
     pub(crate) fn shutdown(mut self) -> io::Result<()> {
@@ -57,6 +75,22 @@ impl FakeSandbox {
         }
         Ok(())
     }
+}
+
+fn append_event(path: &Path, denied_path: &str) -> io::Result<()> {
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    let record = EventRecord {
+        pid: 0,
+        unit: 0,
+        action: 0,
+        verdict: 1,
+        container_id: 0,
+        caps: 0,
+        path_or_addr: denied_path.to_string(),
+    };
+    serde_json::to_writer(&mut file, &record).map_err(io::Error::other)?;
+    file.write_all(b"\n")?;
+    Ok(())
 }
 
 impl Drop for FakeSandbox {
