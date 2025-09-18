@@ -344,7 +344,7 @@ struct RawEnvAllow {
     read: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PolicyOverride {
     raw: RawPolicyOverride,
 }
@@ -352,14 +352,6 @@ pub struct PolicyOverride {
 impl PolicyOverride {
     fn raw(&self) -> &RawPolicyOverride {
         &self.raw
-    }
-}
-
-impl Default for PolicyOverride {
-    fn default() -> Self {
-        Self {
-            raw: RawPolicyOverride::default(),
-        }
     }
 }
 
