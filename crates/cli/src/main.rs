@@ -234,21 +234,36 @@ fn merge_policy(base: &mut Policy, extra: Policy) {
 fn dedup_policy_lists(policy: &mut Policy) {
     use Permission::*;
 
-    let mut seen_exec = HashSet::new();
-    let mut seen_net = HashSet::new();
-    let mut seen_fs_write = HashSet::new();
-    let mut seen_fs_read = HashSet::new();
-    let mut seen_syscall = HashSet::new();
-    let mut seen_env = HashSet::new();
+    let mut keep = vec![true; policy.rules.len()];
 
-    policy.rules.retain(|perm| match perm {
-        Exec(path) => seen_exec.insert(path.clone()),
-        NetConnect(host) => seen_net.insert(host.clone()),
-        FsWrite(path) => seen_fs_write.insert(path.clone()),
-        FsRead(path) => seen_fs_read.insert(path.clone()),
-        SyscallDeny(name) => seen_syscall.insert(name.clone()),
-        EnvRead(name) => seen_env.insert(name.clone()),
-        _ => true,
+    let mut seen_exec: HashSet<&String> = HashSet::new();
+    let mut seen_net: HashSet<&String> = HashSet::new();
+    let mut seen_fs_write: HashSet<&std::path::PathBuf> = HashSet::new();
+    let mut seen_fs_read: HashSet<&std::path::PathBuf> = HashSet::new();
+    let mut seen_syscall: HashSet<&String> = HashSet::new();
+    let mut seen_env: HashSet<&String> = HashSet::new();
+
+    for (index, perm) in policy.rules.iter().enumerate().rev() {
+        let should_keep = match perm {
+            Exec(path) => seen_exec.insert(path),
+            NetConnect(host) => seen_net.insert(host),
+            FsWrite(path) => seen_fs_write.insert(path),
+            FsRead(path) => seen_fs_read.insert(path),
+            SyscallDeny(name) => seen_syscall.insert(name),
+            EnvRead(name) => seen_env.insert(name),
+            _ => true,
+        };
+
+        if !should_keep {
+            keep[index] = false;
+        }
+    }
+
+    let mut idx = 0;
+    policy.rules.retain(|_| {
+        let retain = keep[idx];
+        idx += 1;
+        retain
     });
 }
 
