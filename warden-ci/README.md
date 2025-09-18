@@ -7,6 +7,7 @@ Runs `cargo-warden` in CI, generates a SARIF report and uploads it for pull requ
 | Name | Description | Default |
 | ---- | ----------- | ------- |
 | `command` | Cargo command to run under `cargo-warden`. | `build` |
+| `mode` | Sandbox mode to run (`observe` or `enforce`). | `enforce` |
 
 ## Usage
 
@@ -24,6 +25,7 @@ jobs:
       - uses: owner/warden-ci@v1
         with:
           command: build
+          mode: observe
 ```
 
 ## PR Annotations
