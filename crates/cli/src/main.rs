@@ -243,6 +243,8 @@ fn dedup_policy_lists(policy: &mut Policy) {
     let mut env = HashSet::new();
 
     let mut deduped = Vec::with_capacity(policy.rules.len());
+    // Drain the permissions in reverse so that the most recent override for each
+    // category is retained, then restore the original order for deterministic IO.
     for permission in policy.rules.drain(..).rev() {
         let keep = match &permission {
             Exec(path) => exec.insert(path.clone()),
