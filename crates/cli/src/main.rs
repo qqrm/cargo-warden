@@ -5,6 +5,8 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, ExitStatus, exit};
 
+use policy_compiler::{self, MapsLayout};
+
 mod sandbox;
 
 use sandbox::Sandbox;
@@ -153,17 +155,28 @@ fn main() {
 }
 
 fn handle_build(args: Vec<String>, allow: &[String], policy: &[String]) -> io::Result<()> {
-    let deny = setup_isolation(allow, policy)?;
-    let status = run_in_sandbox(build_command(&args), &deny)?;
+    let config = setup_isolation(allow, policy)?;
+    let status = run_in_sandbox(build_command(&args), &config)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
     Ok(())
 }
 
-fn setup_isolation(_allow: &[String], policy: &[String]) -> io::Result<Vec<String>> {
+struct IsolationConfig {
+    deny: Vec<String>,
+    layout: MapsLayout,
+}
+
+fn setup_isolation(_allow: &[String], policy: &[String]) -> io::Result<IsolationConfig> {
     use std::collections::HashSet;
     let mut deny = HashSet::new();
+    let mut layout = MapsLayout {
+        exec_allowlist: Vec::new(),
+        net_rules: Vec::new(),
+        net_parents: Vec::new(),
+        fs_rules: Vec::new(),
+    };
     for path in policy {
         let text = std::fs::read_to_string(path)?;
         let policy = policy_core::Policy::from_toml_str(&text)
@@ -178,9 +191,18 @@ fn setup_isolation(_allow: &[String], policy: &[String]) -> io::Result<Vec<Strin
         for warn in report.warnings {
             eprintln!("warning: {warn}");
         }
-        deny.extend(policy.syscall.deny);
+        deny.extend(policy.syscall.deny.iter().cloned());
+        let compiled = policy_compiler::compile(&policy)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+        layout.exec_allowlist.extend(compiled.exec_allowlist);
+        layout.net_rules.extend(compiled.net_rules);
+        layout.net_parents.extend(compiled.net_parents);
+        layout.fs_rules.extend(compiled.fs_rules);
     }
-    Ok(deny.into_iter().collect())
+    Ok(IsolationConfig {
+        deny: deny.into_iter().collect(),
+        layout,
+    })
 }
 
 fn build_command(args: &[String]) -> Command {
@@ -213,8 +235,8 @@ fn handle_run(cmd: Vec<String>, allow: &[String], policy: &[String]) -> io::Resu
             "missing command",
         ));
     }
-    let deny = setup_isolation(allow, policy)?;
-    let status = run_in_sandbox(run_command(&cmd), &deny)?;
+    let config = setup_isolation(allow, policy)?;
+    let status = run_in_sandbox(run_command(&cmd), &config)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
@@ -229,9 +251,9 @@ fn run_command(cmd: &[String]) -> Command {
     command
 }
 
-fn run_in_sandbox(command: Command, deny: &[String]) -> io::Result<ExitStatus> {
-    let mut sandbox = Sandbox::new()?;
-    let run_result = sandbox.run(command, deny);
+fn run_in_sandbox(command: Command, config: &IsolationConfig) -> io::Result<ExitStatus> {
+    let mut sandbox = Sandbox::new(&config.layout)?;
+    let run_result = sandbox.run(command, &config.deny);
     let shutdown_result = sandbox.shutdown();
     let status = match run_result {
         Ok(status) => status,
@@ -607,12 +629,21 @@ mod tests {
         let dir = tempdir().unwrap();
         let p1 = dir.path().join("p1.toml");
         let p2 = dir.path().join("p2.toml");
-        write(&p1, "mode = \"enforce\"\n[syscall]\ndeny = [\"clone\"]").unwrap();
-        write(&p2, "mode = \"enforce\"\n[syscall]\ndeny = [\"execve\"]").unwrap();
+        write(
+            &p1,
+            "mode = \"enforce\"\nfs.default = \"strict\"\n[allow.fs]\nread_extra = [\"/etc/policy\"]\n[syscall]\ndeny = [\"clone\"]",
+        )
+        .unwrap();
+        write(
+            &p2,
+            "mode = \"enforce\"\nfs.default = \"strict\"\n[allow.fs]\nwrite_extra = [\"/tmp/policy\"]\n[syscall]\ndeny = [\"execve\"]",
+        )
+        .unwrap();
         let paths = [p1.to_str().unwrap().into(), p2.to_str().unwrap().into()];
-        let deny = setup_isolation(&[], &paths).unwrap();
-        assert!(deny.contains(&"clone".to_string()));
-        assert!(deny.contains(&"execve".to_string()));
-        assert_eq!(deny.len(), 2);
+        let config = setup_isolation(&[], &paths).unwrap();
+        assert!(config.deny.contains(&"clone".to_string()));
+        assert!(config.deny.contains(&"execve".to_string()));
+        assert_eq!(config.deny.len(), 2);
+        assert_eq!(config.layout.fs_rules.len(), 2);
     }
 }

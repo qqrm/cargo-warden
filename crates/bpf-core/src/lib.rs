@@ -90,6 +90,11 @@ type NetParentsMap = Array<bpf_api::NetParentEntry>;
 type NetParentsMap = TestArray<bpf_api::NetParentEntry, { bpf_api::NET_PARENTS_CAPACITY as usize }>;
 
 #[cfg(target_arch = "bpf")]
+type FsRulesMap = Array<bpf_api::FsRuleEntry>;
+#[cfg(any(test, feature = "fuzzing"))]
+type FsRulesMap = TestArray<bpf_api::FsRuleEntry, { bpf_api::FS_RULES_CAPACITY as usize }>;
+
+#[cfg(target_arch = "bpf")]
 type LengthMap = Array<u32>;
 #[cfg(any(test, feature = "fuzzing"))]
 type LengthMap = TestArray<u32, 1>;
@@ -134,6 +139,16 @@ const fn net_parents_map() -> NetParentsMap {
 
 #[cfg(any(test, feature = "fuzzing"))]
 const fn net_parents_map() -> NetParentsMap {
+    TestArray::new()
+}
+
+#[cfg(target_arch = "bpf")]
+const fn fs_rules_map() -> FsRulesMap {
+    Array::with_max_entries(bpf_api::FS_RULES_CAPACITY, 0)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+const fn fs_rules_map() -> FsRulesMap {
     TestArray::new()
 }
 
@@ -210,6 +225,20 @@ static mut NET_PARENTS_LENGTH: LengthMap = length_map();
 static NET_PARENTS_LENGTH: LengthMap = length_map();
 
 #[cfg(target_arch = "bpf")]
+#[map(name = "FS_RULES")]
+static mut FS_RULES: FsRulesMap = fs_rules_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static FS_RULES: FsRulesMap = fs_rules_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "FS_RULES_LENGTH")]
+static mut FS_RULES_LENGTH: LengthMap = length_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static FS_RULES_LENGTH: LengthMap = length_map();
+
+#[cfg(target_arch = "bpf")]
 #[map(name = "EVENTS")]
 static mut EVENTS: EventsMap = events_map();
 
@@ -254,6 +283,16 @@ unsafe fn load_net_parent(index: u32) -> Option<bpf_api::NetParentEntry> {
 }
 
 #[cfg(target_arch = "bpf")]
+unsafe fn load_fs_rule(index: u32) -> Option<bpf_api::FsRuleEntry> {
+    FS_RULES.get(index).copied()
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+unsafe fn load_fs_rule(index: u32) -> Option<bpf_api::FsRuleEntry> {
+    FS_RULES.get(index)
+}
+
+#[cfg(target_arch = "bpf")]
 unsafe fn load_length(map: &LengthMap) -> u32 {
     map.get(0).copied().unwrap_or(0)
 }
@@ -293,6 +332,14 @@ fn net_parents_len() -> u32 {
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn fs_rules_len() -> u32 {
+    clamp_len(
+        unsafe { load_length(&FS_RULES_LENGTH) },
+        bpf_api::FS_RULES_CAPACITY,
+    )
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn increment_event_count() {
     #[cfg(target_arch = "bpf")]
     unsafe {
@@ -319,6 +366,88 @@ fn path_matches(a: &[u8; 256], b: &[u8; 256]) -> bool {
             break;
         }
         i += 1;
+    }
+    true
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn path_len(bytes: &[u8; 256]) -> usize {
+    let mut len = 0;
+    while len < bytes.len() {
+        if bytes[len] == 0 {
+            break;
+        }
+        len += 1;
+    }
+    len
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn path_slice(bytes: &[u8; 256]) -> &[u8] {
+    &bytes[..path_len(bytes)]
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn fs_rule_path_matches(rule_path: &[u8; 256], candidate: &[u8; 256]) -> bool {
+    let rule = path_slice(rule_path);
+    let path = path_slice(candidate);
+    if rule.ends_with(b"/") {
+        let prefix = &rule[..rule.len().saturating_sub(1)];
+        if prefix.is_empty() {
+            return true;
+        }
+        if path.len() < prefix.len() {
+            return false;
+        }
+        if !path.starts_with(prefix) {
+            return false;
+        }
+        path.len() == prefix.len() || path.get(prefix.len()) == Some(&b'/')
+    } else {
+        rule == path
+    }
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn fs_rule_allows(rule: &bpf_api::FsRule, candidate: &[u8; 256], requested: u8) -> bool {
+    (rule.access & requested) == requested && fs_rule_path_matches(&rule.path, candidate)
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn requested_access(mask: i32) -> u8 {
+    const MAY_WRITE: i32 = 2;
+    const MAY_READ: i32 = 4;
+    const MAY_APPEND: i32 = 8;
+    let mut requested = 0;
+    if (mask & MAY_READ) != 0 {
+        requested |= bpf_api::FS_READ;
+    }
+    if (mask & (MAY_WRITE | MAY_APPEND)) != 0 {
+        requested |= bpf_api::FS_WRITE;
+    }
+    requested
+}
+
+#[cfg(target_arch = "bpf")]
+fn read_file_path(file: *mut c_void, out: &mut [u8; 256]) -> bool {
+    unsafe {
+        if file.is_null() {
+            return false;
+        }
+        let file = file as *const aya_bpf::bindings::file;
+        let path_ptr = core::ptr::addr_of!((*file).f_path) as *const c_void;
+        bpf_d_path(path_ptr, out.as_mut_ptr(), out.len() as u32) >= 0
+    }
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn read_file_path(file: *mut c_void, out: &mut [u8; 256]) -> bool {
+    if file.is_null() {
+        return false;
+    }
+    unsafe {
+        let src = file as *const [u8; 256];
+        *out = *src;
     }
     true
 }
@@ -398,6 +527,29 @@ fn net_allowed(addr: &[u8; 16], port: u16, protocol: u8) -> bool {
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn fs_allowed(path: &[u8; 256], requested: u8) -> bool {
+    let mut unit = current_unit();
+    loop {
+        let len = fs_rules_len();
+        let mut i = 0;
+        while i < len {
+            if let Some(entry) = unsafe { load_fs_rule(i) }
+                && entry.unit == unit
+                && fs_rule_allows(&entry.rule, path, requested)
+            {
+                return true;
+            }
+            i += 1;
+        }
+        match get_parent(unit) {
+            Some(parent) => unit = parent,
+            None => break,
+        }
+    }
+    false
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[repr(C)]
 struct SockAddr {
     user_ip4: u32,
@@ -442,6 +594,8 @@ unsafe extern "C" {
     fn bpf_probe_read_user_str(dst: *mut u8, size: u32, src: *const u8) -> i32;
     fn bpf_ringbuf_output(ringbuf: *mut c_void, data: *const c_void, len: u64, flags: u64) -> i64;
     fn bpf_get_current_pid_tgid() -> u64;
+    #[cfg(target_arch = "bpf")]
+    fn bpf_d_path(path: *const c_void, buf: *mut u8, size: u32) -> i64;
 }
 
 #[cfg(not(target_arch = "bpf"))]
@@ -505,8 +659,8 @@ pub extern "C" fn sendmsg6(ctx: *mut c_void) -> i32 {
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/file_open")]
-pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
-    let event = Event {
+pub extern "C" fn file_open(file: *mut c_void, _cred: *mut c_void) -> i32 {
+    let mut event = Event {
         pid: unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 },
         unit: 0,
         action: 0,
@@ -516,6 +670,7 @@ pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
         caps: 0,
         path_or_addr: [0; 256],
     };
+    let _ = read_file_path(file, &mut event.path_or_addr);
     let ringbuf_ptr = {
         #[cfg(target_arch = "bpf")]
         {
@@ -542,9 +697,20 @@ pub extern "C" fn file_open(_file: *mut c_void, _cred: *mut c_void) -> i32 {
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/file_permission")]
-pub extern "C" fn file_permission(_file: *mut c_void, mask: i32) -> i32 {
-    const MAY_WRITE: i32 = 2;
-    if (mask & MAY_WRITE) != 0 { deny() } else { 0 }
+pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
+    let requested = requested_access(mask);
+    if requested == 0 {
+        return 0;
+    }
+    let mut path = [0u8; 256];
+    if !read_file_path(file, &mut path) {
+        return deny();
+    }
+    if fs_allowed(&path, requested) {
+        0
+    } else {
+        deny()
+    }
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -557,13 +723,17 @@ pub extern "C" fn inode_unlink(_dir: *mut c_void, _dentry: *mut c_void) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bpf_api::FS_WRITE;
+    use bpf_api::{FS_READ, FS_WRITE, FsRuleEntry};
     use core::ffi::c_void;
     use std::ptr;
     use std::sync::Mutex;
 
     static LAST_EVENT: Mutex<Option<Event>> = Mutex::new(None);
     static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    const MAY_READ: i32 = 4;
+    const MAY_WRITE: i32 = 2;
+    const MAY_APPEND: i32 = 8;
 
     #[unsafe(no_mangle)]
     extern "C" fn bpf_ringbuf_output(
@@ -592,26 +762,110 @@ mod tests {
     fn file_open_emits_event() {
         let _g = TEST_LOCK.lock().unwrap();
         EVENT_COUNTS.clear();
-        file_open(ptr::null_mut(), ptr::null_mut());
+        let mut path = encode_path("/tmp/example.txt");
+        file_open(&mut path as *mut _ as *mut c_void, ptr::null_mut());
         let event = LAST_EVENT.lock().unwrap().expect("event");
         assert_eq!(event.pid, 1234);
         assert_eq!(event.unit, 0);
         assert_eq!(event.action, 0);
         assert_eq!(event.verdict, 0);
-        assert_eq!(event.path_or_addr[0], 0);
+        assert_eq!(to_path(&event.path_or_addr), "/tmp/example.txt");
         let count = EVENT_COUNTS.get(0).unwrap_or(0);
         assert_eq!(count, 1);
     }
 
     #[test]
-    fn file_permission_denies_writes() {
-        assert_ne!(file_permission(ptr::null_mut(), FS_WRITE as i32), 0);
-        assert_eq!(file_permission(ptr::null_mut(), 0), 0);
+    fn file_permission_allows_matching_rule() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_fs_state();
+        set_fs_rules(&[fs_rule_entry(0, "/tmp/project/", FS_READ | FS_WRITE)]);
+        let mut path = encode_path("/tmp/project/output.bin");
+        assert_eq!(
+            file_permission(&mut path as *mut _ as *mut c_void, MAY_READ),
+            0
+        );
+        assert_eq!(
+            file_permission(&mut path as *mut _ as *mut c_void, MAY_WRITE),
+            0
+        );
+    }
+
+    #[test]
+    fn file_permission_denies_without_rule() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_fs_state();
+        let mut path = encode_path("/etc/passwd");
+        assert_ne!(
+            file_permission(&mut path as *mut _ as *mut c_void, MAY_READ),
+            0
+        );
+    }
+
+    #[test]
+    fn file_permission_requires_write_bit() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_fs_state();
+        set_fs_rules(&[fs_rule_entry(0, "/tmp/read-only/", FS_READ)]);
+        let mut path = encode_path("/tmp/read-only/data.txt");
+        assert_eq!(
+            file_permission(&mut path as *mut _ as *mut c_void, MAY_READ),
+            0
+        );
+        assert_ne!(
+            file_permission(&mut path as *mut _ as *mut c_void, MAY_WRITE),
+            0
+        );
+        assert_ne!(
+            file_permission(&mut path as *mut _ as *mut c_void, MAY_APPEND),
+            0
+        );
     }
 
     #[test]
     fn inode_unlink_denies() {
         assert_ne!(inode_unlink(ptr::null_mut(), ptr::null_mut()), 0);
+    }
+
+    fn encode_path(path: &str) -> [u8; 256] {
+        let bytes = path.as_bytes();
+        assert!(bytes.len() < 256, "path too long for test: {path}");
+        let mut buf = [0u8; 256];
+        buf[..bytes.len()].copy_from_slice(bytes);
+        buf
+    }
+
+    fn to_path(bytes: &[u8; 256]) -> String {
+        let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+        String::from_utf8(bytes[..len].to_vec()).unwrap()
+    }
+
+    fn fs_rule_entry(unit: u32, path: &str, access: u8) -> FsRuleEntry {
+        FsRuleEntry {
+            unit,
+            rule: bpf_api::FsRule {
+                access,
+                reserved: [0; 3],
+                path: encode_path(path),
+            },
+        }
+    }
+
+    fn set_fs_rules(entries: &[FsRuleEntry]) {
+        FS_RULES.clear();
+        FS_RULES_LENGTH.clear();
+        for (idx, entry) in entries.iter().enumerate() {
+            FS_RULES.set(idx as u32, *entry);
+        }
+        FS_RULES_LENGTH.set(0, entries.len() as u32);
+    }
+
+    fn reset_fs_state() {
+        FS_RULES.clear();
+        FS_RULES_LENGTH.clear();
+        FS_RULES_LENGTH.set(0, 0);
+        unsafe {
+            CURRENT_UNIT = 0;
+        }
     }
 
     fn rule_entry(
