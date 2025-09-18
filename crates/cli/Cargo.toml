@@ -10,6 +10,8 @@ documentation = "https://docs.rs/qqrm-cargo-warden"
 readme = "../../README.md"
 
 [dependencies]
+anyhow = "1"
+aya = "0.13"
 clap = { version = "4", features = ["derive"] }
 libseccomp = "0.3"
 libc = "0.2"
@@ -20,6 +22,8 @@ toml = "0.8"
 
 [dev-dependencies]
 serial_test = "3"
+qqrm-agent-lite = { path = "../agent-lite" }
+assert_cmd = "2"
 tempfile = "3"
 
 [[bin]]
