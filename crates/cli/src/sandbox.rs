@@ -8,11 +8,13 @@ use aya::{Btf, Ebpf, EbpfLoader, Pod};
 use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRuleEntry};
 use qqrm_agent_lite::{self, Config as AgentConfig, Shutdown, ShutdownHandle};
 use qqrm_policy_compiler::MapsLayout;
+use serde::Serialize;
 use std::cell::UnsafeCell;
 use std::convert::TryFrom;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -419,6 +421,7 @@ impl Drop for Cgroup {
 struct FakeSandbox {
     cgroup_dir: PathBuf,
     agent: Option<FakeAgent>,
+    layout_recorder: LayoutRecorder,
 }
 
 impl FakeSandbox {
@@ -433,13 +436,16 @@ impl FakeSandbox {
         }
         fs::create_dir_all(&cgroup_dir)?;
         let agent = FakeAgent::spawn(events)?;
+        let layout_recorder = LayoutRecorder::new(fake_layout_path())?;
         Ok(Self {
             cgroup_dir,
             agent: Some(agent),
+            layout_recorder,
         })
     }
 
-    fn run(&mut self, mut command: Command, _layout: &MapsLayout) -> io::Result<ExitStatus> {
+    fn run(&mut self, mut command: Command, layout: &MapsLayout) -> io::Result<ExitStatus> {
+        self.layout_recorder.record(layout)?;
         command.status()
     }
 
@@ -468,6 +474,105 @@ impl Drop for FakeSandbox {
 struct FakeAgent {
     stop: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<io::Result<()>>>,
+}
+
+struct LayoutRecorder {
+    path: PathBuf,
+}
+
+impl LayoutRecorder {
+    fn new(path: PathBuf) -> io::Result<Self> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
+        }
+        Ok(Self { path })
+    }
+
+    fn record(&self, layout: &MapsLayout) -> io::Result<()> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        let record = SerializableLayout::from(layout);
+        serde_json::to_writer(&mut file, &record).map_err(io::Error::other)?;
+        writeln!(file)?;
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+struct SerializableLayout {
+    exec_allowlist: Vec<String>,
+    net_rules: Vec<SerializableNetRule>,
+    net_parents: Vec<SerializableNetParent>,
+    fs_rules: Vec<SerializableFsRule>,
+}
+
+#[derive(Serialize)]
+struct SerializableNetRule {
+    unit: u32,
+    addr: String,
+    protocol: u8,
+    prefix_len: u8,
+    port: u16,
+}
+
+#[derive(Serialize)]
+struct SerializableNetParent {
+    child: u32,
+    parent: u32,
+}
+
+#[derive(Serialize)]
+struct SerializableFsRule {
+    unit: u32,
+    access: u8,
+    path: String,
+}
+
+impl From<&MapsLayout> for SerializableLayout {
+    fn from(layout: &MapsLayout) -> Self {
+        Self {
+            exec_allowlist: layout
+                .exec_allowlist
+                .iter()
+                .map(|entry| decode_c_string(&entry.path))
+                .collect(),
+            net_rules: layout
+                .net_rules
+                .iter()
+                .map(|entry| SerializableNetRule {
+                    unit: entry.unit,
+                    addr: decode_net_addr(&entry.rule.addr),
+                    protocol: entry.rule.protocol,
+                    prefix_len: entry.rule.prefix_len,
+                    port: entry.rule.port,
+                })
+                .collect(),
+            net_parents: layout
+                .net_parents
+                .iter()
+                .map(|entry| SerializableNetParent {
+                    child: entry.child,
+                    parent: entry.parent,
+                })
+                .collect(),
+            fs_rules: layout
+                .fs_rules
+                .iter()
+                .map(|entry| SerializableFsRule {
+                    unit: entry.unit,
+                    access: entry.rule.access,
+                    path: decode_c_string(&entry.rule.path),
+                })
+                .collect(),
+        }
+    }
 }
 
 impl FakeAgent {
@@ -598,6 +703,27 @@ fn fake_cgroup_dir() -> PathBuf {
             process::id(),
             unique_suffix()
         ))
+    }
+}
+
+fn fake_layout_path() -> PathBuf {
+    if let Some(path) = env::var_os("QQRM_WARDEN_FAKE_LAYOUT_PATH") {
+        PathBuf::from(path)
+    } else {
+        PathBuf::from("fake-maps-layout.jsonl")
+    }
+}
+
+fn decode_c_string(bytes: &[u8]) -> String {
+    let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..len]).to_string()
+}
+
+fn decode_net_addr(addr: &[u8; 16]) -> String {
+    if addr[4..].iter().all(|&b| b == 0) {
+        Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]).to_string()
+    } else {
+        Ipv6Addr::from(*addr).to_string()
     }
 }
 
