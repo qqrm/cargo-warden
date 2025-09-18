@@ -3,6 +3,7 @@ members = [
     "crates/bpf-api",
     "crates/bpf-core",
     "crates/cli",
+    "crates/sandbox-runtime",
     "crates/agent-lite",
     "crates/policy-core",
     "crates/policy-compiler",
