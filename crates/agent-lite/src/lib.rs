@@ -8,7 +8,9 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 #[cfg(feature = "grpc")]
 use tokio::sync::broadcast;
@@ -64,6 +66,59 @@ pub struct Config {
     #[cfg(feature = "grpc")]
     pub grpc_port: Option<u16>,
     pub metrics_port: Option<u16>,
+}
+
+/// Handle used to request shutdown of the agent loop.
+#[derive(Clone, Debug)]
+pub struct ShutdownHandle {
+    flag: Arc<AtomicBool>,
+}
+
+impl ShutdownHandle {
+    /// Signals the agent loop to stop at the next polling interval.
+    pub fn request(&self) {
+        self.flag.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Shutdown configuration passed to [`run_with_shutdown`].
+#[derive(Debug)]
+pub struct Shutdown {
+    flag: Arc<AtomicBool>,
+    timeout_ms: i32,
+    enabled: bool,
+}
+
+impl Shutdown {
+    /// Creates a shutdown pair composed of a handle and loop configuration.
+    pub fn new(timeout: Duration) -> (ShutdownHandle, Self) {
+        let millis = timeout.as_millis().min(i32::MAX as u128) as i32;
+        let flag = Arc::new(AtomicBool::new(false));
+        let handle = ShutdownHandle { flag: flag.clone() };
+        let shutdown = Shutdown {
+            flag,
+            timeout_ms: millis,
+            enabled: true,
+        };
+        (handle, shutdown)
+    }
+
+    /// Returns a shutdown configuration that never stops the loop.
+    pub fn disabled() -> Self {
+        Self {
+            flag: Arc::new(AtomicBool::new(false)),
+            timeout_ms: -1,
+            enabled: false,
+        }
+    }
+
+    fn is_requested(&self) -> bool {
+        self.enabled && self.flag.load(Ordering::SeqCst)
+    }
+
+    fn poll_timeout(&self) -> i32 {
+        if self.enabled { self.timeout_ms } else { -1 }
+    }
 }
 
 impl From<Event> for EventRecord {
@@ -147,7 +202,17 @@ pub fn export_sarif(events: &[EventRecord], path: &Path) -> Result<(), anyhow::E
 }
 
 /// Polls a ring buffer map and streams logs to JSONL file and systemd journal.
-pub fn run(mut ring: RingBuf<MapData>, jsonl: &Path, cfg: Config) -> Result<(), anyhow::Error> {
+pub fn run(ring: RingBuf<MapData>, jsonl: &Path, cfg: Config) -> Result<(), anyhow::Error> {
+    run_with_shutdown(ring, jsonl, cfg, Shutdown::disabled())
+}
+
+/// Polls a ring buffer map until [`ShutdownHandle::request`] is invoked.
+pub fn run_with_shutdown(
+    mut ring: RingBuf<MapData>,
+    jsonl: &Path,
+    cfg: Config,
+    shutdown: Shutdown,
+) -> Result<(), anyhow::Error> {
     if let Ok(j) = systemd_journal_logger::JournalLog::new() {
         let _ = j.install();
     }
@@ -165,14 +230,20 @@ pub fn run(mut ring: RingBuf<MapData>, jsonl: &Path, cfg: Config) -> Result<(), 
     }
 
     loop {
+        if shutdown.is_requested() {
+            break;
+        }
         let mut fds = [libc::pollfd {
             fd: ring.as_raw_fd(),
             events: libc::POLLIN,
             revents: 0,
         }];
-        let ret = unsafe { libc::poll(fds.as_mut_ptr(), 1, -1) };
+        let ret = unsafe { libc::poll(fds.as_mut_ptr(), 1, shutdown.poll_timeout()) };
         if ret < 0 {
             return Err(std::io::Error::last_os_error().into());
+        }
+        if ret == 0 {
+            continue;
         }
         while let Some(item) = ring.next() {
             if item.len() < core::mem::size_of::<Event>() {
@@ -190,6 +261,7 @@ pub fn run(mut ring: RingBuf<MapData>, jsonl: &Path, cfg: Config) -> Result<(), 
             }
         }
     }
+    Ok(())
 }
 
 fn start_metrics_server(port: u16) {
