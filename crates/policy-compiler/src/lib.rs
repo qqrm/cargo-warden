@@ -154,7 +154,7 @@ fn encode_exec_path(path: &str) -> Result<[u8; 256], CompileError> {
     fill_path_bytes(path).ok_or_else(|| CompileError::ExecPathTooLong { path: path.into() })
 }
 
-fn encode_fs_path(path: &str) -> Result<[u8; 256], CompileError> {
+pub fn encode_fs_path(path: &str) -> Result<[u8; 256], CompileError> {
     fill_path_bytes(path).ok_or_else(|| CompileError::FsPathTooLong { path: path.into() })
 }
 

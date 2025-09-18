@@ -1,12 +1,14 @@
+use bpf_api::{FS_READ, FS_WRITE, FsRule, FsRuleEntry};
+use cargo_metadata::MetadataCommand;
 use clap::{Parser, Subcommand};
-use policy_core::{AllowSection, ExecPolicy, FsPolicy, Mode, NetPolicy, Policy, SyscallPolicy};
-use qqrm_policy_compiler::{self, MapsLayout};
+use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy};
+use qqrm_policy_compiler::{self, MapsLayout, encode_fs_path};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::env;
 use std::fs::File;
-use std::hash::Hash;
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, exit};
 
 mod sandbox;
@@ -176,7 +178,9 @@ fn setup_isolation(allow: &[String], policy_paths: &[String]) -> io::Result<Isol
         let extra = load_policy(Path::new(path))?;
         merge_policy(&mut policy, extra);
     }
-    policy.allow.exec.allowed.extend(allow.iter().cloned());
+    policy
+        .rules
+        .extend(allow.iter().cloned().map(Permission::Exec));
     dedup_policy_lists(&mut policy);
 
     let report = policy.validate();
@@ -193,11 +197,18 @@ fn setup_isolation(allow: &[String], policy_paths: &[String]) -> io::Result<Isol
         eprintln!("warning: {warn}");
     }
 
-    let layout = qqrm_policy_compiler::compile(&policy)
+    let mut layout = qqrm_policy_compiler::compile(&policy)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
+    let cargo_paths = discover_cargo_paths()?;
+    let units = collect_units(&layout);
+    let implicit_specs = build_implicit_specs(&cargo_paths);
+    extend_fs_rules(&mut layout, &units, &implicit_specs)?;
+
+    let syscall_deny = policy.syscall_deny().cloned().collect();
+
     Ok(IsolationConfig {
-        syscall_deny: policy.syscall.deny.clone(),
+        syscall_deny,
         maps_layout: layout,
     })
 }
@@ -227,41 +238,172 @@ fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
 
 fn merge_policy(base: &mut Policy, extra: Policy) {
     base.mode = extra.mode;
-    base.fs = extra.fs;
-    base.net = extra.net;
-    base.exec = extra.exec;
-    base.syscall.deny.extend(extra.syscall.deny);
-    base.allow.exec.allowed.extend(extra.allow.exec.allowed);
-    base.allow.net.hosts.extend(extra.allow.net.hosts);
-    base.allow.fs.write_extra.extend(extra.allow.fs.write_extra);
-    base.allow.fs.read_extra.extend(extra.allow.fs.read_extra);
+    base.rules.extend(extra.rules);
 }
 
 fn dedup_policy_lists(policy: &mut Policy) {
-    dedup_preserving_order(&mut policy.syscall.deny);
-    dedup_preserving_order(&mut policy.allow.exec.allowed);
-    dedup_preserving_order(&mut policy.allow.net.hosts);
-    dedup_preserving_order(&mut policy.allow.fs.write_extra);
-    dedup_preserving_order(&mut policy.allow.fs.read_extra);
-}
+    let mut exec = HashSet::new();
+    let mut net = HashSet::new();
+    let mut fs_write = HashSet::new();
+    let mut fs_read = HashSet::new();
+    let mut syscall = HashSet::new();
+    let mut env = HashSet::new();
 
-fn dedup_preserving_order<T>(items: &mut Vec<T>)
-where
-    T: Eq + Hash + Clone,
-{
-    let mut seen = HashSet::new();
-    items.retain(|item| seen.insert(item.clone()));
+    policy.rules.retain(|perm| match perm {
+        Permission::Exec(path) => exec.insert(path.clone()),
+        Permission::NetConnect(host) => net.insert(host.clone()),
+        Permission::FsWrite(path) => fs_write.insert(path.clone()),
+        Permission::FsRead(path) => fs_read.insert(path.clone()),
+        Permission::SyscallDeny(name) => syscall.insert(name.clone()),
+        Permission::EnvRead(var) => env.insert(var.clone()),
+        _ => true,
+    });
 }
 
 fn empty_policy() -> Policy {
     Policy {
         mode: Mode::Enforce,
-        fs: FsPolicy::default(),
-        net: NetPolicy::default(),
-        exec: ExecPolicy::default(),
-        syscall: SyscallPolicy::default(),
-        allow: AllowSection::default(),
+        rules: vec![
+            Permission::FsDefault(FsDefault::Strict),
+            Permission::NetDefault(NetDefault::Deny),
+            Permission::ExecDefault(ExecDefault::Allowlist),
+        ],
+    }
+}
 
+struct CargoPaths {
+    workspace_root: PathBuf,
+    target_dir: PathBuf,
+    out_dir: Option<PathBuf>,
+}
+
+fn discover_cargo_paths() -> io::Result<CargoPaths> {
+    let workspace_env = env::var_os("CARGO_WORKSPACE_DIR").map(PathBuf::from);
+    let target_env = env::var_os("CARGO_TARGET_DIR").map(PathBuf::from);
+    let out_dir = env::var_os("OUT_DIR").map(PathBuf::from);
+
+    let metadata = metadata_with_fallback().map_err(io::Error::other)?;
+    let cargo_metadata::Metadata {
+        workspace_root,
+        target_directory,
+        ..
+    } = metadata;
+
+    let workspace_root = workspace_env.unwrap_or_else(|| workspace_root.into_std_path_buf());
+    let target_dir = target_env.unwrap_or_else(|| target_directory.into_std_path_buf());
+
+    Ok(CargoPaths {
+        workspace_root,
+        target_dir,
+        out_dir,
+    })
+}
+
+fn metadata_with_fallback() -> Result<cargo_metadata::Metadata, cargo_metadata::Error> {
+    let mut command = MetadataCommand::new();
+    command.no_deps();
+    match command.exec() {
+        Ok(metadata) => Ok(metadata),
+        Err(err) => {
+            if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+                let mut fallback = MetadataCommand::new();
+                fallback.no_deps();
+                fallback.manifest_path(Path::new(&manifest_dir).join("Cargo.toml"));
+                fallback.exec().or(Err(err))
+            } else {
+                Err(err)
+            }
+        }
+    }
+}
+
+fn build_implicit_specs(paths: &CargoPaths) -> Vec<(PathBuf, u8)> {
+    let mut specs = Vec::new();
+    specs.push((paths.workspace_root.clone(), FS_READ));
+    specs.push((paths.target_dir.clone(), FS_READ | FS_WRITE));
+    if let Some(out_dir) = &paths.out_dir {
+        specs.push((out_dir.clone(), FS_READ | FS_WRITE));
+    }
+    specs
+}
+
+fn collect_units(layout: &MapsLayout) -> BTreeSet<u32> {
+    let mut units = BTreeSet::new();
+    for entry in &layout.fs_rules {
+        units.insert(entry.unit);
+    }
+    for entry in &layout.net_rules {
+        units.insert(entry.unit);
+    }
+    if units.is_empty() {
+        units.insert(0);
+    }
+    units
+}
+
+fn extend_fs_rules(
+    layout: &mut MapsLayout,
+    units: &BTreeSet<u32>,
+    specs: &[(PathBuf, u8)],
+) -> io::Result<()> {
+    let mut combined: Vec<FsRuleEntry> = Vec::new();
+    let mut index: HashMap<FsRuleKey, usize> = HashMap::new();
+
+    for entry in layout.fs_rules.iter().cloned() {
+        let key = FsRuleKey::new(entry.unit, &entry.rule.path);
+        if let Some(idx) = index.get(&key) {
+            combined[*idx].rule.access |= entry.rule.access;
+        } else {
+            index.insert(key, combined.len());
+            combined.push(entry);
+        }
+    }
+
+    for &unit in units {
+        for (path, access) in specs {
+            let entry = fs_rule_entry_for(unit, path, *access)?;
+            let key = FsRuleKey::new(entry.unit, &entry.rule.path);
+            if let Some(idx) = index.get(&key) {
+                combined[*idx].rule.access |= entry.rule.access;
+            } else {
+                index.insert(key, combined.len());
+                combined.push(entry);
+            }
+        }
+    }
+
+    layout.fs_rules = combined;
+    Ok(())
+}
+
+fn fs_rule_entry_for(unit: u32, path: &Path, access: u8) -> io::Result<FsRuleEntry> {
+    let path_str = path.to_str().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("path '{}' is not valid UTF-8", path.display()),
+        )
+    })?;
+    let encoded =
+        encode_fs_path(path_str).map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    Ok(FsRuleEntry {
+        unit,
+        rule: FsRule {
+            access,
+            reserved: [0; 3],
+            path: encoded,
+        },
+    })
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct FsRuleKey {
+    unit: u32,
+    path: [u8; 256],
+}
+
+impl FsRuleKey {
+    fn new(unit: u32, path: &[u8; 256]) -> Self {
+        Self { unit, path: *path }
     }
 }
 
@@ -419,17 +561,20 @@ fn handle_init_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> io::
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, Commands, EventRecord, build_command, export_sarif, handle_init_with, handle_report,
-        read_recent_events, run_command, setup_isolation,
+        Cli, Commands, EventRecord, build_command, collect_units, export_sarif, extend_fs_rules,
+        fs_rule_entry_for, handle_init_with, handle_report, read_recent_events, run_command,
+        setup_isolation,
     };
     use clap::{CommandFactory, Parser};
     use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
     use serial_test::serial;
+    use std::collections::BTreeSet;
     use std::ffi::OsStr;
     use std::fs::File;
     use std::io::{Cursor, Write};
     use std::path::{Path, PathBuf};
 
+    use bpf_api::{FS_READ, FS_WRITE, NetRule, NetRuleEntry};
     use qqrm_policy_compiler::MapsLayout;
 
     use tempfile::{NamedTempFile, tempdir};
@@ -607,13 +752,14 @@ mod tests {
 
         let policy = Policy::from_toml_str(&config).unwrap();
         assert_eq!(policy.mode, Mode::Enforce);
-        assert_eq!(policy.fs.default, FsDefault::Strict);
-        assert_eq!(policy.net.default, NetDefault::Deny);
-        assert_eq!(policy.exec.default, ExecDefault::Allowlist);
-        assert_eq!(policy.allow.exec.allowed, ["foo", "bar"]);
-        assert!(policy.allow.net.hosts.is_empty());
-        assert!(policy.allow.fs.write_extra.is_empty());
-        assert!(policy.allow.fs.read_extra.is_empty());
+        assert_eq!(policy.fs_default(), FsDefault::Strict);
+        assert_eq!(policy.net_default(), NetDefault::Deny);
+        assert_eq!(policy.exec_default(), ExecDefault::Allowlist);
+        let allowed: Vec<_> = policy.exec_allowed().cloned().collect();
+        assert_eq!(allowed, ["foo", "bar"]);
+        assert!(policy.net_hosts().next().is_none());
+        assert!(policy.fs_write_paths().next().is_none());
+        assert!(policy.fs_read_paths().next().is_none());
     }
 
     #[test]
@@ -790,5 +936,71 @@ deny = ["execve"]
 
         let exec = exec_paths(&isolation.maps_layout);
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
+    }
+
+    #[test]
+    fn collect_units_defaults_to_root_unit() {
+        let layout = MapsLayout {
+            exec_allowlist: Vec::new(),
+            net_rules: Vec::new(),
+            net_parents: Vec::new(),
+            fs_rules: Vec::new(),
+        };
+        let units = collect_units(&layout);
+        assert_eq!(units, BTreeSet::from([0]));
+    }
+
+    #[test]
+    fn collect_units_includes_net_entries() {
+        let layout = MapsLayout {
+            exec_allowlist: Vec::new(),
+            net_rules: vec![NetRuleEntry {
+                unit: 5,
+                rule: NetRule {
+                    addr: [0; 16],
+                    protocol: 0,
+                    prefix_len: 0,
+                    port: 0,
+                },
+            }],
+            net_parents: Vec::new(),
+            fs_rules: Vec::new(),
+        };
+        let units = collect_units(&layout);
+        assert_eq!(units, BTreeSet::from([5]));
+    }
+
+    #[test]
+    fn extend_fs_rules_merges_access_bits() {
+        let mut layout = MapsLayout {
+            exec_allowlist: Vec::new(),
+            net_rules: Vec::new(),
+            net_parents: Vec::new(),
+            fs_rules: vec![fs_rule_entry_for(0, Path::new("/tmp/test"), FS_READ).unwrap()],
+        };
+        let specs = vec![(PathBuf::from("/tmp/test"), FS_WRITE)];
+        let units = BTreeSet::from([0]);
+        extend_fs_rules(&mut layout, &units, &specs).unwrap();
+
+        assert_eq!(layout.fs_rules.len(), 1);
+        assert_eq!(layout.fs_rules[0].unit, 0);
+        assert_eq!(layout.fs_rules[0].rule.access, FS_READ | FS_WRITE);
+    }
+
+    #[test]
+    fn extend_fs_rules_applies_to_each_unit() {
+        let mut layout = MapsLayout {
+            exec_allowlist: Vec::new(),
+            net_rules: Vec::new(),
+            net_parents: Vec::new(),
+            fs_rules: Vec::new(),
+        };
+        let specs = vec![(PathBuf::from("/tmp/share"), FS_READ)];
+        let units = BTreeSet::from([0, 2]);
+        extend_fs_rules(&mut layout, &units, &specs).unwrap();
+
+        assert_eq!(layout.fs_rules.len(), 2);
+        let units: BTreeSet<_> = layout.fs_rules.iter().map(|entry| entry.unit).collect();
+        assert_eq!(units, BTreeSet::from([0, 2]));
     }
 }
