@@ -8,6 +8,13 @@ if ! command -v actionlint >/dev/null 2>&1; then
   export PATH="$HOME/.local/bin:$PATH"
 fi
 
+# Install libseccomp development headers required for the real sandbox build.
+if ! dpkg -s libseccomp-dev >/dev/null 2>&1; then
+  echo "Installing libseccomp-dev..."
+  apt-get update
+  apt-get install -y libseccomp-dev
+fi
+
 # Ensure the repository remote is configured before working on tasks.
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_setup="$script_dir/repo-setup.sh"
