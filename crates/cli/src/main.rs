@@ -308,10 +308,10 @@ fn workspace_member_from_dir(metadata: &CargoMetadata) -> io::Result<Option<Stri
         }
         let exact = canonical_cwd == canonical_dir;
         let depth = canonical_dir.components().count();
-        if let Some((_, current_depth, current_exact)) = &mut best_match {
-            if (*current_exact && !exact) || (*current_exact == exact && *current_depth >= depth) {
-                continue;
-            }
+        if let Some((_, current_depth, current_exact)) = &mut best_match
+            && ((*current_exact && !exact) || (*current_exact == exact && *current_depth >= depth))
+        {
+            continue;
         }
         best_match = Some((pkg.name.clone(), depth, exact));
     }
