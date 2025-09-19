@@ -68,14 +68,32 @@ pub struct MapsBinary {
     pub fs_rules: Vec<u8>,
 }
 
-/// Compile a [`Policy`] into serialized BPF map entries.
-pub fn compile(policy: &Policy) -> Result<MapsLayout, CompileError> {
-    Ok(MapsLayout {
+/// Compiled representation of a [`Policy`].
+#[derive(Debug, Clone)]
+pub struct CompiledPolicy {
+    /// Serialized entries ready for BPF maps.
+    pub maps_layout: MapsLayout,
+    /// Names of environment variables allowed for reads.
+    pub allowed_env_vars: Vec<String>,
+}
+
+/// Compile a [`Policy`] into serialized BPF map entries and metadata.
+pub fn compile(policy: &Policy) -> Result<CompiledPolicy, CompileError> {
+    let maps_layout = MapsLayout {
         mode_flags: vec![mode_flag(policy.mode)],
         exec_allowlist: compile_exec_allowlist(policy)?,
         net_rules: compile_net_rules(policy)?,
         net_parents: Vec::new(),
         fs_rules: compile_fs_rules(policy)?,
+    };
+
+    let mut allowed_env_vars: Vec<String> = policy.env_read_vars().cloned().collect();
+    allowed_env_vars.sort();
+    allowed_env_vars.dedup();
+
+    Ok(CompiledPolicy {
+        maps_layout,
+        allowed_env_vars,
     })
 }
 
@@ -209,10 +227,21 @@ mod tests {
                 policy_core::Permission::NetConnect("127.0.0.1:8080".into()),
                 policy_core::Permission::FsWrite(PathBuf::from("/tmp/logs")),
                 policy_core::Permission::FsRead(PathBuf::from("/etc/ssl/certs")),
+                policy_core::Permission::EnvRead("PATH".into()),
+                policy_core::Permission::EnvRead("HOME".into()),
+                policy_core::Permission::EnvRead("HOME".into()),
             ],
         };
 
-        let layout = compile(&policy).expect("compile");
+        let CompiledPolicy {
+            maps_layout: layout,
+            allowed_env_vars,
+        } = compile(&policy).expect("compile");
+
+        assert_eq!(
+            allowed_env_vars,
+            vec!["HOME".to_string(), "PATH".to_string()]
+        );
 
         assert_eq!(layout.mode_flags, vec![MODE_FLAG_ENFORCE]);
         assert_eq!(layout.exec_allowlist.len(), 2);
@@ -252,7 +281,11 @@ mod tests {
             ],
         };
 
-        let layout = compile(&policy).expect("compile");
+        let CompiledPolicy {
+            maps_layout: layout,
+            allowed_env_vars,
+        } = compile(&policy).expect("compile");
+        assert!(allowed_env_vars.is_empty());
         let binary = layout.to_binary();
 
         assert_eq!(binary.mode_flags.len(), size_of::<u32>());
@@ -285,7 +318,7 @@ mod tests {
             rules: vec![],
         };
 
-        let layout = compile(&policy).expect("compile");
+        let layout = compile(&policy).expect("compile").maps_layout;
         assert_eq!(layout.mode_flags, vec![MODE_FLAG_OBSERVE]);
     }
 }
