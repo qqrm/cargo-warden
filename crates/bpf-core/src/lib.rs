@@ -85,11 +85,6 @@ type ModeFlagsMap = Array<u32>;
 type ModeFlagsMap = TestArray<u32, { bpf_api::MODE_FLAGS_CAPACITY as usize }>;
 
 #[cfg(target_arch = "bpf")]
-type ModeFlagsMap = Array<u32>;
-#[cfg(any(test, feature = "fuzzing"))]
-type ModeFlagsMap = TestArray<u32, 1>;
-
-#[cfg(target_arch = "bpf")]
 type EventsMap = RingBuf;
 #[cfg(any(test, feature = "fuzzing"))]
 type EventsMap = DummyRingBuf;

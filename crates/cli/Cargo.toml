@@ -26,6 +26,7 @@ serial_test = "3"
 assert_cmd = "2"
 tempfile = "3"
 bpf-api = { package = "qqrm-bpf-api", path = "../bpf-api" }
+predicates = "3"
 
 [[bin]]
 name = "cargo-warden"

@@ -77,6 +77,7 @@ struct IsolationConfig {
     mode: Mode,
     syscall_deny: Vec<String>,
     maps_layout: MapsLayout,
+    allowed_env: Vec<String>,
 }
 
 fn main() {
@@ -165,13 +166,17 @@ fn setup_isolation(
         eprintln!("warning: {warn}");
     }
 
-    let layout = qqrm_policy_compiler::compile(&policy)
+    let qqrm_policy_compiler::CompiledPolicy {
+        maps_layout,
+        allowed_env_vars,
+    } = qqrm_policy_compiler::compile(&policy)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
     Ok(IsolationConfig {
         mode: policy.mode,
         syscall_deny: policy.syscall_deny().cloned().collect(),
-        maps_layout: layout,
+        maps_layout,
+        allowed_env: allowed_env_vars,
     })
 }
 
@@ -315,6 +320,7 @@ fn run_in_sandbox(
         mode,
         &isolation.syscall_deny,
         &isolation.maps_layout,
+        &isolation.allowed_env,
     );
     let shutdown_result = sandbox.shutdown();
     let status = match run_result {
