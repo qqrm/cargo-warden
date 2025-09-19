@@ -32,20 +32,19 @@ impl Sandbox {
         }
     }
 
-    /// Runs a command inside the sandbox, applying syscall deny rules,
-    /// populating BPF maps from the provided layout, and configuring allowed
-    /// environment variables.
+    /// Runs a command inside the sandbox, applying syscall deny rules and
+    /// populating BPF maps from the provided layout.
     pub fn run(
         &mut self,
         command: Command,
         mode: Mode,
         deny: &[String],
         layout: &MapsLayout,
-        allowed_env_vars: &[String],
+        allowed_env: &[String],
     ) -> io::Result<ExitStatus> {
         match &mut self.inner {
-            SandboxImpl::Real(real) => real.run(command, mode, deny, layout, allowed_env_vars),
-            SandboxImpl::Fake(fake) => fake.run(command, mode, deny, layout, allowed_env_vars),
+            SandboxImpl::Real(real) => real.run(command, mode, deny, layout, allowed_env),
+            SandboxImpl::Fake(fake) => fake.run(command, mode, deny, layout, allowed_env),
         }
     }
 

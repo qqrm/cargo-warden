@@ -1,5 +1,5 @@
 use crate::layout::LayoutRecorder;
-use crate::util::{events_path, fake_cgroup_dir};
+use crate::util::{events_path, fake_cgroup_dir, filter_environment};
 use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
 use std::fs;
@@ -44,11 +44,14 @@ impl FakeSandbox {
         mode: Mode,
         _deny: &[String],
         layout: &MapsLayout,
-        _allowed_env_vars: &[String],
+        allowed_env: &[String],
     ) -> io::Result<ExitStatus> {
         if let Some(recorder) = &mut self.layout_recorder {
             recorder.record(layout, mode)?;
         }
+        let filtered_env = filter_environment(allowed_env);
+        command.env_clear();
+        command.envs(filtered_env);
         command.status()
     }
 

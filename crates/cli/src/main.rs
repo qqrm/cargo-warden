@@ -79,7 +79,7 @@ struct IsolationConfig {
     mode: Mode,
     syscall_deny: Vec<String>,
     maps_layout: MapsLayout,
-    allowed_env_vars: Vec<String>,
+    allowed_env: Vec<String>,
 }
 
 fn main() {
@@ -168,17 +168,18 @@ fn setup_isolation(
         eprintln!("warning: {warn}");
     }
 
+    let compiled = qqrm_policy_compiler::compile(&policy)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
     let CompiledPolicy {
         maps_layout,
         allowed_env_vars,
-    } = qqrm_policy_compiler::compile(&policy)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    } = compiled;
 
     Ok(IsolationConfig {
         mode: policy.mode,
         syscall_deny: policy.syscall_deny().cloned().collect(),
         maps_layout,
-        allowed_env_vars,
+        allowed_env: allowed_env_vars,
     })
 }
 
@@ -195,28 +196,42 @@ fn load_default_policy() -> io::Result<Policy> {
 }
 
 fn load_workspace_policy() -> io::Result<Option<Policy>> {
-    let metadata = match load_cargo_metadata() {
-        Ok(metadata) => metadata,
-        Err(_) => return Ok(None),
+    let Some(path) = find_workspace_file("workspace.warden.toml")? else {
+        return Ok(None);
     };
-    let path = metadata.workspace_root.join("workspace.warden.toml");
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err),
-    };
+    let text = std::fs::read_to_string(&path)?;
     let workspace: WorkspacePolicy = toml::from_str(&text).map_err(|err| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("{}: {err}", path.display()),
         )
     })?;
-    let member = active_workspace_member(&metadata)?;
+    let member = determine_active_workspace_member()?;
     let policy = match member {
         Some(member) => workspace.policy_for(&member),
         None => workspace.root.clone(),
     };
     Ok(Some(policy))
+}
+
+fn find_workspace_file(name: &str) -> io::Result<Option<PathBuf>> {
+    let mut dir = std::env::current_dir()?;
+    loop {
+        let candidate = dir.join(name);
+        match std::fs::metadata(&candidate) {
+            Ok(meta) => {
+                if meta.is_file() {
+                    return Ok(Some(candidate));
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    Ok(None)
 }
 
 fn load_policy(path: &Path) -> io::Result<Policy> {
@@ -233,16 +248,20 @@ fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
     })
 }
 
-fn workspace_member_from_env() -> Option<String> {
-    const VARS: [&str; 2] = ["CARGO_PRIMARY_PACKAGE", "CARGO_PKG_NAME"];
-    for var in VARS {
-        if let Ok(value) = std::env::var(var)
-            && let Some(name) = parse_workspace_member_value(&value)
-        {
-            return Some(name);
-        }
+fn determine_active_workspace_member() -> io::Result<Option<String>> {
+    if let Some(from_env) = workspace_member_from_env() {
+        return Ok(Some(from_env));
     }
-    None
+    let metadata = load_cargo_metadata()?;
+    workspace_member_from_dir(&metadata)
+}
+
+fn workspace_member_from_env() -> Option<String> {
+    if let Ok(value) = std::env::var("CARGO_PRIMARY_PACKAGE") {
+        parse_workspace_member_value(&value)
+    } else {
+        None
+    }
 }
 
 fn parse_workspace_member_value(value: &str) -> Option<String> {
@@ -320,32 +339,10 @@ fn workspace_member_from_dir(metadata: &CargoMetadata) -> io::Result<Option<Stri
     Ok(best_match.map(|(name, _, _)| name))
 }
 
-fn active_workspace_member(metadata: &CargoMetadata) -> io::Result<Option<String>> {
-    if let Some(from_env) = workspace_member_from_env()
-        && workspace_contains_member(metadata, &from_env)
-    {
-        return Ok(Some(from_env));
-    }
-    workspace_member_from_dir(metadata)
-}
-
-fn workspace_contains_member(metadata: &CargoMetadata, name: &str) -> bool {
-    let member_ids: HashSet<&str> = metadata
-        .workspace_members
-        .iter()
-        .map(String::as_str)
-        .collect();
-    metadata
-        .packages
-        .iter()
-        .any(|pkg| member_ids.contains(pkg.id.as_str()) && pkg.name == name)
-}
-
 #[derive(Deserialize)]
 struct CargoMetadata {
     packages: Vec<CargoPackage>,
     workspace_members: Vec<String>,
-    workspace_root: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -472,7 +469,7 @@ fn run_in_sandbox(
         mode,
         &isolation.syscall_deny,
         &isolation.maps_layout,
-        &isolation.allowed_env_vars,
+        &isolation.allowed_env,
     );
     let shutdown_result = sandbox.shutdown();
     let status = match run_result {
@@ -873,6 +870,9 @@ exec.default = "allowlist"
 
 [allow.exec]
 allowed = ["/usr/bin/rustc"]
+
+[allow.env]
+read = ["ALLOWED_BASE"]
 "#,
         )
         .unwrap();
@@ -890,6 +890,9 @@ deny = ["clone"]
 
 [allow.exec]
 allowed = ["/bin/bash"]
+
+[allow.env]
+read = ["ALLOWED_EXTRA", "ALLOWED_BASE"]
 "#,
         )
         .unwrap();
@@ -922,6 +925,11 @@ deny = ["execve"]
         assert!(exec.contains(&"/bin/bash".to_string()));
         assert!(exec.contains(&"/usr/bin/git".to_string()));
         assert_eq!(exec.len(), 3);
+
+        assert_eq!(
+            isolation.allowed_env,
+            vec!["ALLOWED_EXTRA".to_string(), "ALLOWED_BASE".to_string()]
+        );
     }
 
     #[test]
@@ -936,6 +944,7 @@ deny = ["execve"]
         assert!(isolation.syscall_deny.is_empty());
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
         assert!(isolation.maps_layout.net_rules.is_empty());
+        assert!(isolation.allowed_env.is_empty());
     }
 
     #[test]
@@ -950,6 +959,7 @@ deny = ["execve"]
         assert_eq!(isolation.mode, Mode::Enforce);
         let exec = exec_paths(&isolation.maps_layout);
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
+        assert!(isolation.allowed_env.is_empty());
     }
 
     #[test]
@@ -976,5 +986,6 @@ exec.default = "allow"
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
         assert!(isolation.maps_layout.net_rules.is_empty());
         assert!(isolation.maps_layout.fs_rules.is_empty());
+        assert!(isolation.allowed_env.is_empty());
     }
 }
