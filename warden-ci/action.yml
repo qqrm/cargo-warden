@@ -25,6 +25,8 @@ runs:
       run: cargo install --path crates/cli
     - name: Run cargo warden ${{ inputs.command }}
       shell: bash
+      env:
+        QQRM_WARDEN_FAKE_SANDBOX: "1"
       run: |
         set -euo pipefail
         MODE="${{ inputs.mode }}"
