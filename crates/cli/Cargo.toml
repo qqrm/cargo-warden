@@ -25,6 +25,7 @@ event-reporting = { version = "0.1.0", path = "../event-reporting" }
 serial_test = "3"
 assert_cmd = "2"
 tempfile = "3"
+bpf-api = { package = "qqrm-bpf-api", path = "../bpf-api" }
 
 [[bin]]
 name = "cargo-warden"

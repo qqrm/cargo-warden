@@ -79,6 +79,10 @@ type LengthMap = TestArray<u32, 1>;
 type EventCountsMap = Array<u64>;
 #[cfg(any(test, feature = "fuzzing"))]
 type EventCountsMap = TestArray<u64, { bpf_api::EVENT_COUNT_SLOTS as usize }>;
+#[cfg(target_arch = "bpf")]
+type ModeFlagsMap = Array<u32>;
+#[cfg(any(test, feature = "fuzzing"))]
+type ModeFlagsMap = TestArray<u32, { bpf_api::MODE_FLAGS_CAPACITY as usize }>;
 
 #[cfg(target_arch = "bpf")]
 type ModeFlagsMap = Array<u32>;
@@ -162,7 +166,7 @@ const fn event_counts_map() -> EventCountsMap {
 
 #[cfg(target_arch = "bpf")]
 const fn mode_flags_map() -> ModeFlagsMap {
-    Array::with_max_entries(1, 0)
+    Array::with_max_entries(bpf_api::MODE_FLAGS_CAPACITY, 0)
 }
 
 #[cfg(any(test, feature = "fuzzing"))]
