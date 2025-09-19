@@ -154,14 +154,18 @@ impl RealSandbox {
                     write_mode_flag(bpf, mode_value)?;
                     populate_maps(bpf, &layout)?;
                 }
-                if !rules.is_empty() {
-                    apply_seccomp(&rules)?;
+                if should_apply_seccomp(mode_value, &rules) {
+                    apply_seccomp(mode_value, &rules)?;
                 }
                 Ok(())
             });
         }
         Ok(())
     }
+}
+
+fn should_apply_seccomp(mode: Mode, rules: &[String]) -> bool {
+    matches!(mode, Mode::Enforce) && !rules.is_empty()
 }
 
 fn join_cgroup_fd(fd: RawFd) -> io::Result<()> {
@@ -182,4 +186,27 @@ fn program_not_found(name: &str) -> io::Error {
         io::ErrorKind::NotFound,
         format!("missing BPF program {name}"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seccomp_skipped_in_observe_mode() {
+        let rules = vec!["open".to_string()];
+        assert!(!should_apply_seccomp(Mode::Observe, &rules));
+    }
+
+    #[test]
+    fn seccomp_applied_in_enforce_with_rules() {
+        let rules = vec!["open".to_string()];
+        assert!(should_apply_seccomp(Mode::Enforce, &rules));
+    }
+
+    #[test]
+    fn seccomp_skipped_when_no_rules() {
+        let rules: Vec<String> = Vec::new();
+        assert!(!should_apply_seccomp(Mode::Enforce, &rules));
+    }
 }
