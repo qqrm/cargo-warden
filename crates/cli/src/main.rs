@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use event_reporting::{EventRecord, export_sarif};
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy, WorkspacePolicy};
-use qqrm_policy_compiler::{self, MapsLayout};
+use qqrm_policy_compiler::{self, CompiledPolicy, MapsLayout};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -167,13 +167,14 @@ fn setup_isolation(
         eprintln!("warning: {warn}");
     }
 
-    let layout = qqrm_policy_compiler::compile(&policy)
+    let compiled = qqrm_policy_compiler::compile(&policy)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    let CompiledPolicy { maps_layout, .. } = compiled;
 
     Ok(IsolationConfig {
         mode: policy.mode,
         syscall_deny: policy.syscall_deny().cloned().collect(),
-        maps_layout: layout,
+        maps_layout,
     })
 }
 
