@@ -74,7 +74,6 @@ enum Commands {
 }
 
 struct IsolationConfig {
-    #[cfg(test)]
     mode: Mode,
     syscall_deny: Vec<String>,
     maps_layout: MapsLayout,
@@ -127,7 +126,7 @@ fn handle_build(
     mode_override: Option<Mode>,
 ) -> io::Result<()> {
     let isolation = setup_isolation(allow, policy, mode_override)?;
-    let status = run_in_sandbox(build_command(&args), &isolation)?;
+    let status = run_in_sandbox(build_command(&args), isolation.mode, &isolation)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
@@ -170,7 +169,6 @@ fn setup_isolation(
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
     Ok(IsolationConfig {
-        #[cfg(test)]
         mode: policy.mode,
         syscall_deny: policy.syscall_deny().cloned().collect(),
         maps_layout: layout,
@@ -291,7 +289,7 @@ fn handle_run(
         ));
     }
     let isolation = setup_isolation(allow, policy, mode_override)?;
-    let status = run_in_sandbox(run_command(&cmd), &isolation)?;
+    let status = run_in_sandbox(run_command(&cmd), isolation.mode, &isolation)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
@@ -306,9 +304,18 @@ fn run_command(cmd: &[String]) -> Command {
     command
 }
 
-fn run_in_sandbox(command: Command, isolation: &IsolationConfig) -> io::Result<ExitStatus> {
+fn run_in_sandbox(
+    command: Command,
+    mode: Mode,
+    isolation: &IsolationConfig,
+) -> io::Result<ExitStatus> {
     let mut sandbox = Sandbox::new()?;
-    let run_result = sandbox.run(command, &isolation.syscall_deny, &isolation.maps_layout);
+    let run_result = sandbox.run(
+        command,
+        mode,
+        &isolation.syscall_deny,
+        &isolation.maps_layout,
+    );
     let shutdown_result = sandbox.shutdown();
     let status = match run_result {
         Ok(status) => status,

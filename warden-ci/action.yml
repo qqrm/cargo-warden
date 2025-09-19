@@ -27,6 +27,12 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        tmp_root="${RUNNER_TEMP:-$(mktemp -d)}"
+        mkdir -p "$tmp_root"
+        layout_path="$tmp_root/warden-fake-layout.jsonl"
+        export QQRM_WARDEN_FAKE_SANDBOX=1
+        export QQRM_WARDEN_FAKE_LAYOUT_PATH="$layout_path"
+        export QQRM_WARDEN_FAKE_CGROUP_ROOT="$tmp_root"
         MODE="${{ inputs.mode }}"
         case "$MODE" in
           observe|enforce) ;;

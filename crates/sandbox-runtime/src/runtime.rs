@@ -1,5 +1,6 @@
 use crate::fake::FakeSandbox;
 use crate::real::RealSandbox;
+use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
 use std::env;
 use std::io;
@@ -36,12 +37,13 @@ impl Sandbox {
     pub fn run(
         &mut self,
         command: Command,
+        mode: Mode,
         deny: &[String],
         layout: &MapsLayout,
     ) -> io::Result<ExitStatus> {
         match &mut self.inner {
-            SandboxImpl::Real(real) => real.run(command, deny, layout),
-            SandboxImpl::Fake(fake) => fake.run(command, layout),
+            SandboxImpl::Real(real) => real.run(command, mode, deny, layout),
+            SandboxImpl::Fake(fake) => fake.run(command, mode, layout),
         }
     }
 
