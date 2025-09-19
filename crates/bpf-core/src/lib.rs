@@ -252,46 +252,6 @@ static mut FS_RULES_LENGTH: LengthMap = length_map();
 static FS_RULES_LENGTH: LengthMap = length_map();
 
 #[cfg(target_arch = "bpf")]
-unsafe fn load_exec_allow_entry(index: u32) -> Option<bpf_api::ExecAllowEntry> {
-    EXEC_ALLOWLIST.get(index).copied()
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-unsafe fn load_exec_allow_entry(index: u32) -> Option<bpf_api::ExecAllowEntry> {
-    EXEC_ALLOWLIST.get(index)
-}
-
-#[cfg(target_arch = "bpf")]
-unsafe fn load_net_rule(index: u32) -> Option<bpf_api::NetRuleEntry> {
-    NET_RULES.get(index).copied()
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-unsafe fn load_net_rule(index: u32) -> Option<bpf_api::NetRuleEntry> {
-    NET_RULES.get(index)
-}
-
-#[cfg(target_arch = "bpf")]
-unsafe fn load_net_parent(index: u32) -> Option<bpf_api::NetParentEntry> {
-    NET_PARENTS.get(index).copied()
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-unsafe fn load_net_parent(index: u32) -> Option<bpf_api::NetParentEntry> {
-    NET_PARENTS.get(index)
-}
-
-#[cfg(target_arch = "bpf")]
-unsafe fn load_fs_rule(index: u32) -> Option<bpf_api::FsRuleEntry> {
-    FS_RULES.get(index).copied()
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-unsafe fn load_fs_rule(index: u32) -> Option<bpf_api::FsRuleEntry> {
-    FS_RULES.get(index)
-}
-
-#[cfg(target_arch = "bpf")]
 unsafe fn load_mode_flags() -> u32 {
     MODE_FLAGS.get(0).copied().unwrap_or(0)
 }
@@ -322,37 +282,67 @@ fn clamp_len(len: u32, capacity: u32) -> u32 {
     len.min(capacity)
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn exec_allowlist_len() -> u32 {
-    clamp_len(
-        unsafe { load_length(&EXEC_ALLOWLIST_LENGTH) },
-        bpf_api::EXEC_ALLOWLIST_CAPACITY,
-    )
+macro_rules! define_map_accessors {
+    (
+        $load_fn:ident,
+        $len_fn:ident,
+        $map:ident,
+        $len_map:ident,
+        $entry:ty,
+        $capacity:expr
+    ) => {
+        #[cfg(target_arch = "bpf")]
+        unsafe fn $load_fn(index: u32) -> Option<$entry> {
+            $map.get(index).copied()
+        }
+
+        #[cfg(any(test, feature = "fuzzing"))]
+        unsafe fn $load_fn(index: u32) -> Option<$entry> {
+            $map.get(index)
+        }
+
+        #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+        fn $len_fn() -> u32 {
+            clamp_len(unsafe { load_length(&$len_map) }, $capacity)
+        }
+    };
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn net_rules_len() -> u32 {
-    clamp_len(
-        unsafe { load_length(&NET_RULES_LENGTH) },
-        bpf_api::NET_RULES_CAPACITY,
-    )
-}
+define_map_accessors!(
+    load_exec_allow_entry,
+    exec_allowlist_len,
+    EXEC_ALLOWLIST,
+    EXEC_ALLOWLIST_LENGTH,
+    bpf_api::ExecAllowEntry,
+    bpf_api::EXEC_ALLOWLIST_CAPACITY
+);
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn net_parents_len() -> u32 {
-    clamp_len(
-        unsafe { load_length(&NET_PARENTS_LENGTH) },
-        bpf_api::NET_PARENTS_CAPACITY,
-    )
-}
+define_map_accessors!(
+    load_net_rule,
+    net_rules_len,
+    NET_RULES,
+    NET_RULES_LENGTH,
+    bpf_api::NetRuleEntry,
+    bpf_api::NET_RULES_CAPACITY
+);
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn fs_rules_len() -> u32 {
-    clamp_len(
-        unsafe { load_length(&FS_RULES_LENGTH) },
-        bpf_api::FS_RULES_CAPACITY,
-    )
-}
+define_map_accessors!(
+    load_net_parent,
+    net_parents_len,
+    NET_PARENTS,
+    NET_PARENTS_LENGTH,
+    bpf_api::NetParentEntry,
+    bpf_api::NET_PARENTS_CAPACITY
+);
+
+define_map_accessors!(
+    load_fs_rule,
+    fs_rules_len,
+    FS_RULES,
+    FS_RULES_LENGTH,
+    bpf_api::FsRuleEntry,
+    bpf_api::FS_RULES_CAPACITY
+);
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn increment_event_count() {
