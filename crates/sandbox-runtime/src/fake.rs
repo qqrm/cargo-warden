@@ -1,7 +1,9 @@
 use crate::layout::LayoutRecorder;
-use crate::util::{events_path, fake_cgroup_dir};
+use crate::util::{FAKE_DENIED_PATH_ENV, events_path, fake_cgroup_dir};
 use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
+use serde_json::json;
+use std::env;
 use std::fs;
 use std::io;
 use std::io::Write;
@@ -14,6 +16,7 @@ use std::time::Duration;
 
 pub(crate) struct FakeSandbox {
     cgroup_dir: PathBuf,
+    events_path: PathBuf,
     agent: Option<FakeAgent>,
     layout_recorder: Option<LayoutRecorder>,
 }
@@ -29,10 +32,11 @@ impl FakeSandbox {
             fs::create_dir_all(parent)?;
         }
         fs::create_dir_all(&cgroup_dir)?;
-        let agent = FakeAgent::spawn(events)?;
+        let agent = FakeAgent::spawn(events.clone())?;
         let layout_recorder = LayoutRecorder::from_env()?;
         Ok(Self {
             cgroup_dir,
+            events_path: events,
             agent: Some(agent),
             layout_recorder,
         })
@@ -48,6 +52,7 @@ impl FakeSandbox {
         if let Some(recorder) = &mut self.layout_recorder {
             recorder.record(layout, mode)?;
         }
+        self.record_fake_event(mode)?;
         command.status()
     }
 
@@ -58,6 +63,33 @@ impl FakeSandbox {
         if self.cgroup_dir.exists() {
             fs::remove_dir_all(&self.cgroup_dir)?;
         }
+        Ok(())
+    }
+}
+
+impl FakeSandbox {
+    fn record_fake_event(&self, mode: Mode) -> io::Result<()> {
+        let Some(path) = env::var_os(FAKE_DENIED_PATH_ENV) else {
+            return Ok(());
+        };
+        let path = PathBuf::from(path);
+        let event = json!({
+            "fake": true,
+            "mode": match mode {
+                Mode::Observe => "observe",
+                Mode::Enforce => "enforce",
+            },
+            "observe": matches!(mode, Mode::Observe),
+            "verdict": 1,
+            "path_or_addr": path.to_string_lossy().into_owned(),
+        });
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.events_path)?;
+        serde_json::to_writer(&mut file, &event).map_err(io::Error::other)?;
+        file.write_all(b"\n")?;
+        file.flush()?;
         Ok(())
     }
 }

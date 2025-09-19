@@ -7,6 +7,7 @@ pub(crate) const EVENTS_PATH_ENV: &str = "QQRM_WARDEN_EVENTS_PATH";
 pub(crate) const FAKE_CGROUP_DIR_ENV: &str = "QQRM_WARDEN_FAKE_CGROUP_DIR";
 pub(crate) const FAKE_CGROUP_ROOT_ENV: &str = "QQRM_WARDEN_FAKE_CGROUP_ROOT";
 pub(crate) const CGROUP_ROOT_ENV: &str = "QQRM_WARDEN_CGROUP_ROOT";
+pub(crate) const FAKE_DENIED_PATH_ENV: &str = "QQRM_WARDEN_FAKE_DENIED_PATH";
 
 pub(crate) fn events_path() -> PathBuf {
     if let Some(path) = env::var_os(EVENTS_PATH_ENV) {
