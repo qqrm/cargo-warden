@@ -31,8 +31,16 @@ const ACTION_OPEN: u8 = 0;
 const ACTION_UNLINK: u8 = 2;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const MODE_FLAG_OBSERVE: u32 = 1;
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn deny() -> i32 {
     -EPERM
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn deny_with_mode() -> i32 {
+    if is_observe_mode() { 0 } else { deny() }
 }
 
 #[cfg(target_arch = "bpf")]
@@ -71,6 +79,11 @@ type LengthMap = TestArray<u32, 1>;
 type EventCountsMap = Array<u64>;
 #[cfg(any(test, feature = "fuzzing"))]
 type EventCountsMap = TestArray<u64, { bpf_api::EVENT_COUNT_SLOTS as usize }>;
+
+#[cfg(target_arch = "bpf")]
+type ModeFlagsMap = Array<u32>;
+#[cfg(any(test, feature = "fuzzing"))]
+type ModeFlagsMap = TestArray<u32, 1>;
 
 #[cfg(target_arch = "bpf")]
 type EventsMap = RingBuf;
@@ -148,6 +161,16 @@ const fn event_counts_map() -> EventCountsMap {
 }
 
 #[cfg(target_arch = "bpf")]
+const fn mode_flags_map() -> ModeFlagsMap {
+    Array::with_max_entries(1, 0)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+const fn mode_flags_map() -> ModeFlagsMap {
+    TestArray::new()
+}
+
+#[cfg(target_arch = "bpf")]
 #[map(name = "EXEC_ALLOWLIST")]
 static mut EXEC_ALLOWLIST: ExecAllowlistMap = exec_allowlist_map();
 
@@ -204,6 +227,13 @@ static mut EVENT_COUNTS: EventCountsMap = event_counts_map();
 static EVENT_COUNTS: EventCountsMap = event_counts_map();
 
 #[cfg(target_arch = "bpf")]
+#[map(name = "MODE_FLAGS")]
+static mut MODE_FLAGS: ModeFlagsMap = mode_flags_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static MODE_FLAGS: ModeFlagsMap = mode_flags_map();
+
+#[cfg(target_arch = "bpf")]
 #[map(name = "FS_RULES")]
 static mut FS_RULES: FsRulesMap = fs_rules_map();
 
@@ -258,6 +288,16 @@ unsafe fn load_fs_rule(index: u32) -> Option<bpf_api::FsRuleEntry> {
 }
 
 #[cfg(target_arch = "bpf")]
+unsafe fn load_mode_flags() -> u32 {
+    MODE_FLAGS.get(0).copied().unwrap_or(0)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+unsafe fn load_mode_flags() -> u32 {
+    MODE_FLAGS.get(0).unwrap_or(0)
+}
+
+#[cfg(target_arch = "bpf")]
 unsafe fn load_length(map: &LengthMap) -> u32 {
     map.get(0).copied().unwrap_or(0)
 }
@@ -265,6 +305,12 @@ unsafe fn load_length(map: &LengthMap) -> u32 {
 #[cfg(any(test, feature = "fuzzing"))]
 unsafe fn load_length(map: &LengthMap) -> u32 {
     map.get(0).unwrap_or(0)
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn is_observe_mode() -> bool {
+    let flags = unsafe { load_mode_flags() };
+    (flags & MODE_FLAG_OBSERVE) != 0
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -321,7 +367,7 @@ fn increment_event_count() {
     }
 }
 
-#[cfg(target_arch = "bpf")]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn path_matches(a: &[u8; 256], b: &[u8; 256]) -> bool {
     let mut i = 0;
     while i < 256 {
@@ -647,7 +693,7 @@ fn check4(ctx: *mut c_void) -> i32 {
     if net_allowed(&addr, port, proto) {
         0
     } else {
-        deny()
+        deny_with_mode()
     }
 }
 
@@ -663,7 +709,7 @@ fn check6(ctx: *mut c_void) -> i32 {
     if net_allowed(&addr, port, proto) {
         0
     } else {
-        deny()
+        deny_with_mode()
     }
 }
 
@@ -674,26 +720,26 @@ unsafe extern "C" {
     fn bpf_get_current_pid_tgid() -> u64;
 }
 
-#[cfg(target_arch = "bpf")]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/bprm_check_security")]
 pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
     let filename_ptr = unsafe { *(ctx as *const *const u8) };
     let mut buf = [0u8; 256];
     if unsafe { bpf_probe_read_user_str(buf.as_mut_ptr(), buf.len() as u32, filename_ptr) } < 0 {
-        return deny();
+        return deny_with_mode();
     }
     let len = exec_allowlist_len();
     let mut i = 0;
     while i < len {
-        if let Some(entry) = unsafe { load_exec_allow_entry(i) } {
-            if path_matches(&entry.path, &buf) {
-                return 0;
-            }
+        if let Some(entry) = unsafe { load_exec_allow_entry(i) }
+            && path_matches(&entry.path, &buf)
+        {
+            return 0;
         }
         i += 1;
     }
-    deny()
+    deny_with_mode()
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -730,10 +776,10 @@ pub extern "C" fn sendmsg6(ctx: *mut c_void) -> i32 {
 pub extern "C" fn file_open(file: *mut c_void, _cred: *mut c_void) -> i32 {
     let path_ptr = match file_path_ptr(file) {
         Some(ptr) => ptr,
-        None => return deny(),
+        None => return deny_with_mode(),
     };
     let Some(path) = read_user_path(path_ptr) else {
-        return deny();
+        return deny_with_mode();
     };
     let access = file_mode_bits(file)
         .map(access_from_mode)
@@ -741,7 +787,7 @@ pub extern "C" fn file_open(file: *mut c_void, _cred: *mut c_void) -> i32 {
     let allowed = fs_allowed(&path, access);
     let event = fs_event(ACTION_OPEN, &path, allowed);
     publish_event(&event);
-    if allowed { 0 } else { deny() }
+    if allowed { 0 } else { deny_with_mode() }
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -754,17 +800,17 @@ pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
     }
     let path_ptr = match file_path_ptr(file) {
         Some(ptr) => ptr,
-        None => return deny(),
+        None => return deny_with_mode(),
     };
     let Some(path) = read_user_path(path_ptr) else {
-        return deny();
+        return deny_with_mode();
     };
     if fs_allowed(&path, access) {
         0
     } else {
         let event = fs_event(ACTION_OPEN, &path, false);
         publish_event(&event);
-        deny()
+        deny_with_mode()
     }
 }
 
@@ -774,17 +820,17 @@ pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
 pub extern "C" fn inode_unlink(_dir: *mut c_void, dentry: *mut c_void) -> i32 {
     let path_ptr = match dentry_path_ptr(dentry) {
         Some(ptr) => ptr,
-        None => return deny(),
+        None => return deny_with_mode(),
     };
     let Some(path) = read_user_path(path_ptr) else {
-        return deny();
+        return deny_with_mode();
     };
     if fs_allowed(&path, bpf_api::FS_WRITE) {
         0
     } else {
         let event = fs_event(ACTION_UNLINK, &path, false);
         publish_event(&event);
-        deny()
+        deny_with_mode()
     }
 }
 
@@ -845,6 +891,33 @@ mod tests {
     }
 
     #[test]
+    fn bprm_check_security_denies_without_rule() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        reset_exec_state();
+        let path = c_string("/workspace/bin/forbidden");
+        let mut filename_ptr = path.as_ptr();
+        let mut ctx = (&mut filename_ptr) as *mut *const u8;
+        let result = bprm_check_security((&mut ctx) as *mut _ as *mut c_void);
+        assert_ne!(result, 0);
+    }
+
+    #[test]
+    fn bprm_check_security_observe_mode_allows_without_rule() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        reset_exec_state();
+        enable_observe_mode();
+        let path = c_string("/workspace/bin/forbidden");
+        let mut filename_ptr = path.as_ptr();
+        let mut ctx = (&mut filename_ptr) as *mut *const u8;
+        let result = bprm_check_security((&mut ctx) as *mut _ as *mut c_void);
+        assert_eq!(result, 0);
+    }
+
+    #[test]
     fn file_open_emits_event() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
@@ -892,6 +965,30 @@ mod tests {
     }
 
     #[test]
+    fn file_open_observe_mode_allows_but_logs() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        enable_observe_mode();
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        let path = "/workspace/forbidden.txt";
+        let path_bytes = c_string(path);
+        let mut file = TestFile {
+            path: path_bytes.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
+        assert_eq!(result, 0);
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_OPEN);
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
     fn file_permission_respects_access_bits() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
@@ -919,6 +1016,29 @@ mod tests {
         LAST_EVENT.lock().unwrap().take();
         assert_eq!(file_permission(file_ptr, MAY_WRITE), 0);
         assert!(LAST_EVENT.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn file_permission_observe_mode_allows_but_logs() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        enable_observe_mode();
+        let path = "/workspace/read-only";
+        set_fs_rules(&[fs_rule_entry(0, path, FS_READ)]);
+        let path_bytes = c_string(path);
+        let mut file = TestFile {
+            path: path_bytes.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        LAST_EVENT.lock().unwrap().take();
+        let result = file_permission(file_ptr, MAY_WRITE);
+        assert_eq!(result, 0);
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_OPEN);
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), path);
     }
 
     #[test]
@@ -1018,6 +1138,26 @@ mod tests {
             inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void),
             0
         );
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_UNLINK);
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), path);
+    }
+
+    #[test]
+    fn inode_unlink_observe_mode_allows_but_logs() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        enable_observe_mode();
+        let path = "/workspace/temp.txt";
+        let path_bytes = c_string(path);
+        let mut dentry = TestDentry {
+            name: path_bytes.as_ptr(),
+        };
+        LAST_EVENT.lock().unwrap().take();
+        let result = inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void);
+        assert_eq!(result, 0);
         let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
         assert_eq!(event.action, ACTION_UNLINK);
         assert_eq!(event.verdict, 1);
@@ -1126,11 +1266,16 @@ mod tests {
         NET_PARENTS_LENGTH.set(0, entries.len() as u32);
     }
 
+    fn reset_mode_flags() {
+        MODE_FLAGS.clear();
+    }
+
     fn reset_network_state() {
         NET_RULES.clear();
         NET_RULES_LENGTH.clear();
         NET_PARENTS.clear();
         NET_PARENTS_LENGTH.clear();
+        reset_mode_flags();
         unsafe {
             CURRENT_UNIT = 0;
         }
@@ -1148,9 +1293,20 @@ mod tests {
     fn reset_fs_state() {
         FS_RULES.clear();
         FS_RULES_LENGTH.clear();
+        reset_mode_flags();
         unsafe {
             CURRENT_UNIT = 0;
         }
+    }
+
+    fn enable_observe_mode() {
+        reset_mode_flags();
+        MODE_FLAGS.set(0, MODE_FLAG_OBSERVE);
+    }
+
+    fn reset_exec_state() {
+        EXEC_ALLOWLIST.clear();
+        EXEC_ALLOWLIST_LENGTH.clear();
     }
 
     fn fs_rule_entry(unit: u32, path: &str, access: u8) -> bpf_api::FsRuleEntry {
@@ -1251,6 +1407,22 @@ mod tests {
     }
 
     #[test]
+    fn connect4_observe_mode_allows_denied_requests() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        enable_observe_mode();
+        let denied = SockAddr {
+            user_ip4: u32::from_be_bytes([203, 0, 113, 2]),
+            user_ip6: [0; 4],
+            user_port: 8080u16.to_be(),
+            family: 2,
+            protocol: 6,
+        };
+        assert_eq!(connect4(&denied as *const _ as *mut c_void), 0);
+        assert_eq!(sendmsg4(&denied as *const _ as *mut c_void), 0);
+    }
+
+    #[test]
     fn connect6_respects_rules() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
@@ -1311,5 +1483,22 @@ mod tests {
         }
         assert_ne!(connect6(&allowed as *const _ as *mut c_void), 0);
         assert_ne!(sendmsg6(&allowed as *const _ as *mut c_void), 0);
+    }
+
+    #[test]
+    fn connect6_observe_mode_allows_denied_requests() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        enable_observe_mode();
+        let denied_addr = std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2);
+        let denied = SockAddr {
+            user_ip4: 0,
+            user_ip6: ipv6_words(denied_addr),
+            user_port: 8080u16.to_be(),
+            family: 10,
+            protocol: 6,
+        };
+        assert_eq!(connect6(&denied as *const _ as *mut c_void), 0);
+        assert_eq!(sendmsg6(&denied as *const _ as *mut c_void), 0);
     }
 }
