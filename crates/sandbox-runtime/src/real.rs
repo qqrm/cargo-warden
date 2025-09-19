@@ -54,9 +54,10 @@ impl RealSandbox {
         mode: Mode,
         deny: &[String],
         layout: &MapsLayout,
+        allowed_env_vars: &[String],
     ) -> io::Result<ExitStatus> {
         let mut command = command;
-        self.install_pre_exec(&mut command, deny, layout.clone(), mode)?;
+        self.install_pre_exec(&mut command, deny, layout.clone(), mode, allowed_env_vars)?;
         let mut child = command.spawn()?;
         child.wait()
     }
@@ -141,6 +142,7 @@ impl RealSandbox {
         deny: &[String],
         layout: MapsLayout,
         mode: Mode,
+        _allowed_env_vars: &[String],
     ) -> io::Result<()> {
         let procs_fd = self.cgroup.procs_fd_raw()?;
         let rules = deny.to_vec();

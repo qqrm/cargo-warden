@@ -44,6 +44,7 @@ impl FakeSandbox {
         mode: Mode,
         _deny: &[String],
         layout: &MapsLayout,
+        _allowed_env_vars: &[String],
     ) -> io::Result<ExitStatus> {
         if let Some(recorder) = &mut self.layout_recorder {
             recorder.record(layout, mode)?;

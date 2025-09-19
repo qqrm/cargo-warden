@@ -1201,7 +1201,6 @@ dependencies = [
  "assert_cmd",
  "clap",
  "event-reporting",
- "qqrm-agent-lite",
  "qqrm-bpf-api",
  "qqrm-policy-compiler",
  "qqrm-policy-core",

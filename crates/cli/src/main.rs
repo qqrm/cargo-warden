@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use event_reporting::{EventRecord, export_sarif};
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy, WorkspacePolicy};
-use qqrm_policy_compiler::{self, MapsLayout};
+use qqrm_policy_compiler::{self, CompiledPolicy, MapsLayout};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -79,6 +79,7 @@ struct IsolationConfig {
     mode: Mode,
     syscall_deny: Vec<String>,
     maps_layout: MapsLayout,
+    allowed_env_vars: Vec<String>,
 }
 
 fn main() {
@@ -167,13 +168,17 @@ fn setup_isolation(
         eprintln!("warning: {warn}");
     }
 
-    let layout = qqrm_policy_compiler::compile(&policy)
+    let CompiledPolicy {
+        maps_layout,
+        allowed_env_vars,
+    } = qqrm_policy_compiler::compile(&policy)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
     Ok(IsolationConfig {
         mode: policy.mode,
         syscall_deny: policy.syscall_deny().cloned().collect(),
-        maps_layout: layout,
+        maps_layout,
+        allowed_env_vars,
     })
 }
 
@@ -190,8 +195,12 @@ fn load_default_policy() -> io::Result<Policy> {
 }
 
 fn load_workspace_policy() -> io::Result<Option<Policy>> {
-    let path = Path::new("workspace.warden.toml");
-    let text = match std::fs::read_to_string(path) {
+    let metadata = match load_cargo_metadata() {
+        Ok(metadata) => metadata,
+        Err(_) => return Ok(None),
+    };
+    let path = metadata.workspace_root.join("workspace.warden.toml");
+    let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err),
@@ -202,7 +211,7 @@ fn load_workspace_policy() -> io::Result<Option<Policy>> {
             format!("{}: {err}", path.display()),
         )
     })?;
-    let member = determine_active_workspace_member()?;
+    let member = active_workspace_member(&metadata)?;
     let policy = match member {
         Some(member) => workspace.policy_for(&member),
         None => workspace.root.clone(),
@@ -222,14 +231,6 @@ fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
             format!("{}: {err}", path.display()),
         )
     })
-}
-
-fn determine_active_workspace_member() -> io::Result<Option<String>> {
-    if let Some(from_env) = workspace_member_from_env() {
-        return Ok(Some(from_env));
-    }
-    let metadata = load_cargo_metadata()?;
-    workspace_member_from_dir(&metadata)
 }
 
 fn workspace_member_from_env() -> Option<String> {
@@ -319,10 +320,32 @@ fn workspace_member_from_dir(metadata: &CargoMetadata) -> io::Result<Option<Stri
     Ok(best_match.map(|(name, _, _)| name))
 }
 
+fn active_workspace_member(metadata: &CargoMetadata) -> io::Result<Option<String>> {
+    if let Some(from_env) = workspace_member_from_env()
+        && workspace_contains_member(metadata, &from_env)
+    {
+        return Ok(Some(from_env));
+    }
+    workspace_member_from_dir(metadata)
+}
+
+fn workspace_contains_member(metadata: &CargoMetadata, name: &str) -> bool {
+    let member_ids: HashSet<&str> = metadata
+        .workspace_members
+        .iter()
+        .map(String::as_str)
+        .collect();
+    metadata
+        .packages
+        .iter()
+        .any(|pkg| member_ids.contains(pkg.id.as_str()) && pkg.name == name)
+}
+
 #[derive(Deserialize)]
 struct CargoMetadata {
     packages: Vec<CargoPackage>,
     workspace_members: Vec<String>,
+    workspace_root: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -449,6 +472,7 @@ fn run_in_sandbox(
         mode,
         &isolation.syscall_deny,
         &isolation.maps_layout,
+        &isolation.allowed_env_vars,
     );
     let shutdown_result = sandbox.shutdown();
     let status = match run_result {
