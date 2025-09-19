@@ -4,9 +4,10 @@ use std::{
 };
 
 use bpf_api::{
-    ExecAllowEntry, FS_READ, FS_WRITE, FsRule, FsRuleEntry, NetParentEntry, NetRule, NetRuleEntry,
+    ExecAllowEntry, FS_READ, FS_WRITE, FsRule, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE,
+    NetParentEntry, NetRule, NetRuleEntry,
 };
-use policy_core::{ExecDefault, FsDefault, NetDefault, Policy};
+use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
 use thiserror::Error;
 
 const TCP_PROTOCOL: u8 = 6;
@@ -32,6 +33,8 @@ pub enum CompileError {
 /// Serialized representation of policy data for BPF maps.
 #[derive(Debug, Clone)]
 pub struct MapsLayout {
+    /// Entries for the `mode_flags` map.
+    pub mode_flags: Vec<u32>,
     /// Entries for the `exec_allowlist` map.
     pub exec_allowlist: Vec<ExecAllowEntry>,
     /// Entries for the `net_rules` map.
@@ -46,6 +49,7 @@ impl MapsLayout {
     /// Convert the layout into raw byte buffers for each map.
     pub fn to_binary(&self) -> MapsBinary {
         MapsBinary {
+            mode_flags: slice_to_bytes(&self.mode_flags),
             exec_allowlist: slice_to_bytes(&self.exec_allowlist),
             net_rules: slice_to_bytes(&self.net_rules),
             net_parents: slice_to_bytes(&self.net_parents),
@@ -57,6 +61,7 @@ impl MapsLayout {
 /// Raw byte buffers for each BPF map.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MapsBinary {
+    pub mode_flags: Vec<u8>,
     pub exec_allowlist: Vec<u8>,
     pub net_rules: Vec<u8>,
     pub net_parents: Vec<u8>,
@@ -66,11 +71,19 @@ pub struct MapsBinary {
 /// Compile a [`Policy`] into serialized BPF map entries.
 pub fn compile(policy: &Policy) -> Result<MapsLayout, CompileError> {
     Ok(MapsLayout {
+        mode_flags: vec![mode_flag(policy.mode)],
         exec_allowlist: compile_exec_allowlist(policy)?,
         net_rules: compile_net_rules(policy)?,
         net_parents: Vec::new(),
         fs_rules: compile_fs_rules(policy)?,
     })
+}
+
+fn mode_flag(mode: Mode) -> u32 {
+    match mode {
+        Mode::Observe => MODE_FLAG_OBSERVE,
+        Mode::Enforce => MODE_FLAG_ENFORCE,
+    }
 }
 
 fn compile_exec_allowlist(policy: &Policy) -> Result<Vec<ExecAllowEntry>, CompileError> {
@@ -201,6 +214,7 @@ mod tests {
 
         let layout = compile(&policy).expect("compile");
 
+        assert_eq!(layout.mode_flags, vec![MODE_FLAG_ENFORCE]);
         assert_eq!(layout.exec_allowlist.len(), 2);
         assert_eq!(to_string(&layout.exec_allowlist[0].path), "/usr/bin/rustc");
         assert_eq!(to_string(&layout.exec_allowlist[1].path), "/bin/bash");
@@ -241,6 +255,10 @@ mod tests {
         let layout = compile(&policy).expect("compile");
         let binary = layout.to_binary();
 
+        assert_eq!(binary.mode_flags.len(), size_of::<u32>());
+        let mut mode_bytes = [0u8; size_of::<u32>()];
+        mode_bytes.copy_from_slice(&binary.mode_flags);
+        assert_eq!(u32::from_ne_bytes(mode_bytes), MODE_FLAG_ENFORCE);
         assert_eq!(
             binary.exec_allowlist.len(),
             layout.exec_allowlist.len() * size_of::<ExecAllowEntry>()
@@ -258,5 +276,16 @@ mod tests {
             layout.fs_rules.len() * size_of::<FsRuleEntry>()
         );
         assert!(binary.exec_allowlist.starts_with(b"/usr/bin/rustc"));
+    }
+
+    #[test]
+    fn observe_mode_sets_flag() {
+        let policy = Policy {
+            mode: policy_core::Mode::Observe,
+            rules: vec![],
+        };
+
+        let layout = compile(&policy).expect("compile");
+        assert_eq!(layout.mode_flags, vec![MODE_FLAG_OBSERVE]);
     }
 }

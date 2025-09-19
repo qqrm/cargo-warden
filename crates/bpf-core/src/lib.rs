@@ -71,6 +71,10 @@ type LengthMap = TestArray<u32, 1>;
 type EventCountsMap = Array<u64>;
 #[cfg(any(test, feature = "fuzzing"))]
 type EventCountsMap = TestArray<u64, { bpf_api::EVENT_COUNT_SLOTS as usize }>;
+#[cfg(target_arch = "bpf")]
+type ModeFlagsMap = Array<u32>;
+#[cfg(any(test, feature = "fuzzing"))]
+type ModeFlagsMap = TestArray<u32, { bpf_api::MODE_FLAGS_CAPACITY as usize }>;
 
 #[cfg(target_arch = "bpf")]
 type EventsMap = RingBuf;
@@ -148,6 +152,16 @@ const fn event_counts_map() -> EventCountsMap {
 }
 
 #[cfg(target_arch = "bpf")]
+const fn mode_flags_map() -> ModeFlagsMap {
+    Array::with_max_entries(bpf_api::MODE_FLAGS_CAPACITY, 0)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+const fn mode_flags_map() -> ModeFlagsMap {
+    TestArray::new()
+}
+
+#[cfg(target_arch = "bpf")]
 #[map(name = "EXEC_ALLOWLIST")]
 static mut EXEC_ALLOWLIST: ExecAllowlistMap = exec_allowlist_map();
 
@@ -202,6 +216,13 @@ static mut EVENT_COUNTS: EventCountsMap = event_counts_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static EVENT_COUNTS: EventCountsMap = event_counts_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "MODE_FLAGS")]
+static mut MODE_FLAGS: ModeFlagsMap = mode_flags_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static MODE_FLAGS: ModeFlagsMap = mode_flags_map();
 
 #[cfg(target_arch = "bpf")]
 #[map(name = "FS_RULES")]

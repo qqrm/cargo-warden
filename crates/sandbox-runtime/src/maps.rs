@@ -1,6 +1,9 @@
 use aya::maps::{Array, MapData};
 use aya::{Ebpf, Pod};
-use bpf_api::{ExecAllowEntry, FsRuleEntry, NetParentEntry, NetRuleEntry};
+use bpf_api::{
+    ExecAllowEntry, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE, NetParentEntry, NetRuleEntry,
+};
+use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
 use std::convert::TryFrom;
 use std::io;
@@ -35,6 +38,22 @@ pub(crate) fn populate_maps(bpf: &mut Ebpf, layout: &MapsLayout) -> io::Result<(
         |entry| FsRuleEntryPod(*entry),
     )?;
     Ok(())
+}
+
+pub(crate) fn write_mode_flag(bpf: &mut Ebpf, mode: Mode) -> io::Result<()> {
+    let value = match mode {
+        Mode::Observe => MODE_FLAG_OBSERVE,
+        Mode::Enforce => MODE_FLAG_ENFORCE,
+    };
+    let map_name = "MODE_FLAGS";
+    let map = bpf
+        .map_mut(map_name)
+        .ok_or_else(|| map_not_found(map_name))?;
+    let mut array = Array::<&mut MapData, u32>::try_from(map)
+        .map_err(|err| io::Error::other(format!("{map_name}: {err}")))?;
+    array
+        .set(0, value, 0)
+        .map_err(|err| io::Error::other(format!("set {map_name}[0]: {err}")))
 }
 
 fn update_array<T, P, F>(

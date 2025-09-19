@@ -1,7 +1,7 @@
 use crate::agent::{AgentHandle, start_agent};
 use crate::bpf::{load_bpf, take_events_ring};
 use crate::cgroup::Cgroup;
-use crate::maps::populate_maps;
+use crate::maps::{populate_maps, write_mode_flag};
 use crate::seccomp::apply_seccomp;
 use crate::util::events_path;
 use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
@@ -56,8 +56,7 @@ impl RealSandbox {
         layout: &MapsLayout,
     ) -> io::Result<ExitStatus> {
         let mut command = command;
-        let _ = mode;
-        self.install_pre_exec(&mut command, deny, layout.clone())?;
+        self.install_pre_exec(&mut command, deny, layout.clone(), mode)?;
         let mut child = command.spawn()?;
         child.wait()
     }
@@ -141,15 +140,18 @@ impl RealSandbox {
         cmd: &mut Command,
         deny: &[String],
         layout: MapsLayout,
+        mode: Mode,
     ) -> io::Result<()> {
         let procs_fd = self.cgroup.procs_fd_raw()?;
         let rules = deny.to_vec();
         let bpf_ptr = self.bpf.get() as usize;
+        let mode_value = mode;
         unsafe {
             cmd.pre_exec(move || {
                 join_cgroup_fd(procs_fd)?;
                 {
                     let bpf = &mut *(bpf_ptr as *mut Ebpf);
+                    write_mode_flag(bpf, mode_value)?;
                     populate_maps(bpf, &layout)?;
                 }
                 if !rules.is_empty() {

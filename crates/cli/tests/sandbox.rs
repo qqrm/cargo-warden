@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use bpf_api::MODE_FLAG_ENFORCE;
 use sandbox_runtime::LayoutSnapshot;
 use std::fs;
 use tempfile::tempdir;
@@ -61,6 +62,8 @@ read_extra = ["/etc/ssl/certs"]
     );
     let snapshot = snapshots.last().unwrap();
 
+    assert_eq!(snapshot.mode, "enforce");
+    assert_eq!(snapshot.mode_flag, Some(MODE_FLAG_ENFORCE));
     assert!(
         snapshot.exec.iter().any(|path| path == "/bin/echo"),
         "expected exec allowlist entry for /bin/echo: {:?}",
