@@ -49,100 +49,329 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-#[cfg(target_arch = "bpf")]
-type ExecAllowlistMap = Array<bpf_api::ExecAllowEntry>;
-#[cfg(any(test, feature = "fuzzing"))]
-type ExecAllowlistMap =
-    TestArray<bpf_api::ExecAllowEntry, { bpf_api::EXEC_ALLOWLIST_CAPACITY as usize }>;
+macro_rules! map_type_alias {
+    (@define EXEC_ALLOWLIST, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        type ExecAllowlistMap = Array<$value>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        type ExecAllowlistMap = TestArray<$value, { ($capacity) as usize }>;
+    };
+    (@define EXEC_ALLOWLIST_LENGTH, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        type LengthMap = Array<$value>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        type LengthMap = TestArray<$value, { ($capacity) as usize }>;
+    };
+    (@define NET_RULES, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        type NetRulesMap = Array<$value>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        type NetRulesMap = TestArray<$value, { ($capacity) as usize }>;
+    };
+    (@define NET_PARENTS, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        type NetParentsMap = Array<$value>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        type NetParentsMap = TestArray<$value, { ($capacity) as usize }>;
+    };
+    (@define FS_RULES, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        type FsRulesMap = Array<$value>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        type FsRulesMap = TestArray<$value, { ($capacity) as usize }>;
+    };
+    (@define EVENT_COUNTS, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        type EventCountsMap = Array<$value>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        type EventCountsMap = TestArray<$value, { ($capacity) as usize }>;
+    };
+    (@define MODE_FLAGS, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        type ModeFlagsMap = Array<$value>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        type ModeFlagsMap = TestArray<$value, { ($capacity) as usize }>;
+    };
+    (@define $other:ident, $value:ty, $capacity:expr) => {
+        compile_error!(concat!(
+            "Missing type alias mapping for ",
+            stringify!($other)
+        ));
+    };
+    (@name EXEC_ALLOWLIST) => {
+        ExecAllowlistMap
+    };
+    (@name EXEC_ALLOWLIST_LENGTH) => {
+        LengthMap
+    };
+    (@name NET_RULES) => {
+        NetRulesMap
+    };
+    (@name NET_RULES_LENGTH) => {
+        LengthMap
+    };
+    (@name NET_PARENTS) => {
+        NetParentsMap
+    };
+    (@name NET_PARENTS_LENGTH) => {
+        LengthMap
+    };
+    (@name FS_RULES) => {
+        FsRulesMap
+    };
+    (@name FS_RULES_LENGTH) => {
+        LengthMap
+    };
+    (@name EVENT_COUNTS) => {
+        EventCountsMap
+    };
+    (@name MODE_FLAGS) => {
+        ModeFlagsMap
+    };
+    (@name $other:ident) => {
+        compile_error!(concat!(
+            "Missing type alias mapping for ",
+            stringify!($other)
+        ));
+    };
+}
 
-#[cfg(target_arch = "bpf")]
-type NetRulesMap = Array<bpf_api::NetRuleEntry>;
-#[cfg(any(test, feature = "fuzzing"))]
-type NetRulesMap = TestArray<bpf_api::NetRuleEntry, { bpf_api::NET_RULES_CAPACITY as usize }>;
+macro_rules! map_ctor_fn {
+    (@define EXEC_ALLOWLIST, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        const fn exec_allowlist_map() -> ExecAllowlistMap {
+            Array::with_max_entries($capacity, 0)
+        }
 
-#[cfg(target_arch = "bpf")]
-type NetParentsMap = Array<bpf_api::NetParentEntry>;
-#[cfg(any(test, feature = "fuzzing"))]
-type NetParentsMap = TestArray<bpf_api::NetParentEntry, { bpf_api::NET_PARENTS_CAPACITY as usize }>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        const fn exec_allowlist_map() -> ExecAllowlistMap {
+            TestArray::new()
+        }
+    };
+    (@define EXEC_ALLOWLIST_LENGTH, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        const fn length_map() -> LengthMap {
+            Array::with_max_entries($capacity, 0)
+        }
 
-#[cfg(target_arch = "bpf")]
-type FsRulesMap = Array<bpf_api::FsRuleEntry>;
-#[cfg(any(test, feature = "fuzzing"))]
-type FsRulesMap = TestArray<bpf_api::FsRuleEntry, { bpf_api::FS_RULES_CAPACITY as usize }>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        const fn length_map() -> LengthMap {
+            TestArray::new()
+        }
+    };
+    (@define NET_RULES, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        const fn net_rules_map() -> NetRulesMap {
+            Array::with_max_entries($capacity, 0)
+        }
 
-#[cfg(target_arch = "bpf")]
-type LengthMap = Array<u32>;
-#[cfg(any(test, feature = "fuzzing"))]
-type LengthMap = TestArray<u32, 1>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        const fn net_rules_map() -> NetRulesMap {
+            TestArray::new()
+        }
+    };
+    (@define NET_PARENTS, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        const fn net_parents_map() -> NetParentsMap {
+            Array::with_max_entries($capacity, 0)
+        }
 
-#[cfg(target_arch = "bpf")]
-type EventCountsMap = Array<u64>;
-#[cfg(any(test, feature = "fuzzing"))]
-type EventCountsMap = TestArray<u64, { bpf_api::EVENT_COUNT_SLOTS as usize }>;
-#[cfg(target_arch = "bpf")]
-type ModeFlagsMap = Array<u32>;
-#[cfg(any(test, feature = "fuzzing"))]
-type ModeFlagsMap = TestArray<u32, { bpf_api::MODE_FLAGS_CAPACITY as usize }>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        const fn net_parents_map() -> NetParentsMap {
+            TestArray::new()
+        }
+    };
+    (@define FS_RULES, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        const fn fs_rules_map() -> FsRulesMap {
+            Array::with_max_entries($capacity, 0)
+        }
 
-#[cfg(target_arch = "bpf")]
-type ModeFlagsMap = Array<u32>;
-#[cfg(any(test, feature = "fuzzing"))]
-type ModeFlagsMap = TestArray<u32, 1>;
+        #[cfg(any(test, feature = "fuzzing"))]
+        const fn fs_rules_map() -> FsRulesMap {
+            TestArray::new()
+        }
+    };
+    (@define EVENT_COUNTS, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        const fn event_counts_map() -> EventCountsMap {
+            Array::with_max_entries($capacity, 0)
+        }
+
+        #[cfg(any(test, feature = "fuzzing"))]
+        const fn event_counts_map() -> EventCountsMap {
+            TestArray::new()
+        }
+    };
+    (@define MODE_FLAGS, $value:ty, $capacity:expr) => {
+        #[cfg(target_arch = "bpf")]
+        const fn mode_flags_map() -> ModeFlagsMap {
+            Array::with_max_entries($capacity, 0)
+        }
+
+        #[cfg(any(test, feature = "fuzzing"))]
+        const fn mode_flags_map() -> ModeFlagsMap {
+            TestArray::new()
+        }
+    };
+    (@define $other:ident, $value:ty, $capacity:expr) => {
+        compile_error!(concat!(
+            "Missing constructor mapping for ",
+            stringify!($other)
+        ));
+    };
+    (@name EXEC_ALLOWLIST) => {
+        exec_allowlist_map
+    };
+    (@name EXEC_ALLOWLIST_LENGTH) => {
+        length_map
+    };
+    (@name NET_RULES) => {
+        net_rules_map
+    };
+    (@name NET_RULES_LENGTH) => {
+        length_map
+    };
+    (@name NET_PARENTS) => {
+        net_parents_map
+    };
+    (@name NET_PARENTS_LENGTH) => {
+        length_map
+    };
+    (@name FS_RULES) => {
+        fs_rules_map
+    };
+    (@name FS_RULES_LENGTH) => {
+        length_map
+    };
+    (@name EVENT_COUNTS) => {
+        event_counts_map
+    };
+    (@name MODE_FLAGS) => {
+        mode_flags_map
+    };
+    (@name $other:ident) => {
+        compile_error!(concat!(
+            "Missing constructor mapping for ",
+            stringify!($other)
+        ));
+    };
+}
+
+macro_rules! map_define_alias {
+    (EXEC_ALLOWLIST, $define:ident, $skip:ident, $($rest:tt)*) => {
+        $define!(EXEC_ALLOWLIST, $($rest)*);
+    };
+    (EXEC_ALLOWLIST_LENGTH, $define:ident, $skip:ident, $($rest:tt)*) => {
+        $define!(EXEC_ALLOWLIST_LENGTH, $($rest)*);
+    };
+    (NET_RULES, $define:ident, $skip:ident, $($rest:tt)*) => {
+        $define!(NET_RULES, $($rest)*);
+    };
+    (NET_RULES_LENGTH, $define:ident, $skip:ident, $($rest:tt)*) => {
+        $skip!(NET_RULES_LENGTH, $($rest)*);
+    };
+    (NET_PARENTS, $define:ident, $skip:ident, $($rest:tt)*) => {
+        $define!(NET_PARENTS, $($rest)*);
+    };
+    (NET_PARENTS_LENGTH, $define:ident, $skip:ident, $($rest:tt)*) => {
+        $skip!(NET_PARENTS_LENGTH, $($rest)*);
+    };
+    (FS_RULES, $define:ident, $skip:ident, $($rest:tt)*) => {
+        $define!(FS_RULES, $($rest)*);
+    };
+    (FS_RULES_LENGTH, $define:ident, $skip:ident, $($rest:tt)*) => {
+        $skip!(FS_RULES_LENGTH, $($rest)*);
+    };
+    (EVENT_COUNTS, $define:ident, $skip:ident, $($rest:tt)*) => {
+        $define!(EVENT_COUNTS, $($rest)*);
+    };
+    (MODE_FLAGS, $define:ident, $skip:ident, $($rest:tt)*) => {
+        $define!(MODE_FLAGS, $($rest)*);
+    };
+    ($other:ident, $define:ident, $skip:ident, $($rest:tt)*) => {
+        compile_error!(concat!("Missing alias flag for ", stringify!($other)));
+    };
+}
+
+macro_rules! define_map {
+    ($ident:ident, $aya_name:literal, $value:ty, $capacity:expr $(,)?) => {
+        map_define_alias!(
+            $ident,
+            define_map_define,
+            define_map_skip,
+            $aya_name,
+            $value,
+            $capacity
+        );
+    };
+}
+
+macro_rules! define_map_define {
+    ($ident:ident, $aya_name:literal, $value:ty, $capacity:expr) => {
+        map_type_alias!(@define $ident, $value, $capacity);
+        map_ctor_fn!(@define $ident, $value, $capacity);
+        define_map_static!($ident, $aya_name);
+    };
+}
+
+macro_rules! define_map_skip {
+    ($ident:ident, $aya_name:literal, $value:ty, $capacity:expr) => {
+        define_map_static!($ident, $aya_name);
+    };
+}
+
+macro_rules! define_map_static {
+    ($ident:ident, $aya_name:literal) => {
+        #[cfg(target_arch = "bpf")]
+        #[map(name = $aya_name)]
+static mut $ident: map_type_alias!(@name $ident) = map_ctor_fn!(@name $ident)();
+
+        #[cfg(any(test, feature = "fuzzing"))]
+static $ident: map_type_alias!(@name $ident) = map_ctor_fn!(@name $ident)();
+    };
+}
+
+define_map!(
+    EXEC_ALLOWLIST,
+    "EXEC_ALLOWLIST",
+    bpf_api::ExecAllowEntry,
+    bpf_api::EXEC_ALLOWLIST_CAPACITY,
+);
+define_map!(EXEC_ALLOWLIST_LENGTH, "EXEC_ALLOWLIST_LENGTH", u32, 1);
+define_map!(
+    NET_RULES,
+    "NET_RULES",
+    bpf_api::NetRuleEntry,
+    bpf_api::NET_RULES_CAPACITY,
+);
+define_map!(NET_RULES_LENGTH, "NET_RULES_LENGTH", u32, 1);
+define_map!(
+    NET_PARENTS,
+    "NET_PARENTS",
+    bpf_api::NetParentEntry,
+    bpf_api::NET_PARENTS_CAPACITY,
+);
+define_map!(NET_PARENTS_LENGTH, "NET_PARENTS_LENGTH", u32, 1);
+define_map!(
+    FS_RULES,
+    "FS_RULES",
+    bpf_api::FsRuleEntry,
+    bpf_api::FS_RULES_CAPACITY,
+);
+define_map!(FS_RULES_LENGTH, "FS_RULES_LENGTH", u32, 1);
+define_map!(
+    EVENT_COUNTS,
+    "EVENT_COUNTS",
+    u64,
+    bpf_api::EVENT_COUNT_SLOTS,
+);
+define_map!(MODE_FLAGS, "MODE_FLAGS", u32, bpf_api::MODE_FLAGS_CAPACITY);
 
 #[cfg(target_arch = "bpf")]
 type EventsMap = RingBuf;
 #[cfg(any(test, feature = "fuzzing"))]
 type EventsMap = DummyRingBuf;
-
-#[cfg(target_arch = "bpf")]
-const fn exec_allowlist_map() -> ExecAllowlistMap {
-    Array::with_max_entries(bpf_api::EXEC_ALLOWLIST_CAPACITY, 0)
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-const fn exec_allowlist_map() -> ExecAllowlistMap {
-    TestArray::new()
-}
-
-#[cfg(target_arch = "bpf")]
-const fn net_rules_map() -> NetRulesMap {
-    Array::with_max_entries(bpf_api::NET_RULES_CAPACITY, 0)
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-const fn net_rules_map() -> NetRulesMap {
-    TestArray::new()
-}
-
-#[cfg(target_arch = "bpf")]
-const fn net_parents_map() -> NetParentsMap {
-    Array::with_max_entries(bpf_api::NET_PARENTS_CAPACITY, 0)
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-const fn net_parents_map() -> NetParentsMap {
-    TestArray::new()
-}
-
-#[cfg(target_arch = "bpf")]
-const fn fs_rules_map() -> FsRulesMap {
-    Array::with_max_entries(bpf_api::FS_RULES_CAPACITY, 0)
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-const fn fs_rules_map() -> FsRulesMap {
-    TestArray::new()
-}
-
-#[cfg(target_arch = "bpf")]
-const fn length_map() -> LengthMap {
-    Array::with_max_entries(1, 0)
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-const fn length_map() -> LengthMap {
-    TestArray::new()
-}
 
 #[cfg(target_arch = "bpf")]
 const fn events_map() -> EventsMap {
@@ -155,68 +384,6 @@ const fn events_map() -> EventsMap {
 }
 
 #[cfg(target_arch = "bpf")]
-const fn event_counts_map() -> EventCountsMap {
-    Array::with_max_entries(bpf_api::EVENT_COUNT_SLOTS, 0)
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-const fn event_counts_map() -> EventCountsMap {
-    TestArray::new()
-}
-
-#[cfg(target_arch = "bpf")]
-const fn mode_flags_map() -> ModeFlagsMap {
-    Array::with_max_entries(bpf_api::MODE_FLAGS_CAPACITY, 0)
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-const fn mode_flags_map() -> ModeFlagsMap {
-    TestArray::new()
-}
-
-#[cfg(target_arch = "bpf")]
-#[map(name = "EXEC_ALLOWLIST")]
-static mut EXEC_ALLOWLIST: ExecAllowlistMap = exec_allowlist_map();
-
-#[cfg(any(test, feature = "fuzzing"))]
-static EXEC_ALLOWLIST: ExecAllowlistMap = exec_allowlist_map();
-
-#[cfg(target_arch = "bpf")]
-#[map(name = "EXEC_ALLOWLIST_LENGTH")]
-static mut EXEC_ALLOWLIST_LENGTH: LengthMap = length_map();
-
-#[cfg(any(test, feature = "fuzzing"))]
-static EXEC_ALLOWLIST_LENGTH: LengthMap = length_map();
-
-#[cfg(target_arch = "bpf")]
-#[map(name = "NET_RULES")]
-static mut NET_RULES: NetRulesMap = net_rules_map();
-
-#[cfg(any(test, feature = "fuzzing"))]
-static NET_RULES: NetRulesMap = net_rules_map();
-
-#[cfg(target_arch = "bpf")]
-#[map(name = "NET_RULES_LENGTH")]
-static mut NET_RULES_LENGTH: LengthMap = length_map();
-
-#[cfg(any(test, feature = "fuzzing"))]
-static NET_RULES_LENGTH: LengthMap = length_map();
-
-#[cfg(target_arch = "bpf")]
-#[map(name = "NET_PARENTS")]
-static mut NET_PARENTS: NetParentsMap = net_parents_map();
-
-#[cfg(any(test, feature = "fuzzing"))]
-static NET_PARENTS: NetParentsMap = net_parents_map();
-
-#[cfg(target_arch = "bpf")]
-#[map(name = "NET_PARENTS_LENGTH")]
-static mut NET_PARENTS_LENGTH: LengthMap = length_map();
-
-#[cfg(any(test, feature = "fuzzing"))]
-static NET_PARENTS_LENGTH: LengthMap = length_map();
-
-#[cfg(target_arch = "bpf")]
 #[map(name = "EVENTS")]
 static mut EVENTS: EventsMap = events_map();
 
@@ -224,6 +391,29 @@ static mut EVENTS: EventsMap = events_map();
 static EVENTS: EventsMap = events_map();
 
 #[cfg(target_arch = "bpf")]
+    NET_RULES.get(index)
+}
+
+#[cfg(target_arch = "bpf")]
+unsafe fn load_net_parent(index: u32) -> Option<bpf_api::NetParentEntry> {
+    NET_PARENTS.get(index).copied()
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+unsafe fn load_net_parent(index: u32) -> Option<bpf_api::NetParentEntry> {
+    NET_PARENTS.get(index)
+}
+
+#[cfg(target_arch = "bpf")]
+unsafe fn load_fs_rule(index: u32) -> Option<bpf_api::FsRuleEntry> {
+    FS_RULES.get(index).copied()
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+unsafe fn load_fs_rule(index: u32) -> Option<bpf_api::FsRuleEntry> {
+    FS_RULES.get(index)
+}
+=======
 #[map(name = "EVENT_COUNTS")]
 static mut EVENT_COUNTS: EventCountsMap = event_counts_map();
 
@@ -239,17 +429,12 @@ static MODE_FLAGS: ModeFlagsMap = mode_flags_map();
 
 #[cfg(target_arch = "bpf")]
 #[map(name = "FS_RULES")]
-static mut FS_RULES: FsRulesMap = fs_rules_map();
-
+static mut FS_RULES: FsRulesMap = fs_rules_ 
 #[cfg(any(test, feature = "fuzzing"))]
 static FS_RULES: FsRulesMap = fs_rules_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = "FS_RULES_LENGTH")]
-static mut FS_RULES_LENGTH: LengthMap = length_map();
-
-#[cfg(any(test, feature = "fuzzing"))]
-static FS_RULES_LENGTH: LengthMap = length_map();
+#[map(name
 
 #[cfg(target_arch = "bpf")]
 unsafe fn load_mode_flags() -> u32 {
