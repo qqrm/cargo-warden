@@ -1,0 +1,419 @@
+use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy, WorkspacePolicy};
+use qqrm_policy_compiler::{self, CompiledPolicy, MapsLayout};
+use serde::Deserialize;
+use std::collections::HashSet;
+use std::ffi::OsString;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+pub(crate) struct IsolationConfig {
+    pub(crate) mode: Mode,
+    pub(crate) syscall_deny: Vec<String>,
+    pub(crate) maps_layout: MapsLayout,
+}
+
+pub(crate) fn setup_isolation(
+    allow: &[String],
+    policy_paths: &[String],
+    mode_override: Option<Mode>,
+) -> io::Result<IsolationConfig> {
+    let mut policy = load_default_policy()?;
+    for path in policy_paths {
+        let extra = load_policy(Path::new(path))?;
+        merge_policy(&mut policy, extra);
+    }
+    policy
+        .rules
+        .extend(allow.iter().cloned().map(Permission::Exec));
+    if let Some(mode) = mode_override {
+        policy.mode = mode;
+    }
+    dedup_policy_lists(&mut policy);
+
+    let report = policy.validate();
+    if !report.errors.is_empty() {
+        let message = report
+            .errors
+            .into_iter()
+            .map(|err| err.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, message));
+    }
+    for warn in report.warnings {
+        eprintln!("warning: {warn}");
+    }
+
+    let compiled = qqrm_policy_compiler::compile(&policy)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    let CompiledPolicy { maps_layout, .. } = compiled;
+
+    Ok(IsolationConfig {
+        mode: policy.mode,
+        syscall_deny: policy.syscall_deny().cloned().collect(),
+        maps_layout,
+    })
+}
+
+fn load_default_policy() -> io::Result<Policy> {
+    if let Some(policy) = load_workspace_policy()? {
+        return Ok(policy);
+    }
+    let path = Path::new("warden.toml");
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse_policy_from_str(path, &text),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(empty_policy()),
+        Err(err) => Err(err),
+    }
+}
+
+fn load_workspace_policy() -> io::Result<Option<Policy>> {
+    let Some(path) = find_workspace_file("workspace.warden.toml")? else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(&path)?;
+    let workspace: WorkspacePolicy = toml::from_str(&text).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{}: {err}", path.display()),
+        )
+    })?;
+    let member = determine_active_workspace_member()?;
+    let policy = match member {
+        Some(member) => workspace.policy_for(&member),
+        None => workspace.root.clone(),
+    };
+    Ok(Some(policy))
+}
+
+fn find_workspace_file(name: &str) -> io::Result<Option<PathBuf>> {
+    let mut dir = std::env::current_dir()?;
+    loop {
+        let candidate = dir.join(name);
+        match std::fs::metadata(&candidate) {
+            Ok(meta) => {
+                if meta.is_file() {
+                    return Ok(Some(candidate));
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    Ok(None)
+}
+
+fn load_policy(path: &Path) -> io::Result<Policy> {
+    let text = std::fs::read_to_string(path)?;
+    parse_policy_from_str(path, &text)
+}
+
+fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
+    Policy::from_toml_str(text).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{}: {err}", path.display()),
+        )
+    })
+}
+
+fn determine_active_workspace_member() -> io::Result<Option<String>> {
+    if let Some(from_env) = workspace_member_from_env() {
+        return Ok(Some(from_env));
+    }
+    let metadata = load_cargo_metadata()?;
+    workspace_member_from_dir(&metadata)
+}
+
+fn workspace_member_from_env() -> Option<String> {
+    if let Ok(value) = std::env::var("CARGO_PRIMARY_PACKAGE") {
+        parse_workspace_member_value(&value)
+    } else {
+        None
+    }
+}
+
+fn parse_workspace_member_value(value: &str) -> Option<String> {
+    let candidate = value
+        .split(|c: char| c.is_ascii_whitespace() || matches!(c, ';' | ','))
+        .find(|part| !part.is_empty())?
+        .trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    if let Some((_, fragment)) = candidate.rsplit_once('#') {
+        let name = fragment.split('@').next().unwrap_or(fragment).trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    if let Some((name, _)) = candidate.split_once('@') {
+        let trimmed = name.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    Some(candidate.to_string())
+}
+
+fn load_cargo_metadata() -> io::Result<CargoMetadata> {
+    let cargo: OsString = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let output = Command::new(cargo)
+        .arg("metadata")
+        .arg("--no-deps")
+        .arg("--format-version=1")
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(io::Error::other(format!("cargo metadata failed: {stderr}")));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn workspace_member_from_dir(metadata: &CargoMetadata) -> io::Result<Option<String>> {
+    let member_ids: HashSet<&str> = metadata
+        .workspace_members
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let cwd = std::env::current_dir()?;
+    let canonical_cwd = cwd.canonicalize().unwrap_or(cwd);
+    let mut best_match: Option<(String, usize, bool)> = None;
+
+    for pkg in &metadata.packages {
+        if !member_ids.contains(pkg.id.as_str()) {
+            continue;
+        }
+        let manifest_path = PathBuf::from(&pkg.manifest_path);
+        let Some(manifest_dir) = manifest_path.parent() else {
+            continue;
+        };
+        let canonical_dir = manifest_dir
+            .canonicalize()
+            .unwrap_or_else(|_| manifest_dir.to_path_buf());
+        if !canonical_cwd.starts_with(&canonical_dir) {
+            continue;
+        }
+        let exact = canonical_cwd == canonical_dir;
+        let depth = canonical_dir.components().count();
+        if let Some((_, current_depth, current_exact)) = &mut best_match
+            && ((*current_exact && !exact) || (*current_exact == exact && *current_depth >= depth))
+        {
+            continue;
+        }
+        best_match = Some((pkg.name.clone(), depth, exact));
+    }
+
+    Ok(best_match.map(|(name, _, _)| name))
+}
+
+fn merge_policy(base: &mut Policy, extra: Policy) {
+    let Policy { mode, mut rules } = extra;
+    base.mode = mode;
+    base.rules.append(&mut rules);
+}
+
+fn dedup_policy_lists(policy: &mut Policy) {
+    use Permission::*;
+
+    let mut keep = vec![true; policy.rules.len()];
+
+    let mut seen_exec: HashSet<&String> = HashSet::new();
+    let mut seen_net: HashSet<&String> = HashSet::new();
+    let mut seen_fs_write: HashSet<&std::path::PathBuf> = HashSet::new();
+    let mut seen_fs_read: HashSet<&std::path::PathBuf> = HashSet::new();
+    let mut seen_syscall: HashSet<&String> = HashSet::new();
+    let mut seen_env: HashSet<&String> = HashSet::new();
+
+    for (index, perm) in policy.rules.iter().enumerate().rev() {
+        let should_keep = match perm {
+            Exec(path) => seen_exec.insert(path),
+            NetConnect(host) => seen_net.insert(host),
+            FsWrite(path) => seen_fs_write.insert(path),
+            FsRead(path) => seen_fs_read.insert(path),
+            SyscallDeny(name) => seen_syscall.insert(name),
+            EnvRead(name) => seen_env.insert(name),
+            _ => true,
+        };
+
+        if !should_keep {
+            keep[index] = false;
+        }
+    }
+
+    let mut idx = 0;
+    policy.rules.retain(|_| {
+        let retain = keep[idx];
+        idx += 1;
+        retain
+    });
+}
+
+fn empty_policy() -> Policy {
+    Policy {
+        mode: Mode::Enforce,
+        rules: vec![
+            Permission::FsDefault(FsDefault::Strict),
+            Permission::NetDefault(NetDefault::Deny),
+            Permission::ExecDefault(ExecDefault::Allowlist),
+        ],
+    }
+}
+
+#[derive(Deserialize)]
+struct CargoMetadata {
+    packages: Vec<CargoPackage>,
+    workspace_members: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct CargoPackage {
+    id: String,
+    name: String,
+    manifest_path: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+    use std::fs::write;
+
+    fn exec_paths(layout: &MapsLayout) -> Vec<String> {
+        layout
+            .exec_allowlist
+            .iter()
+            .map(|entry| {
+                let len = entry
+                    .path
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(entry.path.len());
+                String::from_utf8_lossy(&entry.path[..len]).into_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_merges_syscalls_and_allow_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+
+        write(
+            "warden.toml",
+            r#"mode = "enforce"
+fs.default = "strict"
+net.default = "deny"
+exec.default = "allowlist"
+
+[allow.exec]
+allowed = ["/usr/bin/rustc"]
+"#,
+        )
+        .unwrap();
+
+        let p1 = dir.path().join("p1.toml");
+        write(
+            &p1,
+            r#"mode = "enforce"
+fs.default = "strict"
+net.default = "deny"
+exec.default = "allowlist"
+
+[syscall]
+deny = ["clone"]
+
+[allow.exec]
+allowed = ["/bin/bash"]
+"#,
+        )
+        .unwrap();
+
+        let p2 = dir.path().join("p2.toml");
+        write(
+            &p2,
+            r#"mode = "enforce"
+fs.default = "strict"
+net.default = "deny"
+exec.default = "allowlist"
+
+[syscall]
+deny = ["execve"]
+"#,
+        )
+        .unwrap();
+
+        let paths = [p1.to_str().unwrap().into(), p2.to_str().unwrap().into()];
+        let allow = vec!["/usr/bin/rustc".to_string(), "/usr/bin/git".to_string()];
+        let isolation = setup_isolation(&allow, &paths, None).unwrap();
+
+        assert_eq!(isolation.mode, Mode::Enforce);
+        assert!(isolation.syscall_deny.contains(&"clone".to_string()));
+        assert!(isolation.syscall_deny.contains(&"execve".to_string()));
+        assert_eq!(isolation.syscall_deny.len(), 2);
+
+        let exec = exec_paths(&isolation.maps_layout);
+        assert!(exec.contains(&"/usr/bin/rustc".to_string()));
+        assert!(exec.contains(&"/bin/bash".to_string()));
+        assert!(exec.contains(&"/usr/bin/git".to_string()));
+        assert_eq!(exec.len(), 3);
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_defaults_to_empty_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+
+        let isolation = setup_isolation(&[], &[], None).unwrap();
+
+        assert_eq!(isolation.mode, Mode::Enforce);
+        assert!(isolation.syscall_deny.is_empty());
+        assert!(isolation.maps_layout.exec_allowlist.is_empty());
+        assert!(isolation.maps_layout.net_rules.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_uses_cli_allow_when_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+
+        let allow = vec!["/bin/bash".to_string()];
+        let isolation = setup_isolation(&allow, &[], None).unwrap();
+
+        assert_eq!(isolation.mode, Mode::Enforce);
+        let exec = exec_paths(&isolation.maps_layout);
+        assert_eq!(exec, vec!["/bin/bash".to_string()]);
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_applies_mode_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+
+        write(
+            "warden.toml",
+            r#"mode = "enforce"
+fs.default = "unrestricted"
+net.default = "allow"
+exec.default = "allow"
+"#,
+        )
+        .unwrap();
+
+        let isolation = setup_isolation(&[], &[], Some(Mode::Observe)).unwrap();
+
+        assert_eq!(isolation.mode, Mode::Observe);
+        assert!(isolation.maps_layout.exec_allowlist.is_empty());
+        assert!(isolation.maps_layout.net_rules.is_empty());
+        assert!(isolation.maps_layout.fs_rules.is_empty());
+    }
+}
