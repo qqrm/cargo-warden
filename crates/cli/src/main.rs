@@ -191,12 +191,10 @@ fn load_default_policy() -> io::Result<Policy> {
 }
 
 fn load_workspace_policy() -> io::Result<Option<Policy>> {
-    let path = Path::new("workspace.warden.toml");
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err),
+    let Some(path) = find_workspace_file("workspace.warden.toml")? else {
+        return Ok(None);
     };
+    let text = std::fs::read_to_string(&path)?;
     let workspace: WorkspacePolicy = toml::from_str(&text).map_err(|err| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -209,6 +207,26 @@ fn load_workspace_policy() -> io::Result<Option<Policy>> {
         None => workspace.root.clone(),
     };
     Ok(Some(policy))
+}
+
+fn find_workspace_file(name: &str) -> io::Result<Option<PathBuf>> {
+    let mut dir = std::env::current_dir()?;
+    loop {
+        let candidate = dir.join(name);
+        match std::fs::metadata(&candidate) {
+            Ok(meta) => {
+                if meta.is_file() {
+                    return Ok(Some(candidate));
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    Ok(None)
 }
 
 fn load_policy(path: &Path) -> io::Result<Policy> {
@@ -234,15 +252,11 @@ fn determine_active_workspace_member() -> io::Result<Option<String>> {
 }
 
 fn workspace_member_from_env() -> Option<String> {
-    const VARS: [&str; 2] = ["CARGO_PRIMARY_PACKAGE", "CARGO_PKG_NAME"];
-    for var in VARS {
-        if let Ok(value) = std::env::var(var)
-            && let Some(name) = parse_workspace_member_value(&value)
-        {
-            return Some(name);
-        }
+    if let Ok(value) = std::env::var("CARGO_PRIMARY_PACKAGE") {
+        parse_workspace_member_value(&value)
+    } else {
+        None
     }
-    None
 }
 
 fn parse_workspace_member_value(value: &str) -> Option<String> {

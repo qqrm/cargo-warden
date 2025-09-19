@@ -7,6 +7,57 @@ PUSH_URL="${REMOTE_PUSH_URL:-}"
 BASE_URL="${REMOTE_URL:-}"
 DEFAULT_BRANCH="${REMOTE_BRANCH:-}"
 
+ensure_libseccomp_dev() {
+  if ! command -v dpkg >/dev/null 2>&1; then
+    return
+  fi
+
+  if dpkg -s libseccomp-dev >/dev/null 2>&1; then
+    return
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "libseccomp-dev is required but apt-get is unavailable; please install it manually." >&2
+    return
+  fi
+
+  local need_sudo=0
+  if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+    if command -v sudo >/dev/null 2>&1; then
+      need_sudo=1
+    else
+      echo "libseccomp-dev is required but root privileges are unavailable; please install it manually." >&2
+      return
+    fi
+  fi
+
+  echo "Installing libseccomp-dev..." >&2
+  local -a runner=()
+  if (( need_sudo )); then
+    runner+=(sudo)
+  fi
+  if [[ -z "${DEBIAN_FRONTEND:-}" ]]; then
+    runner+=(env DEBIAN_FRONTEND=noninteractive)
+  fi
+
+  "${runner[@]}" apt-get update
+  "${runner[@]}" apt-get install -y libseccomp-dev
+}
+
+install_actionlint() {
+  if command -v actionlint >/dev/null 2>&1; then
+    return
+  fi
+
+  echo "Installing actionlint..." >&2
+  curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash \
+    | bash -s -- latest "$HOME/.local/bin"
+  export PATH="$HOME/.local/bin:$PATH"
+}
+
+ensure_libseccomp_dev
+install_actionlint
+
 current_fetch=""
 if git remote get-url "$REMOTE_NAME" >/dev/null 2>&1; then
   current_fetch=$(git remote get-url "$REMOTE_NAME")

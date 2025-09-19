@@ -391,52 +391,6 @@ static mut EVENTS: EventsMap = events_map();
 static EVENTS: EventsMap = events_map();
 
 #[cfg(target_arch = "bpf")]
-    NET_RULES.get(index)
-}
-
-#[cfg(target_arch = "bpf")]
-unsafe fn load_net_parent(index: u32) -> Option<bpf_api::NetParentEntry> {
-    NET_PARENTS.get(index).copied()
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-unsafe fn load_net_parent(index: u32) -> Option<bpf_api::NetParentEntry> {
-    NET_PARENTS.get(index)
-}
-
-#[cfg(target_arch = "bpf")]
-unsafe fn load_fs_rule(index: u32) -> Option<bpf_api::FsRuleEntry> {
-    FS_RULES.get(index).copied()
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-unsafe fn load_fs_rule(index: u32) -> Option<bpf_api::FsRuleEntry> {
-    FS_RULES.get(index)
-}
-=======
-#[map(name = "EVENT_COUNTS")]
-static mut EVENT_COUNTS: EventCountsMap = event_counts_map();
-
-#[cfg(any(test, feature = "fuzzing"))]
-static EVENT_COUNTS: EventCountsMap = event_counts_map();
-
-#[cfg(target_arch = "bpf")]
-#[map(name = "MODE_FLAGS")]
-static mut MODE_FLAGS: ModeFlagsMap = mode_flags_map();
-
-#[cfg(any(test, feature = "fuzzing"))]
-static MODE_FLAGS: ModeFlagsMap = mode_flags_map();
-
-#[cfg(target_arch = "bpf")]
-#[map(name = "FS_RULES")]
-static mut FS_RULES: FsRulesMap = fs_rules_ 
-#[cfg(any(test, feature = "fuzzing"))]
-static FS_RULES: FsRulesMap = fs_rules_map();
-
-#[cfg(target_arch = "bpf")]
-#[map(name
-
-#[cfg(target_arch = "bpf")]
 unsafe fn load_mode_flags() -> u32 {
     MODE_FLAGS.get(0).copied().unwrap_or(0)
 }
