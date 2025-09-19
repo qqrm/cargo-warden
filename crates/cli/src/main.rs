@@ -1,11 +1,13 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use event_reporting::{EventRecord, export_sarif};
-use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy};
+use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy, WorkspacePolicy};
 use qqrm_policy_compiler::{self, MapsLayout};
+use serde::Deserialize;
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, exit};
 
 use sandbox_runtime::Sandbox;
@@ -176,12 +178,36 @@ fn setup_isolation(
 }
 
 fn load_default_policy() -> io::Result<Policy> {
+    if let Some(policy) = load_workspace_policy()? {
+        return Ok(policy);
+    }
     let path = Path::new("warden.toml");
     match std::fs::read_to_string(path) {
         Ok(text) => parse_policy_from_str(path, &text),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(empty_policy()),
         Err(err) => Err(err),
     }
+}
+
+fn load_workspace_policy() -> io::Result<Option<Policy>> {
+    let path = Path::new("workspace.warden.toml");
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let workspace: WorkspacePolicy = toml::from_str(&text).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{}: {err}", path.display()),
+        )
+    })?;
+    let member = determine_active_workspace_member()?;
+    let policy = match member {
+        Some(member) => workspace.policy_for(&member),
+        None => workspace.root.clone(),
+    };
+    Ok(Some(policy))
 }
 
 fn load_policy(path: &Path) -> io::Result<Policy> {
@@ -196,6 +222,114 @@ fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
             format!("{}: {err}", path.display()),
         )
     })
+}
+
+fn determine_active_workspace_member() -> io::Result<Option<String>> {
+    if let Some(from_env) = workspace_member_from_env() {
+        return Ok(Some(from_env));
+    }
+    let metadata = load_cargo_metadata()?;
+    workspace_member_from_dir(&metadata)
+}
+
+fn workspace_member_from_env() -> Option<String> {
+    const VARS: [&str; 2] = ["CARGO_PRIMARY_PACKAGE", "CARGO_PKG_NAME"];
+    for var in VARS {
+        if let Ok(value) = std::env::var(var)
+            && let Some(name) = parse_workspace_member_value(&value)
+        {
+            return Some(name);
+        }
+    }
+    None
+}
+
+fn parse_workspace_member_value(value: &str) -> Option<String> {
+    let candidate = value
+        .split(|c: char| c.is_ascii_whitespace() || matches!(c, ';' | ','))
+        .find(|part| !part.is_empty())?
+        .trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    if let Some((_, fragment)) = candidate.rsplit_once('#') {
+        let name = fragment.split('@').next().unwrap_or(fragment).trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    if let Some((name, _)) = candidate.split_once('@') {
+        let trimmed = name.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    Some(candidate.to_string())
+}
+
+fn load_cargo_metadata() -> io::Result<CargoMetadata> {
+    let cargo: OsString = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let output = Command::new(cargo)
+        .arg("metadata")
+        .arg("--no-deps")
+        .arg("--format-version=1")
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(io::Error::other(format!("cargo metadata failed: {stderr}")));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+fn workspace_member_from_dir(metadata: &CargoMetadata) -> io::Result<Option<String>> {
+    let member_ids: HashSet<&str> = metadata
+        .workspace_members
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let cwd = std::env::current_dir()?;
+    let canonical_cwd = cwd.canonicalize().unwrap_or(cwd);
+    let mut best_match: Option<(String, usize, bool)> = None;
+
+    for pkg in &metadata.packages {
+        if !member_ids.contains(pkg.id.as_str()) {
+            continue;
+        }
+        let manifest_path = PathBuf::from(&pkg.manifest_path);
+        let Some(manifest_dir) = manifest_path.parent() else {
+            continue;
+        };
+        let canonical_dir = manifest_dir
+            .canonicalize()
+            .unwrap_or_else(|_| manifest_dir.to_path_buf());
+        if !canonical_cwd.starts_with(&canonical_dir) {
+            continue;
+        }
+        let exact = canonical_cwd == canonical_dir;
+        let depth = canonical_dir.components().count();
+        if let Some((_, current_depth, current_exact)) = &mut best_match {
+            if (*current_exact && !exact) || (*current_exact == exact && *current_depth >= depth) {
+                continue;
+            }
+        }
+        best_match = Some((pkg.name.clone(), depth, exact));
+    }
+
+    Ok(best_match.map(|(name, _, _)| name))
+}
+
+#[derive(Deserialize)]
+struct CargoMetadata {
+    packages: Vec<CargoPackage>,
+    workspace_members: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct CargoPackage {
+    id: String,
+    name: String,
+    manifest_path: PathBuf,
 }
 
 fn merge_policy(base: &mut Policy, extra: Policy) {
