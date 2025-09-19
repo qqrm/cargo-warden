@@ -1,4 +1,5 @@
 use bpf_api::{FS_READ, FS_WRITE, FsRuleEntry, NetParentEntry, NetRuleEntry};
+use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -28,8 +29,8 @@ impl LayoutRecorder {
         }))
     }
 
-    pub(crate) fn record(&mut self, layout: &MapsLayout) -> io::Result<()> {
-        let snapshot = LayoutSnapshot::from(layout);
+    pub(crate) fn record(&mut self, layout: &MapsLayout, mode: Mode) -> io::Result<()> {
+        let snapshot = LayoutSnapshot::from_layout(layout, mode);
         serde_json::to_writer(&mut self.writer, &snapshot).map_err(io::Error::other)?;
         self.writer.write_all(b"\n")?;
         self.writer.flush()
@@ -39,6 +40,8 @@ impl LayoutRecorder {
 /// Snapshot of the policy layout emitted by the fake sandbox.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LayoutSnapshot {
+    pub mode: String,
+    pub mode_flag: Option<u32>,
     pub exec: Vec<String>,
     pub net: Vec<NetRuleSnapshot>,
     pub net_parents: Vec<NetParentSnapshot>,
@@ -71,9 +74,11 @@ pub struct FsRuleSnapshot {
     pub write: bool,
 }
 
-impl From<&MapsLayout> for LayoutSnapshot {
-    fn from(layout: &MapsLayout) -> Self {
+impl LayoutSnapshot {
+    pub(crate) fn from_layout(layout: &MapsLayout, mode: Mode) -> Self {
         Self {
+            mode: mode_to_string(mode),
+            mode_flag: layout.mode_flags.first().copied(),
             exec: layout
                 .exec_allowlist
                 .iter()
@@ -140,4 +145,12 @@ fn decode_net_addr(entry: &NetRuleEntry) -> String {
     } else {
         Ipv6Addr::from(entry.rule.addr).to_string()
     }
+}
+
+fn mode_to_string(mode: Mode) -> String {
+    match mode {
+        Mode::Observe => "observe",
+        Mode::Enforce => "enforce",
+    }
+    .to_string()
 }

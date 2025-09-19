@@ -41,12 +41,12 @@ impl FakeSandbox {
     pub(crate) fn run(
         &mut self,
         mut command: Command,
-        _mode: Mode,
+        mode: Mode,
         _deny: &[String],
         layout: &MapsLayout,
     ) -> io::Result<ExitStatus> {
         if let Some(recorder) = &mut self.layout_recorder {
-            recorder.record(layout)?;
+            recorder.record(layout, mode)?;
         }
         command.status()
     }

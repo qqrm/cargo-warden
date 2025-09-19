@@ -17,6 +17,12 @@ pub const FS_RULES_CAPACITY: u32 = 256;
 pub const EVENT_RINGBUF_CAPACITY_BYTES: u32 = 4096;
 /// Number of slots tracked for emitted event counters.
 pub const EVENT_COUNT_SLOTS: u32 = 1;
+/// Number of entries in the mode flags map.
+pub const MODE_FLAGS_CAPACITY: u32 = 1;
+/// Flag value stored in the mode map when running in observe mode.
+pub const MODE_FLAG_OBSERVE: u32 = 0;
+/// Flag value stored in the mode map when running in enforce mode.
+pub const MODE_FLAG_ENFORCE: u32 = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
