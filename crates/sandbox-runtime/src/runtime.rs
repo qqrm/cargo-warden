@@ -40,10 +40,11 @@ impl Sandbox {
         mode: Mode,
         deny: &[String],
         layout: &MapsLayout,
+        allowed_env: &[String],
     ) -> io::Result<ExitStatus> {
         match &mut self.inner {
-            SandboxImpl::Real(real) => real.run(command, mode, deny, layout),
-            SandboxImpl::Fake(fake) => fake.run(command, mode, deny, layout),
+            SandboxImpl::Real(real) => real.run(command, mode, deny, layout, allowed_env),
+            SandboxImpl::Fake(fake) => fake.run(command, mode, deny, layout, allowed_env),
         }
     }
 

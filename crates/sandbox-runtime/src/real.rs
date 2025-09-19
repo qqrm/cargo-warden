@@ -3,7 +3,7 @@ use crate::bpf::{load_bpf, take_events_ring};
 use crate::cgroup::Cgroup;
 use crate::maps::{populate_maps, write_mode_flag};
 use crate::seccomp::apply_seccomp;
-use crate::util::events_path;
+use crate::util::{events_path, filter_environment};
 use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
 use aya::programs::{CgroupAttachMode, CgroupSockAddr, Lsm};
@@ -54,8 +54,12 @@ impl RealSandbox {
         mode: Mode,
         deny: &[String],
         layout: &MapsLayout,
+        allowed_env: &[String],
     ) -> io::Result<ExitStatus> {
         let mut command = command;
+        let filtered_env = filter_environment(allowed_env);
+        command.env_clear();
+        command.envs(filtered_env);
         self.install_pre_exec(&mut command, deny, layout.clone(), mode)?;
         let mut child = command.spawn()?;
         child.wait()

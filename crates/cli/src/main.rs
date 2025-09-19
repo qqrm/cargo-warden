@@ -77,6 +77,7 @@ struct IsolationConfig {
     mode: Mode,
     syscall_deny: Vec<String>,
     maps_layout: MapsLayout,
+    allowed_env: Vec<String>,
 }
 
 fn main() {
@@ -165,13 +166,18 @@ fn setup_isolation(
         eprintln!("warning: {warn}");
     }
 
-    let layout = qqrm_policy_compiler::compile(&policy)
+    let compiled = qqrm_policy_compiler::compile(&policy)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    let qqrm_policy_compiler::CompiledPolicy {
+        layout,
+        allowed_env,
+    } = compiled;
 
     Ok(IsolationConfig {
         mode: policy.mode,
         syscall_deny: policy.syscall_deny().cloned().collect(),
         maps_layout: layout,
+        allowed_env,
     })
 }
 
@@ -315,6 +321,7 @@ fn run_in_sandbox(
         mode,
         &isolation.syscall_deny,
         &isolation.maps_layout,
+        &isolation.allowed_env,
     );
     let shutdown_result = sandbox.shutdown();
     let status = match run_result {
@@ -715,6 +722,9 @@ exec.default = "allowlist"
 
 [allow.exec]
 allowed = ["/usr/bin/rustc"]
+
+[allow.env]
+read = ["ALLOWED_BASE"]
 "#,
         )
         .unwrap();
@@ -732,6 +742,9 @@ deny = ["clone"]
 
 [allow.exec]
 allowed = ["/bin/bash"]
+
+[allow.env]
+read = ["ALLOWED_EXTRA", "ALLOWED_BASE"]
 "#,
         )
         .unwrap();
@@ -764,6 +777,11 @@ deny = ["execve"]
         assert!(exec.contains(&"/bin/bash".to_string()));
         assert!(exec.contains(&"/usr/bin/git".to_string()));
         assert_eq!(exec.len(), 3);
+
+        assert_eq!(
+            isolation.allowed_env,
+            vec!["ALLOWED_EXTRA".to_string(), "ALLOWED_BASE".to_string()]
+        );
     }
 
     #[test]
@@ -778,6 +796,7 @@ deny = ["execve"]
         assert!(isolation.syscall_deny.is_empty());
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
         assert!(isolation.maps_layout.net_rules.is_empty());
+        assert!(isolation.allowed_env.is_empty());
     }
 
     #[test]
@@ -792,6 +811,7 @@ deny = ["execve"]
         assert_eq!(isolation.mode, Mode::Enforce);
         let exec = exec_paths(&isolation.maps_layout);
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
+        assert!(isolation.allowed_env.is_empty());
     }
 
     #[test]
@@ -818,5 +838,6 @@ exec.default = "allow"
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
         assert!(isolation.maps_layout.net_rules.is_empty());
         assert!(isolation.maps_layout.fs_rules.is_empty());
+        assert!(isolation.allowed_env.is_empty());
     }
 }

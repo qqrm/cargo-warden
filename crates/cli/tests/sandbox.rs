@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use bpf_api::MODE_FLAG_ENFORCE;
+use predicates::prelude::*;
 use sandbox_runtime::LayoutSnapshot;
 use std::fs;
 use tempfile::tempdir;
@@ -110,5 +111,58 @@ read_extra = ["/etc/ssl/certs"]
         "expected fake cgroup removal: {}",
         cgroup_path.display()
     );
+    Ok(())
+}
+
+#[test]
+fn run_filters_environment_variables() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempdir()?;
+    let events_path = dir.path().join("warden-events.jsonl");
+    let cgroup_path = dir.path().join("fake-cgroup");
+    let layout_path = dir.path().join("fake-layout.jsonl");
+    let policy_path = dir.path().join("policy.toml");
+
+    fs::write(
+        &policy_path,
+        r#"mode = "enforce"
+
+[fs]
+default = "strict"
+
+[net]
+default = "deny"
+
+[exec]
+default = "allowlist"
+
+[allow.exec]
+allowed = ["/usr/bin/env"]
+
+[allow.env]
+read = ["ALLOWED_VAR"]
+"#,
+    )?;
+
+    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    cmd.arg("run")
+        .arg("--policy")
+        .arg(&policy_path)
+        .arg("--")
+        .arg("/usr/bin/env")
+        .current_dir(dir.path())
+        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
+        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
+        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
+        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path)
+        .env("ALLOWED_VAR", "visible")
+        .env("SECRET_VAR", "hidden");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("ALLOWED_VAR=visible"))
+        .stdout(predicate::str::contains("PATH="))
+        .stdout(predicate::str::contains("SECRET_VAR=").not())
+        .stdout(predicate::str::contains("QQRM_WARDEN_FAKE_SANDBOX=").not());
+
     Ok(())
 }
