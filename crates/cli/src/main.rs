@@ -79,6 +79,7 @@ struct IsolationConfig {
     mode: Mode,
     syscall_deny: Vec<String>,
     maps_layout: MapsLayout,
+    allowed_env: Vec<String>,
 }
 
 fn main() {
@@ -167,13 +168,17 @@ fn setup_isolation(
         eprintln!("warning: {warn}");
     }
 
-    let layout = qqrm_policy_compiler::compile(&policy)
+    let qqrm_policy_compiler::CompiledPolicy {
+        maps_layout,
+        allowed_env,
+    } = qqrm_policy_compiler::compile(&policy)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
     Ok(IsolationConfig {
         mode: policy.mode,
         syscall_deny: policy.syscall_deny().cloned().collect(),
-        maps_layout: layout,
+        maps_layout,
+        allowed_env,
     })
 }
 
@@ -190,24 +195,45 @@ fn load_default_policy() -> io::Result<Policy> {
 }
 
 fn load_workspace_policy() -> io::Result<Option<Policy>> {
-    let path = Path::new("workspace.warden.toml");
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err),
+    let Some(path) = find_workspace_policy_file()? else {
+        return Ok(None);
     };
+    let text = std::fs::read_to_string(&path)?;
     let workspace: WorkspacePolicy = toml::from_str(&text).map_err(|err| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("{}: {err}", path.display()),
         )
     })?;
-    let member = determine_active_workspace_member()?;
+    let workspace_root = path
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let member = determine_active_workspace_member_in_root(&workspace_root)?;
     let policy = match member {
         Some(member) => workspace.policy_for(&member),
         None => workspace.root.clone(),
     };
     Ok(Some(policy))
+}
+
+fn find_workspace_policy_file() -> io::Result<Option<PathBuf>> {
+    let mut dir = std::env::current_dir()?;
+    loop {
+        let candidate = dir.join("workspace.warden.toml");
+        match std::fs::metadata(&candidate) {
+            Ok(meta) => {
+                if meta.is_file() {
+                    return Ok(Some(candidate));
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
+        }
+        if !dir.pop() {
+            return Ok(None);
+        }
+    }
 }
 
 fn load_policy(path: &Path) -> io::Result<Policy> {
@@ -224,11 +250,13 @@ fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
     })
 }
 
-fn determine_active_workspace_member() -> io::Result<Option<String>> {
-    if let Some(from_env) = workspace_member_from_env() {
+fn determine_active_workspace_member_in_root(root: &Path) -> io::Result<Option<String>> {
+    let metadata = load_cargo_metadata_from(root)?;
+    if let Some(from_env) = workspace_member_from_env()
+        && metadata.packages.iter().any(|pkg| pkg.name == from_env)
+    {
         return Ok(Some(from_env));
     }
-    let metadata = load_cargo_metadata()?;
     workspace_member_from_dir(&metadata)
 }
 
@@ -267,12 +295,15 @@ fn parse_workspace_member_value(value: &str) -> Option<String> {
     Some(candidate.to_string())
 }
 
-fn load_cargo_metadata() -> io::Result<CargoMetadata> {
+fn load_cargo_metadata_from(root: &Path) -> io::Result<CargoMetadata> {
+    let manifest = root.join("Cargo.toml");
     let cargo: OsString = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
     let output = Command::new(cargo)
         .arg("metadata")
         .arg("--no-deps")
         .arg("--format-version=1")
+        .arg("--manifest-path")
+        .arg(&manifest)
         .output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -308,10 +339,10 @@ fn workspace_member_from_dir(metadata: &CargoMetadata) -> io::Result<Option<Stri
         }
         let exact = canonical_cwd == canonical_dir;
         let depth = canonical_dir.components().count();
-        if let Some((_, current_depth, current_exact)) = &mut best_match {
-            if (*current_exact && !exact) || (*current_exact == exact && *current_depth >= depth) {
-                continue;
-            }
+        if let Some((_, current_depth, current_exact)) = &mut best_match
+            && ((*current_exact && !exact) || (*current_exact == exact && *current_depth >= depth))
+        {
+            continue;
         }
         best_match = Some((pkg.name.clone(), depth, exact));
     }
@@ -449,6 +480,7 @@ fn run_in_sandbox(
         mode,
         &isolation.syscall_deny,
         &isolation.maps_layout,
+        &isolation.allowed_env,
     );
     let shutdown_result = sandbox.shutdown();
     let status = match run_result {
@@ -898,6 +930,7 @@ deny = ["execve"]
         assert!(exec.contains(&"/bin/bash".to_string()));
         assert!(exec.contains(&"/usr/bin/git".to_string()));
         assert_eq!(exec.len(), 3);
+        assert!(isolation.allowed_env.is_empty());
     }
 
     #[test]
@@ -912,6 +945,7 @@ deny = ["execve"]
         assert!(isolation.syscall_deny.is_empty());
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
         assert!(isolation.maps_layout.net_rules.is_empty());
+        assert!(isolation.allowed_env.is_empty());
     }
 
     #[test]
@@ -926,6 +960,7 @@ deny = ["execve"]
         assert_eq!(isolation.mode, Mode::Enforce);
         let exec = exec_paths(&isolation.maps_layout);
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
+        assert!(isolation.allowed_env.is_empty());
     }
 
     #[test]
@@ -952,5 +987,31 @@ exec.default = "allow"
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
         assert!(isolation.maps_layout.net_rules.is_empty());
         assert!(isolation.maps_layout.fs_rules.is_empty());
+        assert!(isolation.allowed_env.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_collects_allowed_env_vars() {
+        use std::fs::write;
+
+        let dir = tempdir().unwrap();
+        let _guard = DirGuard::change_to(dir.path());
+
+        write(
+            "warden.toml",
+            r#"mode = "enforce"
+
+[allow.env]
+read = ["ALLOWED_A", "ALLOWED_B", "ALLOWED_A"]
+"#,
+        )
+        .unwrap();
+
+        let isolation = setup_isolation(&[], &[], None).unwrap();
+
+        let mut allowed = isolation.allowed_env;
+        allowed.sort();
+        assert_eq!(allowed, vec!["ALLOWED_A", "ALLOWED_B"]);
     }
 }

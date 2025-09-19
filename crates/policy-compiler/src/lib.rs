@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     net::SocketAddr,
     path::{Path, PathBuf},
 };
@@ -68,14 +69,28 @@ pub struct MapsBinary {
     pub fs_rules: Vec<u8>,
 }
 
+/// Result of compiling a [`Policy`], including serialized maps and environment data.
+#[derive(Debug, Clone)]
+pub struct CompiledPolicy {
+    /// Layout of BPF maps that should be populated before sandbox execution.
+    pub maps_layout: MapsLayout,
+    /// Environment variable names permitted to reach the sandboxed process.
+    pub allowed_env: Vec<String>,
+}
+
 /// Compile a [`Policy`] into serialized BPF map entries.
-pub fn compile(policy: &Policy) -> Result<MapsLayout, CompileError> {
-    Ok(MapsLayout {
+pub fn compile(policy: &Policy) -> Result<CompiledPolicy, CompileError> {
+    let maps_layout = MapsLayout {
         mode_flags: vec![mode_flag(policy.mode)],
         exec_allowlist: compile_exec_allowlist(policy)?,
         net_rules: compile_net_rules(policy)?,
         net_parents: Vec::new(),
         fs_rules: compile_fs_rules(policy)?,
+    };
+
+    Ok(CompiledPolicy {
+        maps_layout,
+        allowed_env: compile_allowed_env(policy),
     })
 }
 
@@ -186,6 +201,17 @@ fn slice_to_bytes<T: Copy>(slice: &[T]) -> Vec<u8> {
     unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const u8, len).to_vec() }
 }
 
+fn compile_allowed_env(policy: &Policy) -> Vec<String> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut allowed = Vec::new();
+    for name in policy.env_read_vars() {
+        if seen.insert(name.as_str()) {
+            allowed.push(name.clone());
+        }
+    }
+    allowed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,7 +238,8 @@ mod tests {
             ],
         };
 
-        let layout = compile(&policy).expect("compile");
+        let compiled = compile(&policy).expect("compile");
+        let layout = &compiled.maps_layout;
 
         assert_eq!(layout.mode_flags, vec![MODE_FLAG_ENFORCE]);
         assert_eq!(layout.exec_allowlist.len(), 2);
@@ -252,7 +279,8 @@ mod tests {
             ],
         };
 
-        let layout = compile(&policy).expect("compile");
+        let compiled = compile(&policy).expect("compile");
+        let layout = &compiled.maps_layout;
         let binary = layout.to_binary();
 
         assert_eq!(binary.mode_flags.len(), size_of::<u32>());
@@ -285,7 +313,25 @@ mod tests {
             rules: vec![],
         };
 
-        let layout = compile(&policy).expect("compile");
-        assert_eq!(layout.mode_flags, vec![MODE_FLAG_OBSERVE]);
+        let compiled = compile(&policy).expect("compile");
+        assert_eq!(compiled.maps_layout.mode_flags, vec![MODE_FLAG_OBSERVE]);
+        assert!(compiled.allowed_env.is_empty());
+    }
+
+    #[test]
+    fn compile_collects_env_allowlist_without_duplicates() {
+        use policy_core::Permission;
+
+        let policy = Policy {
+            mode: policy_core::Mode::Observe,
+            rules: vec![
+                Permission::EnvRead("ALPHA".into()),
+                Permission::EnvRead("BETA".into()),
+                Permission::EnvRead("ALPHA".into()),
+            ],
+        };
+
+        let compiled = compile(&policy).expect("compile");
+        assert_eq!(compiled.allowed_env, vec!["ALPHA", "BETA"]);
     }
 }

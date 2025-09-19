@@ -15,6 +15,48 @@ fn read_snapshots(path: &Path) -> Result<Vec<LayoutSnapshot>, Box<dyn std::error
 }
 
 #[test]
+fn run_fake_sandbox_filters_environment() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempdir()?;
+    let events_path = dir.path().join("warden-events.jsonl");
+    let layout_path = dir.path().join("fake-layout.jsonl");
+    let cgroup_path = dir.path().join("fake-cgroup");
+    let policy_path = dir.path().join("policy.toml");
+
+    fs::write(
+        &policy_path,
+        r#"mode = "enforce"
+
+[allow.env]
+read = ["ALLOWED_VAR"]
+"#,
+    )?;
+
+    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let output = cmd
+        .arg("run")
+        .arg("--policy")
+        .arg(&policy_path)
+        .arg("--")
+        .arg("env")
+        .current_dir(dir.path())
+        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
+        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
+        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
+        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path)
+        .env("ALLOWED_VAR", "visible")
+        .env("DENIED_VAR", "hidden")
+        .output()?;
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("ALLOWED_VAR=visible"));
+    assert!(!stdout.contains("DENIED_VAR="));
+    assert!(stdout.contains("PATH="));
+
+    Ok(())
+}
+
+#[test]
 fn run_fake_sandbox_records_layout() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempdir()?;
     let events_path = dir.path().join("warden-events.jsonl");
