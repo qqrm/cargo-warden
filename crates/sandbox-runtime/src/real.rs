@@ -51,11 +51,12 @@ impl RealSandbox {
     pub(crate) fn run(
         &self,
         command: Command,
-        _mode: Mode,
+        mode: Mode,
         deny: &[String],
         layout: &MapsLayout,
     ) -> io::Result<ExitStatus> {
         let mut command = command;
+        let _ = mode;
         self.install_pre_exec(&mut command, deny, layout.clone())?;
         let mut child = command.spawn()?;
         child.wait()

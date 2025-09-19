@@ -42,6 +42,7 @@ impl FakeSandbox {
         &mut self,
         mut command: Command,
         _mode: Mode,
+        _deny: &[String],
         layout: &MapsLayout,
     ) -> io::Result<ExitStatus> {
         if let Some(recorder) = &mut self.layout_recorder {

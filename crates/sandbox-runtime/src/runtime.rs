@@ -43,7 +43,7 @@ impl Sandbox {
     ) -> io::Result<ExitStatus> {
         match &mut self.inner {
             SandboxImpl::Real(real) => real.run(command, mode, deny, layout),
-            SandboxImpl::Fake(fake) => fake.run(command, mode, layout),
+            SandboxImpl::Fake(fake) => fake.run(command, mode, deny, layout),
         }
     }
 
