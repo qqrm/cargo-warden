@@ -1,2 +1,5 @@
 [hunspell]
 extra_dictionaries = ["./.config/tech.dic"]
+
+[hunspell.search]
+path = ["./.config"]

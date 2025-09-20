@@ -13,3 +13,13 @@ fuzzers
 subcommand
 systemd
 Filesystem
+GitHub
+RustSec
+xxhash
+libseccomp
+protobuf
+Nextest
+udeps
+llvm-cov
+workspace
+sandboxed
