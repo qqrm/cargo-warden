@@ -287,14 +287,18 @@ impl FsRules {
     where
         I: IntoIterator<Item = PathBuf>,
     {
-        self.write.extend(iter);
+        for path in iter {
+            self.insert_write_raw(path);
+        }
     }
 
     fn extend_reads<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = PathBuf>,
     {
-        self.read.extend(iter);
+        for path in iter {
+            self.insert_read_raw(path);
+        }
     }
 
     fn merge(&mut self, other: FsRules) {
@@ -365,7 +369,9 @@ impl NetRules {
     where
         I: IntoIterator<Item = String>,
     {
-        self.hosts.extend(iter);
+        for host in iter {
+            self.insert_raw(host);
+        }
     }
 
     fn merge(&mut self, other: NetRules) {
@@ -422,7 +428,9 @@ impl ExecRules {
     where
         I: IntoIterator<Item = String>,
     {
-        self.allowed.extend(iter);
+        for value in iter {
+            self.insert_raw(value);
+        }
     }
 
     fn merge(&mut self, other: ExecRules) {
@@ -461,7 +469,9 @@ impl SyscallRules {
     where
         I: IntoIterator<Item = String>,
     {
-        self.deny.extend(iter);
+        for name in iter {
+            self.insert_raw(name);
+        }
     }
 
     fn merge(&mut self, other: SyscallRules) {
@@ -979,17 +989,65 @@ read_extra = ["/tmp/path"]
     }
 
     #[test]
-    fn extend_exec_allowed_skips_duplicates() {
+    fn extend_exec_allowed_reports_duplicates() {
         let mut policy = Policy::new(Mode::Enforce);
         policy.extend_exec_allowed(vec!["/bin/bash".into(), "/bin/bash".into()]);
         let report = policy.validate();
-        assert!(
-            report
-                .errors
-                .iter()
-                .all(|e| !matches!(e, ValidationError::DuplicateExec(_)))
-        );
-        assert_eq!(policy.exec_allowed().count(), 1);
+        assert_eq!(report.errors.len(), 1);
+        assert!(matches!(
+            &report.errors[0],
+            ValidationError::DuplicateExec(dup) if dup == "/bin/bash"
+        ));
+    }
+
+    #[test]
+    fn extend_net_hosts_reports_duplicates() {
+        let mut policy = Policy::new(Mode::Enforce);
+        policy.extend_net_hosts(vec!["127.0.0.1:80".into(), "127.0.0.1:80".into()]);
+        let report = policy.validate();
+        assert_eq!(report.errors.len(), 1);
+        assert!(matches!(
+            &report.errors[0],
+            ValidationError::DuplicateNet(dup) if dup == "127.0.0.1:80"
+        ));
+    }
+
+    #[test]
+    fn extend_fs_writes_reports_duplicates() {
+        let mut policy = Policy::new(Mode::Enforce);
+        let path = PathBuf::from("/tmp/write");
+        policy.extend_fs_writes(vec![path.clone(), path.clone()]);
+        let report = policy.validate();
+        assert_eq!(report.errors.len(), 1);
+        assert!(matches!(
+            &report.errors[0],
+            ValidationError::DuplicateFsWrite(dup) if dup == "/tmp/write"
+        ));
+    }
+
+    #[test]
+    fn extend_fs_reads_reports_duplicates() {
+        let mut policy = Policy::new(Mode::Enforce);
+        let path = PathBuf::from("/tmp/read");
+        policy.extend_fs_reads(vec![path.clone(), path.clone()]);
+        let report = policy.validate();
+        assert_eq!(report.errors.len(), 1);
+        assert!(matches!(
+            &report.errors[0],
+            ValidationError::DuplicateFsRead(dup) if dup == "/tmp/read"
+        ));
+    }
+
+    #[test]
+    fn extend_syscall_deny_reports_duplicates() {
+        let mut policy = Policy::new(Mode::Enforce);
+        policy.extend_syscall_deny(vec!["clone".into(), "clone".into()]);
+        let report = policy.validate();
+        assert_eq!(report.errors.len(), 1);
+        assert!(matches!(
+            &report.errors[0],
+            ValidationError::DuplicateSyscall(dup) if dup == "clone"
+        ));
     }
 
     const WORKSPACE: &str = r#"
