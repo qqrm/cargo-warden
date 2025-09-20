@@ -302,7 +302,7 @@ deny = ["execve"]
         .unwrap();
 
         let paths = [p1.to_str().unwrap().into(), p2.to_str().unwrap().into()];
-        let allow = vec!["/usr/bin/rustc".to_string(), "/usr/bin/git".to_string()];
+        let allow = vec!["/usr/bin/git".to_string()];
         let isolation = setup_isolation(&allow, &paths, None).unwrap();
 
         assert_eq!(isolation.mode, Mode::Enforce);
@@ -367,5 +367,22 @@ exec.default = "allow"
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
         assert!(isolation.maps_layout.net_rules.is_empty());
         assert!(isolation.maps_layout.fs_rules.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_reports_duplicate_cli_allow() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+
+        let allow = vec!["/bin/bash".to_string(), "/bin/bash".to_string()];
+        let err = match setup_isolation(&allow, &[], None) {
+            Ok(_) => panic!("expected duplicate error"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        let message = err.to_string();
+        assert!(message.contains("duplicate exec allow rule: /bin/bash"));
     }
 }
