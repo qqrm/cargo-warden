@@ -24,7 +24,7 @@ jobs:
           components: rustfmt, clippy, llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       - run: ./scripts/check_path_versions.sh
-      - run: sudo apt-get update && sudo apt-get install -y pkg-config libseccomp-dev protobuf-compiler jq
+      - run: sudo apt-get update && sudo apt-get install -y pkg-config libseccomp-dev protobuf-compiler jq xxhash
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-machete
@@ -46,19 +46,95 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
-      - run: cargo fmt --all -- --check
-      - run: cargo check --tests --benches
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo nextest run
-      - run: cargo machete
+      - name: cargo fmt --all -- --check
+        id: cargo_fmt
+        run: cargo fmt --all -- --check
         continue-on-error: true
-      - run: cargo audit
-      - run: cargo deny check
-      - run: cargo llvm-cov --no-report
-      - run: cargo spellcheck --code 1
+      - name: cargo check --tests --benches
+        id: cargo_check
+        run: cargo check --tests --benches
+        continue-on-error: true
+      - name: cargo clippy --all-targets --all-features -- -D warnings
+        id: cargo_clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        continue-on-error: true
+      - name: cargo nextest run
+        id: cargo_nextest
+        run: cargo nextest run
+        continue-on-error: true
+      - name: cargo machete
+        id: cargo_machete
+        run: cargo machete
+        continue-on-error: true
+      - name: cargo audit
+        id: cargo_audit
+        run: cargo audit
+        continue-on-error: true
+      - name: cargo deny check
+        id: cargo_deny
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://github.com/RustSec/advisory-db"
+          NAME="${URL##*/}"
+          HASH=$(printf '%s' "$URL" | tr '[:upper:]' '[:lower:]' | xxh64sum | awk '{print $1}')
+          DB_DIR="$HOME/.cargo/advisory-dbs/${NAME}-${HASH}"
+          rm -rf "$DB_DIR"
+          mkdir -p "$(dirname "$DB_DIR")"
+          git clone --depth 1 "$URL" "$DB_DIR"
+          cargo deny check --disable-fetch
+        continue-on-error: true
+      - name: cargo llvm-cov --no-report
+        id: cargo_llvm_cov
+        run: cargo llvm-cov --no-report
+        continue-on-error: true
+      - name: cargo spellcheck --code 1
+        id: cargo_spellcheck
+        run: cargo spellcheck --code 1
         continue-on-error: true
       - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo +nightly udeps --all-targets --all-features
+      - name: cargo +nightly udeps --all-targets --all-features
+        id: cargo_udeps
+        run: cargo +nightly udeps --all-targets --all-features
+        continue-on-error: true
+      - name: Aggregate cargo-checks results
+        if: ${{ always() }}
+        run: |
+          declare -a failures=()
+
+          record_outcome() {
+            local outcome="$1"
+            local label="$2"
+            if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
+              failures+=("$label ($outcome)")
+            fi
+          }
+
+          record_outcome "${{ steps.cargo_fmt.outcome }}" "cargo fmt --all -- --check"
+          record_outcome "${{ steps.cargo_check.outcome }}" "cargo check --tests --benches"
+          record_outcome "${{ steps.cargo_clippy.outcome }}" "cargo clippy --all-targets --all-features -- -D warnings"
+          record_outcome "${{ steps.cargo_nextest.outcome }}" "cargo nextest run"
+          record_outcome "${{ steps.cargo_machete.outcome }}" "cargo machete"
+          record_outcome "${{ steps.cargo_audit.outcome }}" "cargo audit"
+          record_outcome "${{ steps.cargo_deny.outcome }}" "cargo deny check"
+          record_outcome "${{ steps.cargo_llvm_cov.outcome }}" "cargo llvm-cov --no-report"
+          record_outcome "${{ steps.cargo_spellcheck.outcome }}" "cargo spellcheck --code 1"
+          record_outcome "${{ steps.cargo_udeps.outcome }}" "cargo +nightly udeps --all-targets --all-features"
+
+          if [ "${#failures[@]}" -ne 0 ]; then
+            {
+              echo "## Failed checks"
+              for failure in "${failures[@]}"; do
+                echo "- ${failure}"
+              done
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            printf 'The following checks failed:\n' >&2
+            for failure in "${failures[@]}"; do
+              printf '  - %s\n' "$failure" >&2
+            done
+            exit 1
+          fi
 
   examples:
     strategy:

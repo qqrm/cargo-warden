@@ -14,3 +14,11 @@ members = [
     "crates/event-reporting",
 ]
 resolver = "2"
+
+[patch.crates-io]
+aya = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf" }
+aya-obj = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf" }
+aya-ebpf = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf", package = "aya-ebpf" }
+aya-ebpf-bindings = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf", package = "aya-ebpf-bindings" }
+aya-ebpf-cty = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf", package = "aya-ebpf-cty" }
+aya-ebpf-macros = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf", package = "aya-ebpf-macros" }
