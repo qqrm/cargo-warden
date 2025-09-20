@@ -72,17 +72,10 @@ jobs:
         continue-on-error: true
       - name: cargo deny check
         id: cargo_deny
-        shell: bash
         run: |
-          set -euo pipefail
-          URL="https://github.com/RustSec/advisory-db"
-          NAME="${URL##*/}"
-          HASH=$(printf '%s' "$URL" | tr '[:upper:]' '[:lower:]' | xxh64sum | awk '{print $1}')
-          DB_DIR="$HOME/.cargo/advisory-dbs/${NAME}-${HASH}"
-          rm -rf "$DB_DIR"
-          mkdir -p "$(dirname "$DB_DIR")"
-          git clone --depth 1 "$URL" "$DB_DIR"
-          cargo deny check --disable-fetch
+          set -eu;
+          cargo deny fetch;
+          cargo deny check --disable-fetch;
         continue-on-error: true
       - name: cargo llvm-cov --no-report
         id: cargo_llvm_cov
@@ -99,42 +92,45 @@ jobs:
         continue-on-error: true
       - name: Aggregate cargo-checks results
         if: ${{ always() }}
+        shell: bash
         run: |
-          declare -a failures=()
+          set -eu;
+          failures_file="$(mktemp)";
+          trap 'rm -f "$failures_file"' EXIT;
 
           record_outcome() {
-            local outcome="$1"
-            local label="$2"
+            outcome="$1";
+            label="$2";
             if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
-              failures+=("$label ($outcome)")
-            fi
-          }
+              printf '%s (%s)\n' "$label" "$outcome" >>"$failures_file";
+            fi;
+          };
 
-          record_outcome "${{ steps.cargo_fmt.outcome }}" "cargo fmt --all -- --check"
-          record_outcome "${{ steps.cargo_check.outcome }}" "cargo check --tests --benches"
-          record_outcome "${{ steps.cargo_clippy.outcome }}" "cargo clippy --all-targets --all-features -- -D warnings"
-          record_outcome "${{ steps.cargo_nextest.outcome }}" "cargo nextest run"
-          record_outcome "${{ steps.cargo_machete.outcome }}" "cargo machete"
-          record_outcome "${{ steps.cargo_audit.outcome }}" "cargo audit"
-          record_outcome "${{ steps.cargo_deny.outcome }}" "cargo deny check"
-          record_outcome "${{ steps.cargo_llvm_cov.outcome }}" "cargo llvm-cov --no-report"
-          record_outcome "${{ steps.cargo_spellcheck.outcome }}" "cargo spellcheck --code 1"
-          record_outcome "${{ steps.cargo_udeps.outcome }}" "cargo +nightly udeps --all-targets --all-features"
+          record_outcome "${{ steps.cargo_fmt.outcome }}" "cargo fmt --all -- --check";
+          record_outcome "${{ steps.cargo_check.outcome }}" "cargo check --tests --benches";
+          record_outcome "${{ steps.cargo_clippy.outcome }}" "cargo clippy --all-targets --all-features -- -D warnings";
+          record_outcome "${{ steps.cargo_nextest.outcome }}" "cargo nextest run";
+          record_outcome "${{ steps.cargo_machete.outcome }}" "cargo machete";
+          record_outcome "${{ steps.cargo_audit.outcome }}" "cargo audit";
+          record_outcome "${{ steps.cargo_deny.outcome }}" "cargo deny check";
+          record_outcome "${{ steps.cargo_llvm_cov.outcome }}" "cargo llvm-cov --no-report";
+          record_outcome "${{ steps.cargo_spellcheck.outcome }}" "cargo spellcheck --code 1";
+          record_outcome "${{ steps.cargo_udeps.outcome }}" "cargo +nightly udeps --all-targets --all-features";
 
-          if [ "${#failures[@]}" -ne 0 ]; then
+          if [ -s "$failures_file" ]; then
             {
-              echo "## Failed checks"
-              for failure in "${failures[@]}"; do
-                echo "- ${failure}"
-              done
-            } >> "$GITHUB_STEP_SUMMARY"
+              echo "## Failed checks";
+              while IFS= read -r line; do
+                echo "- $line";
+              done <"$failures_file";
+            } >>"$GITHUB_STEP_SUMMARY";
 
-            printf 'The following checks failed:\n' >&2
-            for failure in "${failures[@]}"; do
-              printf '  - %s\n' "$failure" >&2
-            done
-            exit 1
-          fi
+            printf 'The following checks failed:\n' >&2;
+            while IFS= read -r line; do
+              printf '  - %s\n' "$line" >&2;
+            done <"$failures_file";
+            exit 1;
+          fi;
 
   examples:
     strategy:
