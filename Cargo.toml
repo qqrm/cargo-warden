@@ -16,4 +16,4 @@ members = [
 resolver = "2"
 
 [patch.crates-io]
-aya-ebpf-macros = { path = "third-party/aya-ebpf-macros" }
+aya-ebpf-macros = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf", package = "aya-ebpf-macros" }
