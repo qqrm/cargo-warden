@@ -1,7 +1,6 @@
 use serde::Deserialize;
 use std::{
-    collections::{HashMap, HashSet},
-    hash::Hash,
+    collections::{BTreeSet, HashMap},
     path::PathBuf,
 };
 
@@ -67,91 +66,139 @@ pub enum Permission {
 #[derive(Debug, Clone)]
 pub struct Policy {
     pub mode: Mode,
-    pub rules: Vec<Permission>,
+    fs: FsRules,
+    net: NetRules,
+    exec: ExecRules,
+    syscall: SyscallRules,
+    env: EnvRules,
 }
 
 impl Policy {
+    pub fn new(mode: Mode) -> Self {
+        Self {
+            mode,
+            fs: FsRules::default(),
+            net: NetRules::default(),
+            exec: ExecRules::default(),
+            syscall: SyscallRules::default(),
+            env: EnvRules::default(),
+        }
+    }
+
+    pub fn with_defaults(
+        mode: Mode,
+        fs_default: FsDefault,
+        net_default: NetDefault,
+        exec_default: ExecDefault,
+    ) -> Self {
+        let mut policy = Self::new(mode);
+        policy.fs.default = fs_default;
+        policy.net.default = net_default;
+        policy.exec.default = exec_default;
+        policy
+    }
+
     pub fn from_toml_str(toml_str: &str) -> Result<Self, toml::de::Error> {
         toml::from_str(toml_str)
     }
 
-    pub fn rules(&self) -> &[Permission] {
-        &self.rules
+    pub fn merge(&mut self, other: Policy) {
+        self.mode = other.mode;
+        self.fs.merge(other.fs);
+        self.net.merge(other.net);
+        self.exec.merge(other.exec);
+        self.syscall.merge(other.syscall);
+        self.env.merge(other.env);
+    }
+
+    pub fn set_fs_default(&mut self, default: FsDefault) {
+        self.fs.default = default;
+    }
+
+    pub fn set_net_default(&mut self, default: NetDefault) {
+        self.net.default = default;
+    }
+
+    pub fn set_exec_default(&mut self, default: ExecDefault) {
+        self.exec.default = default;
+    }
+
+    pub fn extend_exec_allowed<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.exec.extend(iter);
+    }
+
+    pub fn extend_net_hosts<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.net.extend(iter);
+    }
+
+    pub fn extend_fs_writes<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
+        self.fs.extend_writes(iter);
+    }
+
+    pub fn extend_fs_reads<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
+        self.fs.extend_reads(iter);
+    }
+
+    pub fn extend_syscall_deny<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.syscall.extend(iter);
+    }
+
+    pub fn extend_env_read_vars<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.env.extend(iter);
     }
 
     pub fn fs_default(&self) -> FsDefault {
-        self.rules
-            .iter()
-            .rev()
-            .find_map(|perm| match perm {
-                Permission::FsDefault(default) => Some(*default),
-                _ => None,
-            })
-            .unwrap_or_default()
+        self.fs.default
     }
 
     pub fn net_default(&self) -> NetDefault {
-        self.rules
-            .iter()
-            .rev()
-            .find_map(|perm| match perm {
-                Permission::NetDefault(default) => Some(*default),
-                _ => None,
-            })
-            .unwrap_or_default()
+        self.net.default
     }
 
     pub fn exec_default(&self) -> ExecDefault {
-        self.rules
-            .iter()
-            .rev()
-            .find_map(|perm| match perm {
-                Permission::ExecDefault(default) => Some(*default),
-                _ => None,
-            })
-            .unwrap_or_default()
+        self.exec.default
     }
 
     pub fn fs_read_paths(&self) -> impl Iterator<Item = &PathBuf> {
-        self.rules.iter().filter_map(|perm| match perm {
-            Permission::FsRead(path) => Some(path),
-            _ => None,
-        })
+        self.fs.read_iter()
     }
 
     pub fn fs_write_paths(&self) -> impl Iterator<Item = &PathBuf> {
-        self.rules.iter().filter_map(|perm| match perm {
-            Permission::FsWrite(path) => Some(path),
-            _ => None,
-        })
+        self.fs.write_iter()
     }
 
     pub fn exec_allowed(&self) -> impl Iterator<Item = &String> {
-        self.rules.iter().filter_map(|perm| match perm {
-            Permission::Exec(path) => Some(path),
-            _ => None,
-        })
+        self.exec.iter()
     }
 
     pub fn net_hosts(&self) -> impl Iterator<Item = &String> {
-        self.rules.iter().filter_map(|perm| match perm {
-            Permission::NetConnect(host) => Some(host),
-            _ => None,
-        })
+        self.net.iter()
     }
 
     pub fn syscall_deny(&self) -> impl Iterator<Item = &String> {
-        self.rules.iter().filter_map(|perm| match perm {
-            Permission::SyscallDeny(name) => Some(name),
-            _ => None,
-        })
+        self.syscall.iter()
     }
 
     pub fn env_read_vars(&self) -> impl Iterator<Item = &String> {
-        self.rules.iter().filter_map(|perm| match perm {
-            Permission::EnvRead(name) => Some(name),
-            _ => None,
-        })
+        self.env.iter()
     }
 
     pub fn validate(&self) -> ValidationReport {
@@ -161,53 +208,295 @@ impl Policy {
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
 
-        let exec_allowed: Vec<String> = self.exec_allowed().cloned().collect();
-        if let Some(dup) = find_first_duplicate(&exec_allowed) {
-            errors.push(DuplicateExec(dup));
+        if let Some(dup) = self.exec.first_duplicate() {
+            errors.push(DuplicateExec(dup.clone()));
         }
-
-        let net_hosts: Vec<String> = self.net_hosts().cloned().collect();
-        if let Some(dup) = find_first_duplicate(&net_hosts) {
-            errors.push(DuplicateNet(dup));
+        if let Some(dup) = self.net.first_duplicate() {
+            errors.push(DuplicateNet(dup.clone()));
         }
-
-        let fs_writes: Vec<PathBuf> = self.fs_write_paths().cloned().collect();
-        if let Some(dup) = find_first_duplicate(&fs_writes) {
+        if let Some(dup) = self.fs.first_duplicate_write() {
             errors.push(DuplicateFsWrite(dup.to_string_lossy().into()));
         }
-
-        let fs_reads: Vec<PathBuf> = self.fs_read_paths().cloned().collect();
-        if let Some(dup) = find_first_duplicate(&fs_reads) {
+        if let Some(dup) = self.fs.first_duplicate_read() {
             errors.push(DuplicateFsRead(dup.to_string_lossy().into()));
         }
-
-        let syscalls: Vec<String> = self.syscall_deny().cloned().collect();
-        if let Some(dup) = find_first_duplicate(&syscalls) {
-            errors.push(DuplicateSyscall(dup));
+        if let Some(dup) = self.syscall.first_duplicate() {
+            errors.push(DuplicateSyscall(dup.clone()));
         }
 
-        let read_set: HashSet<_> = fs_reads.iter().cloned().collect();
-        for w in &fs_writes {
-            if read_set.contains(w) {
-                errors.push(FsReadWriteConflict(w.to_string_lossy().into()));
-            }
+        for conflict in self.fs.conflicts() {
+            errors.push(FsReadWriteConflict(conflict.to_string_lossy().into()));
         }
 
-        if self.exec_default() == ExecDefault::Allow && !exec_allowed.is_empty() {
+        if self.exec.default == ExecDefault::Allow && !self.exec.is_empty() {
             warnings.push(UnusedExecAllow);
         }
-
-        if self.net_default() == NetDefault::Allow && !net_hosts.is_empty() {
+        if self.net.default == NetDefault::Allow && !self.net.is_empty() {
             warnings.push(UnusedNetAllow);
         }
-
-        if self.fs_default() == FsDefault::Unrestricted
-            && (!fs_reads.is_empty() || !fs_writes.is_empty())
-        {
+        if self.fs.default == FsDefault::Unrestricted && !self.fs.is_empty() {
             warnings.push(UnusedFsAllow);
         }
 
         ValidationReport { errors, warnings }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FsRules {
+    default: FsDefault,
+    write: BTreeSet<PathBuf>,
+    read: BTreeSet<PathBuf>,
+    duplicate_write: BTreeSet<PathBuf>,
+    duplicate_read: BTreeSet<PathBuf>,
+}
+
+impl Default for FsRules {
+    fn default() -> Self {
+        Self {
+            default: FsDefault::Strict,
+            write: BTreeSet::new(),
+            read: BTreeSet::new(),
+            duplicate_write: BTreeSet::new(),
+            duplicate_read: BTreeSet::new(),
+        }
+    }
+}
+
+impl FsRules {
+    fn with_default(default: FsDefault) -> Self {
+        Self {
+            default,
+            ..Self::default()
+        }
+    }
+
+    fn insert_write_raw(&mut self, path: PathBuf) {
+        if !self.write.insert(path.clone()) {
+            self.duplicate_write.insert(path);
+        }
+    }
+
+    fn insert_read_raw(&mut self, path: PathBuf) {
+        if !self.read.insert(path.clone()) {
+            self.duplicate_read.insert(path);
+        }
+    }
+
+    fn extend_writes<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
+        self.write.extend(iter);
+    }
+
+    fn extend_reads<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = PathBuf>,
+    {
+        self.read.extend(iter);
+    }
+
+    fn merge(&mut self, other: FsRules) {
+        self.default = other.default;
+        self.write.extend(other.write);
+        self.read.extend(other.read);
+        self.duplicate_write.extend(other.duplicate_write);
+        self.duplicate_read.extend(other.duplicate_read);
+    }
+
+    fn write_iter(&self) -> impl Iterator<Item = &PathBuf> {
+        self.write.iter()
+    }
+
+    fn read_iter(&self) -> impl Iterator<Item = &PathBuf> {
+        self.read.iter()
+    }
+
+    fn first_duplicate_write(&self) -> Option<&PathBuf> {
+        self.duplicate_write.iter().next()
+    }
+
+    fn first_duplicate_read(&self) -> Option<&PathBuf> {
+        self.duplicate_read.iter().next()
+    }
+
+    fn conflicts(&self) -> impl Iterator<Item = &PathBuf> {
+        self.write.intersection(&self.read)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.write.is_empty() && self.read.is_empty()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct NetRules {
+    default: NetDefault,
+    hosts: BTreeSet<String>,
+    duplicates: BTreeSet<String>,
+}
+
+impl Default for NetRules {
+    fn default() -> Self {
+        Self {
+            default: NetDefault::Deny,
+            hosts: BTreeSet::new(),
+            duplicates: BTreeSet::new(),
+        }
+    }
+}
+
+impl NetRules {
+    fn with_default(default: NetDefault) -> Self {
+        Self {
+            default,
+            ..Self::default()
+        }
+    }
+
+    fn insert_raw(&mut self, host: String) {
+        if !self.hosts.insert(host.clone()) {
+            self.duplicates.insert(host);
+        }
+    }
+
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.hosts.extend(iter);
+    }
+
+    fn merge(&mut self, other: NetRules) {
+        self.default = other.default;
+        self.hosts.extend(other.hosts);
+        self.duplicates.extend(other.duplicates);
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &String> {
+        self.hosts.iter()
+    }
+
+    fn first_duplicate(&self) -> Option<&String> {
+        self.duplicates.iter().next()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.hosts.is_empty()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ExecRules {
+    default: ExecDefault,
+    allowed: BTreeSet<String>,
+    duplicates: BTreeSet<String>,
+}
+
+impl Default for ExecRules {
+    fn default() -> Self {
+        Self {
+            default: ExecDefault::Allowlist,
+            allowed: BTreeSet::new(),
+            duplicates: BTreeSet::new(),
+        }
+    }
+}
+
+impl ExecRules {
+    fn with_default(default: ExecDefault) -> Self {
+        Self {
+            default,
+            ..Self::default()
+        }
+    }
+
+    fn insert_raw(&mut self, value: String) {
+        if !self.allowed.insert(value.clone()) {
+            self.duplicates.insert(value);
+        }
+    }
+
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.allowed.extend(iter);
+    }
+
+    fn merge(&mut self, other: ExecRules) {
+        self.default = other.default;
+        self.allowed.extend(other.allowed);
+        self.duplicates.extend(other.duplicates);
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &String> {
+        self.allowed.iter()
+    }
+
+    fn first_duplicate(&self) -> Option<&String> {
+        self.duplicates.iter().next()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.allowed.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct SyscallRules {
+    deny: BTreeSet<String>,
+    duplicates: BTreeSet<String>,
+}
+
+impl SyscallRules {
+    fn insert_raw(&mut self, name: String) {
+        if !self.deny.insert(name.clone()) {
+            self.duplicates.insert(name);
+        }
+    }
+
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.deny.extend(iter);
+    }
+
+    fn merge(&mut self, other: SyscallRules) {
+        self.deny.extend(other.deny);
+        self.duplicates.extend(other.duplicates);
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &String> {
+        self.deny.iter()
+    }
+
+    fn first_duplicate(&self) -> Option<&String> {
+        self.duplicates.iter().next()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct EnvRules {
+    read: BTreeSet<String>,
+}
+
+impl EnvRules {
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.read.extend(iter);
+    }
+
+    fn merge(&mut self, other: EnvRules) {
+        self.read.extend(other.read);
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &String> {
+        self.read.iter()
     }
 }
 
@@ -247,18 +536,52 @@ impl From<RawPolicy> for Policy {
             allow,
         } = raw;
 
-        let mut rules = Vec::new();
-        rules.push(Permission::FsDefault(fs.default));
-        rules.push(Permission::NetDefault(net.default));
-        rules.push(Permission::ExecDefault(exec.default));
-        rules.extend(allow.fs.read_extra.into_iter().map(Permission::FsRead));
-        rules.extend(allow.fs.write_extra.into_iter().map(Permission::FsWrite));
-        rules.extend(allow.net.hosts.into_iter().map(Permission::NetConnect));
-        rules.extend(allow.exec.allowed.into_iter().map(Permission::Exec));
-        rules.extend(allow.env.read.into_iter().map(Permission::EnvRead));
-        rules.extend(syscall.deny.into_iter().map(Permission::SyscallDeny));
+        let RawAllowSection {
+            exec: RawExecAllow {
+                allowed: exec_allowed,
+            },
+            net: RawNetAllow { hosts },
+            fs: RawFsAllow {
+                write_extra,
+                read_extra,
+            },
+            env: RawEnvAllow { read: env_read },
+        } = allow;
 
-        Policy { mode, rules }
+        let mut fs_rules = FsRules::with_default(fs.default);
+        for path in read_extra {
+            fs_rules.insert_read_raw(path);
+        }
+        for path in write_extra {
+            fs_rules.insert_write_raw(path);
+        }
+
+        let mut net_rules = NetRules::with_default(net.default);
+        for host in hosts {
+            net_rules.insert_raw(host);
+        }
+
+        let mut exec_rules = ExecRules::with_default(exec.default);
+        for bin in exec_allowed {
+            exec_rules.insert_raw(bin);
+        }
+
+        let mut syscall_rules = SyscallRules::default();
+        for name in syscall.deny {
+            syscall_rules.insert_raw(name);
+        }
+
+        let mut env_rules = EnvRules::default();
+        env_rules.extend(env_read);
+
+        Policy {
+            mode,
+            fs: fs_rules,
+            net: net_rules,
+            exec: exec_rules,
+            syscall: syscall_rules,
+            env: env_rules,
+        }
     }
 }
 
@@ -445,65 +768,34 @@ pub struct ValidationReport {
     pub warnings: Vec<ValidationWarning>,
 }
 
-fn find_first_duplicate<T>(items: &[T]) -> Option<T>
-where
-    T: Eq + Hash + Clone,
-{
-    let mut seen = HashSet::new();
-    for item in items {
-        if !seen.insert(item.clone()) {
-            return Some(item.clone());
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
     use std::collections::HashSet;
+    use std::path::PathBuf;
 
-    fn slow_first_duplicate<T>(items: &[T]) -> Option<T>
-    where
-        T: Eq + Clone,
-    {
-        for j in 0..items.len() {
-            for i in 0..j {
-                if items[i] == items[j] {
-                    return Some(items[j].clone());
-                }
-            }
-        }
-        None
-    }
-
-    fn base_policy() -> Policy {
-        Policy {
+    fn policy_from_exec_allowed(allowed: Vec<String>) -> Policy {
+        Policy::from(RawPolicy {
             mode: Mode::Enforce,
-            rules: vec![
-                Permission::FsDefault(FsDefault::Strict),
-                Permission::NetDefault(NetDefault::Deny),
-                Permission::ExecDefault(ExecDefault::Allowlist),
-            ],
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn first_duplicate_matches_naive(xs in proptest::collection::vec(any::<u8>(), 0..100)) {
-            assert_eq!(find_first_duplicate(&xs), slow_first_duplicate(&xs));
-        }
+            fs: RawFsPolicy::default(),
+            net: RawNetPolicy::default(),
+            exec: RawExecPolicy::default(),
+            syscall: RawSyscallPolicy::default(),
+            allow: RawAllowSection {
+                exec: RawExecAllow { allowed },
+                net: RawNetAllow::default(),
+                fs: RawFsAllow::default(),
+                env: RawEnvAllow::default(),
+            },
+        })
     }
 
     proptest! {
         #[test]
         fn exec_duplicates_flagged(xs in proptest::collection::vec(any::<u8>(), 0..20)) {
             let allowed: Vec<String> = xs.iter().map(|b| b.to_string()).collect();
-            let mut policy = base_policy();
-            policy
-                .rules
-                .extend(allowed.iter().cloned().map(Permission::Exec));
+            let policy = policy_from_exec_allowed(allowed.clone());
             let report = policy.validate();
             let mut seen = HashSet::new();
             let has_dup = allowed.iter().any(|x| !seen.insert(x));
@@ -644,6 +936,60 @@ read_extra = ["/tmp/path"]
                 .iter()
                 .any(|e| matches!(e, ValidationError::FsReadWriteConflict(_)))
         );
+    }
+
+    #[test]
+    fn merge_combines_rules_and_defaults() {
+        let mut base = Policy::new(Mode::Enforce);
+        base.extend_exec_allowed(vec!["/usr/bin/rustc".into()]);
+        base.extend_net_hosts(vec!["127.0.0.1:3000".into()]);
+        base.extend_fs_writes(vec![PathBuf::from("/tmp/logs")]);
+
+        let mut extra = Policy::with_defaults(
+            Mode::Observe,
+            FsDefault::Unrestricted,
+            NetDefault::Allow,
+            ExecDefault::Allow,
+        );
+        extra.extend_exec_allowed(vec!["/usr/bin/rustc".into(), "/bin/bash".into()]);
+        extra.extend_syscall_deny(vec!["clone".into()]);
+
+        base.merge(extra);
+
+        let report = base.validate();
+        assert!(
+            report
+                .errors
+                .iter()
+                .all(|e| !matches!(e, ValidationError::DuplicateExec(_)))
+        );
+        assert_eq!(base.mode, Mode::Observe);
+        assert_eq!(base.fs_default(), FsDefault::Unrestricted);
+        assert_eq!(base.net_default(), NetDefault::Allow);
+        assert_eq!(base.exec_default(), ExecDefault::Allow);
+        let exec: Vec<_> = base.exec_allowed().cloned().collect();
+        assert!(exec.contains(&"/usr/bin/rustc".into()));
+        assert!(exec.contains(&"/bin/bash".into()));
+        assert!(base.net_hosts().any(|host| host == "127.0.0.1:3000"));
+        assert!(base.syscall_deny().any(|name| name == "clone"));
+        assert!(
+            base.fs_write_paths()
+                .any(|path| path == &PathBuf::from("/tmp/logs"))
+        );
+    }
+
+    #[test]
+    fn extend_exec_allowed_skips_duplicates() {
+        let mut policy = Policy::new(Mode::Enforce);
+        policy.extend_exec_allowed(vec!["/bin/bash".into(), "/bin/bash".into()]);
+        let report = policy.validate();
+        assert!(
+            report
+                .errors
+                .iter()
+                .all(|e| !matches!(e, ValidationError::DuplicateExec(_)))
+        );
+        assert_eq!(policy.exec_allowed().count(), 1);
     }
 
     const WORKSPACE: &str = r#"
