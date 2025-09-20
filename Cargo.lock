@@ -1153,6 +1153,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "qqrm-agent-lite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aya",
+ "event-reporting",
+ "futures-core",
+ "futures-util",
+ "libc",
+ "log",
+ "prometheus",
+ "prost",
+ "qqrm-bpf-api",
+ "serde_json",
+ "serial_test",
+ "systemd-journal-logger",
+ "tempfile",
+ "tiny_http",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-build",
+]
+
+[[package]]
 name = "qqrm-bpf-api"
 version = "0.1.0"
 

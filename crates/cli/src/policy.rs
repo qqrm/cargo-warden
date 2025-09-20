@@ -1,4 +1,4 @@
-use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Permission, Policy, WorkspacePolicy};
+use policy_core::{Mode, Policy, WorkspacePolicy};
 use qqrm_policy_compiler::{self, CompiledPolicy, MapsLayout};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -23,13 +23,10 @@ pub(crate) fn setup_isolation(
         let extra = load_policy(Path::new(path))?;
         merge_policy(&mut policy, extra);
     }
-    policy
-        .rules
-        .extend(allow.iter().cloned().map(Permission::Exec));
+    policy.extend_exec_allowed(allow.iter().cloned());
     if let Some(mode) = mode_override {
         policy.mode = mode;
     }
-    dedup_policy_lists(&mut policy);
 
     let report = policy.validate();
     if !report.errors.is_empty() {
@@ -213,56 +210,11 @@ fn workspace_member_from_dir(metadata: &CargoMetadata) -> io::Result<Option<Stri
 }
 
 fn merge_policy(base: &mut Policy, extra: Policy) {
-    let Policy { mode, mut rules } = extra;
-    base.mode = mode;
-    base.rules.append(&mut rules);
-}
-
-fn dedup_policy_lists(policy: &mut Policy) {
-    use Permission::*;
-
-    let mut keep = vec![true; policy.rules.len()];
-
-    let mut seen_exec: HashSet<&String> = HashSet::new();
-    let mut seen_net: HashSet<&String> = HashSet::new();
-    let mut seen_fs_write: HashSet<&std::path::PathBuf> = HashSet::new();
-    let mut seen_fs_read: HashSet<&std::path::PathBuf> = HashSet::new();
-    let mut seen_syscall: HashSet<&String> = HashSet::new();
-    let mut seen_env: HashSet<&String> = HashSet::new();
-
-    for (index, perm) in policy.rules.iter().enumerate().rev() {
-        let should_keep = match perm {
-            Exec(path) => seen_exec.insert(path),
-            NetConnect(host) => seen_net.insert(host),
-            FsWrite(path) => seen_fs_write.insert(path),
-            FsRead(path) => seen_fs_read.insert(path),
-            SyscallDeny(name) => seen_syscall.insert(name),
-            EnvRead(name) => seen_env.insert(name),
-            _ => true,
-        };
-
-        if !should_keep {
-            keep[index] = false;
-        }
-    }
-
-    let mut idx = 0;
-    policy.rules.retain(|_| {
-        let retain = keep[idx];
-        idx += 1;
-        retain
-    });
+    base.merge(extra);
 }
 
 fn empty_policy() -> Policy {
-    Policy {
-        mode: Mode::Enforce,
-        rules: vec![
-            Permission::FsDefault(FsDefault::Strict),
-            Permission::NetDefault(NetDefault::Deny),
-            Permission::ExecDefault(ExecDefault::Allowlist),
-        ],
-    }
+    Policy::new(Mode::Enforce)
 }
 
 #[derive(Deserialize)]

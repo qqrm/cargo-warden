@@ -86,8 +86,9 @@ mod tests {
         assert_eq!(policy.fs_default(), FsDefault::Strict);
         assert_eq!(policy.net_default(), NetDefault::Deny);
         assert_eq!(policy.exec_default(), ExecDefault::Allowlist);
-        let exec_allowed: Vec<_> = policy.exec_allowed().cloned().collect();
-        assert_eq!(exec_allowed, ["foo", "bar"]);
+        let mut exec_allowed: Vec<_> = policy.exec_allowed().cloned().collect();
+        exec_allowed.sort();
+        assert_eq!(exec_allowed, ["bar", "foo"]);
         assert!(policy.net_hosts().next().is_none());
         assert!(policy.fs_write_paths().next().is_none());
         assert!(policy.fs_read_paths().next().is_none());

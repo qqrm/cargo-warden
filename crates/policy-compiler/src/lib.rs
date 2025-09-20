@@ -216,22 +216,17 @@ mod tests {
 
     #[test]
     fn compiles_policy_into_layout() {
-        let policy = Policy {
-            mode: policy_core::Mode::Enforce,
-            rules: vec![
-                policy_core::Permission::FsDefault(FsDefault::Strict),
-                policy_core::Permission::NetDefault(NetDefault::Deny),
-                policy_core::Permission::ExecDefault(ExecDefault::Allowlist),
-                policy_core::Permission::Exec("/usr/bin/rustc".into()),
-                policy_core::Permission::Exec("/bin/bash".into()),
-                policy_core::Permission::NetConnect("127.0.0.1:8080".into()),
-                policy_core::Permission::FsWrite(PathBuf::from("/tmp/logs")),
-                policy_core::Permission::FsRead(PathBuf::from("/etc/ssl/certs")),
-                policy_core::Permission::EnvRead("PATH".into()),
-                policy_core::Permission::EnvRead("HOME".into()),
-                policy_core::Permission::EnvRead("HOME".into()),
-            ],
-        };
+        let mut policy = Policy::with_defaults(
+            policy_core::Mode::Enforce,
+            FsDefault::Strict,
+            NetDefault::Deny,
+            ExecDefault::Allowlist,
+        );
+        policy.extend_exec_allowed(vec!["/usr/bin/rustc".into(), "/bin/bash".into()]);
+        policy.extend_net_hosts(vec!["127.0.0.1:8080".into()]);
+        policy.extend_fs_writes(vec![PathBuf::from("/tmp/logs")]);
+        policy.extend_fs_reads(vec![PathBuf::from("/etc/ssl/certs")]);
+        policy.extend_env_read_vars(vec!["PATH".into(), "HOME".into(), "HOME".into()]);
 
         let CompiledPolicy {
             maps_layout: layout,
@@ -245,8 +240,12 @@ mod tests {
 
         assert_eq!(layout.mode_flags, vec![MODE_FLAG_ENFORCE]);
         assert_eq!(layout.exec_allowlist.len(), 2);
-        assert_eq!(to_string(&layout.exec_allowlist[0].path), "/usr/bin/rustc");
-        assert_eq!(to_string(&layout.exec_allowlist[1].path), "/bin/bash");
+        let exec_paths: Vec<_> = layout
+            .exec_allowlist
+            .iter()
+            .map(|entry| to_string(&entry.path))
+            .collect();
+        assert_eq!(exec_paths, vec!["/bin/bash", "/usr/bin/rustc"]);
 
         assert_eq!(layout.net_rules.len(), 1);
         let net_rule = &layout.net_rules[0];
@@ -269,17 +268,15 @@ mod tests {
 
     #[test]
     fn binary_serialization_matches_layout() {
-        let policy = Policy {
-            mode: policy_core::Mode::Enforce,
-            rules: vec![
-                policy_core::Permission::FsDefault(FsDefault::Strict),
-                policy_core::Permission::NetDefault(NetDefault::Deny),
-                policy_core::Permission::ExecDefault(ExecDefault::Allowlist),
-                policy_core::Permission::Exec("/usr/bin/rustc".into()),
-                policy_core::Permission::NetConnect("127.0.0.1:8080".into()),
-                policy_core::Permission::FsWrite(PathBuf::from("/tmp/logs")),
-            ],
-        };
+        let mut policy = Policy::with_defaults(
+            policy_core::Mode::Enforce,
+            FsDefault::Strict,
+            NetDefault::Deny,
+            ExecDefault::Allowlist,
+        );
+        policy.extend_exec_allowed(vec!["/usr/bin/rustc".into()]);
+        policy.extend_net_hosts(vec!["127.0.0.1:8080".into()]);
+        policy.extend_fs_writes(vec![PathBuf::from("/tmp/logs")]);
 
         let CompiledPolicy {
             maps_layout: layout,
@@ -313,10 +310,7 @@ mod tests {
 
     #[test]
     fn observe_mode_sets_flag() {
-        let policy = Policy {
-            mode: policy_core::Mode::Observe,
-            rules: vec![],
-        };
+        let policy = Policy::new(policy_core::Mode::Observe);
 
         let layout = compile(&policy).expect("compile").maps_layout;
         assert_eq!(layout.mode_flags, vec![MODE_FLAG_OBSERVE]);
