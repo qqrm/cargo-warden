@@ -1,0 +1,2 @@
+[hunspell]
+extra_dictionaries = ["./.config/tech.dic"]

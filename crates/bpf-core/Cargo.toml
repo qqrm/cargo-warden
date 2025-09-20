@@ -27,3 +27,6 @@ bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
 [dev-dependencies]
 bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
 bpf-host = { package = "qqrm-bpf-host", version = "0.1.0", path = "../bpf-host" }
+
+[package.metadata.cargo-udeps.ignore]
+dependencies = ["aya-bpf"]
