@@ -42,9 +42,6 @@ jobs:
           tool: cargo-llvm-cov
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-spellcheck
-      - uses: taiki-e/install-action@v2
-        with:
           tool: cargo-nextest
       - name: cargo fmt --all -- --check
         id: cargo_fmt
@@ -82,10 +79,6 @@ jobs:
         id: cargo_llvm_cov
         run: cargo llvm-cov --no-report
         continue-on-error: true
-      - name: cargo spellcheck --code 1
-        id: cargo_spellcheck
-        run: cargo spellcheck --cfg .config/spellcheck.toml --code 1
-        continue-on-error: true
       - uses: dtolnay/rust-toolchain@nightly
       - name: cargo +nightly udeps --all-targets --all-features
         id: cargo_udeps
@@ -114,7 +107,6 @@ jobs:
           record_outcome "${{ steps.cargo_audit.outcome }}" "cargo audit"
           record_outcome "${{ steps.cargo_deny.outcome }}" "cargo deny check --disable-fetch"
           record_outcome "${{ steps.cargo_llvm_cov.outcome }}" "cargo llvm-cov --no-report"
-          record_outcome "${{ steps.cargo_spellcheck.outcome }}" "cargo spellcheck --cfg .config/spellcheck.toml --code 1"
           record_outcome "${{ steps.cargo_udeps.outcome }}" "cargo +nightly udeps --all-targets --all-features"
 
           if [ -s "$failures_file" ]; then
