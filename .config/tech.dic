@@ -1,4 +1,4 @@
-14
+38
 Aya
 BPF
 CLI
@@ -23,3 +23,17 @@ udeps
 llvm-cov
 workspace
 sandboxed
+runtime
+Runtime
+filesystem
+lifecycle
+Lifecycle
+metadata
+Metadata
+bitmask
+Bitmask
+Subcommand
+Executables
+syscall
+Syscall
+Allowlist
