@@ -50,19 +50,6 @@ impl Default for ExecDefault {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Permission {
-    FsDefault(FsDefault),
-    FsRead(PathBuf),
-    FsWrite(PathBuf),
-    NetDefault(NetDefault),
-    NetConnect(String),
-    ExecDefault(ExecDefault),
-    Exec(String),
-    SyscallDeny(String),
-    EnvRead(String),
-}
-
 #[derive(Debug, Clone)]
 pub struct Policy {
     pub mode: Mode,
@@ -330,6 +317,18 @@ deny = ["clone"]
         assert_eq!(policy.fs_default(), FsDefault::Strict);
         assert!(policy.exec_allowed().any(|bin| bin == "rustc"));
         assert!(policy.env_read_vars().any(|var| var == "HOME"));
+        assert!(
+            policy
+                .fs_write_paths()
+                .any(|path| path == &PathBuf::from("/tmp/warden-scratch"))
+        );
+        assert!(
+            policy
+                .fs_read_paths()
+                .any(|path| path == &PathBuf::from("/usr/include"))
+        );
+        assert!(policy.net_hosts().any(|host| host == "127.0.0.1:1080"));
+        assert!(policy.syscall_deny().any(|name| name == "clone"));
     }
 
     const SYSCALL_DUP: &str = r#"
@@ -512,5 +511,20 @@ hosts = ["127.0.0.1:1080"]
             &report.errors[0],
             ValidationError::DuplicateSyscall(dup) if dup == "clone"
         ));
+    }
+
+    #[test]
+    fn new_policy_has_empty_rule_sets() {
+        let policy = Policy::new(Mode::Enforce);
+        assert_eq!(policy.mode, Mode::Enforce);
+        assert_eq!(policy.exec_default(), ExecDefault::Allowlist);
+        assert_eq!(policy.net_default(), NetDefault::Deny);
+        assert_eq!(policy.fs_default(), FsDefault::Strict);
+        assert!(policy.exec_allowed().next().is_none());
+        assert!(policy.net_hosts().next().is_none());
+        assert!(policy.fs_write_paths().next().is_none());
+        assert!(policy.fs_read_paths().next().is_none());
+        assert!(policy.syscall_deny().next().is_none());
+        assert!(policy.env_read_vars().next().is_none());
     }
 }
