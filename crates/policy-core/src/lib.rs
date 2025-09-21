@@ -334,19 +334,63 @@ impl FsRules {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct DuplicateAwareSet<T>
+where
+    T: Ord,
+{
+    values: BTreeSet<T>,
+    duplicates: BTreeSet<T>,
+}
+
+impl<T> DuplicateAwareSet<T>
+where
+    T: Ord + Clone,
+{
+    fn insert(&mut self, value: T) {
+        if !self.values.insert(value.clone()) {
+            self.duplicates.insert(value);
+        }
+    }
+
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = T>,
+    {
+        for value in iter {
+            self.insert(value);
+        }
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.values.extend(other.values);
+        self.duplicates.extend(other.duplicates);
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &T> {
+        self.values.iter()
+    }
+
+    fn first_duplicate(&self) -> Option<&T> {
+        self.duplicates.iter().next()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
+
 #[derive(Debug, Clone)]
 struct NetRules {
     default: NetDefault,
-    hosts: BTreeSet<String>,
-    duplicates: BTreeSet<String>,
+    hosts: DuplicateAwareSet<String>,
 }
 
 impl Default for NetRules {
     fn default() -> Self {
         Self {
             default: NetDefault::Deny,
-            hosts: BTreeSet::new(),
-            duplicates: BTreeSet::new(),
+            hosts: DuplicateAwareSet::default(),
         }
     }
 }
@@ -360,24 +404,19 @@ impl NetRules {
     }
 
     fn insert_raw(&mut self, host: String) {
-        if !self.hosts.insert(host.clone()) {
-            self.duplicates.insert(host);
-        }
+        self.hosts.insert(host);
     }
 
     fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = String>,
     {
-        for host in iter {
-            self.insert_raw(host);
-        }
+        self.hosts.extend(iter);
     }
 
     fn merge(&mut self, other: NetRules) {
         self.default = other.default;
-        self.hosts.extend(other.hosts);
-        self.duplicates.extend(other.duplicates);
+        self.hosts.merge(other.hosts);
     }
 
     fn iter(&self) -> impl Iterator<Item = &String> {
@@ -385,7 +424,7 @@ impl NetRules {
     }
 
     fn first_duplicate(&self) -> Option<&String> {
-        self.duplicates.iter().next()
+        self.hosts.first_duplicate()
     }
 
     fn is_empty(&self) -> bool {
@@ -396,16 +435,14 @@ impl NetRules {
 #[derive(Debug, Clone)]
 struct ExecRules {
     default: ExecDefault,
-    allowed: BTreeSet<String>,
-    duplicates: BTreeSet<String>,
+    allowed: DuplicateAwareSet<String>,
 }
 
 impl Default for ExecRules {
     fn default() -> Self {
         Self {
             default: ExecDefault::Allowlist,
-            allowed: BTreeSet::new(),
-            duplicates: BTreeSet::new(),
+            allowed: DuplicateAwareSet::default(),
         }
     }
 }
@@ -419,24 +456,19 @@ impl ExecRules {
     }
 
     fn insert_raw(&mut self, value: String) {
-        if !self.allowed.insert(value.clone()) {
-            self.duplicates.insert(value);
-        }
+        self.allowed.insert(value);
     }
 
     fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = String>,
     {
-        for value in iter {
-            self.insert_raw(value);
-        }
+        self.allowed.extend(iter);
     }
 
     fn merge(&mut self, other: ExecRules) {
         self.default = other.default;
-        self.allowed.extend(other.allowed);
-        self.duplicates.extend(other.duplicates);
+        self.allowed.merge(other.allowed);
     }
 
     fn iter(&self) -> impl Iterator<Item = &String> {
@@ -444,7 +476,7 @@ impl ExecRules {
     }
 
     fn first_duplicate(&self) -> Option<&String> {
-        self.duplicates.iter().next()
+        self.allowed.first_duplicate()
     }
 
     fn is_empty(&self) -> bool {
@@ -454,29 +486,23 @@ impl ExecRules {
 
 #[derive(Debug, Clone, Default)]
 struct SyscallRules {
-    deny: BTreeSet<String>,
-    duplicates: BTreeSet<String>,
+    deny: DuplicateAwareSet<String>,
 }
 
 impl SyscallRules {
     fn insert_raw(&mut self, name: String) {
-        if !self.deny.insert(name.clone()) {
-            self.duplicates.insert(name);
-        }
+        self.deny.insert(name);
     }
 
     fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = String>,
     {
-        for name in iter {
-            self.insert_raw(name);
-        }
+        self.deny.extend(iter);
     }
 
     fn merge(&mut self, other: SyscallRules) {
-        self.deny.extend(other.deny);
-        self.duplicates.extend(other.duplicates);
+        self.deny.merge(other.deny);
     }
 
     fn iter(&self) -> impl Iterator<Item = &String> {
@@ -484,7 +510,7 @@ impl SyscallRules {
     }
 
     fn first_duplicate(&self) -> Option<&String> {
-        self.duplicates.iter().next()
+        self.deny.first_duplicate()
     }
 }
 
