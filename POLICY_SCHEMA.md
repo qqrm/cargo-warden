@@ -71,11 +71,13 @@ System calls blocked via seccomp.
 
 ## Internal Representation
 
-`warden.toml` entries are converted into a list of permission rules during
-deserialization. Each rule is represented by the `policy-core` crate as a
-`Permission` enum variant (for example `FsRead`, `Exec`, `NetConnect`, or
-`EnvRead`). A parsed [`Policy`](./crates/policy-core/src/lib.rs) contains the
-requested `mode` and the collected permission rules in evaluation order.
+`warden.toml` entries are deserialized into dedicated rule sets that mirror the
+domains in the file. The `policy-core` crate stores filesystem, network,
+execution, syscall, and environment allowances in specialised structures that
+track defaults, detect duplicates, and preserve ordering for evaluation. The
+public [`Policy`](./crates/policy-core/src/policy.rs) exposes accessors such as
+`fs_default`, `exec_allowed`, and `net_hosts` to inspect the effective
+configuration alongside the selected `mode`.
 
 ## Workspace Policy
 `workspace.warden.toml` allows per-package overrides.

@@ -136,15 +136,31 @@ pub struct Event {
 `qqrm-policy-core`
 
 ```rust
-pub enum Permission {
-  FsRead(PathSpec),
-  FsWrite(PathSpec),
-  Exec(ExecSpec),
-  NetConnect(HostPortSpec),
-  EnvRead(String),
+pub enum Mode {
+  Observe,
+  Enforce,
 }
 
-pub struct Policy { pub rules: Vec<Permission>, pub mode: Mode }
+pub struct Policy {
+  pub mode: Mode,
+  pub(crate) fs: FsRules,
+  pub(crate) net: NetRules,
+  pub(crate) exec: ExecRules,
+  pub(crate) syscall: SyscallRules,
+  pub(crate) env: EnvRules,
+}
+
+impl Policy {
+  pub fn fs_default(&self) -> FsDefault;
+  pub fn fs_read_paths(&self) -> impl Iterator<Item = &PathBuf>;
+  pub fn fs_write_paths(&self) -> impl Iterator<Item = &PathBuf>;
+  pub fn net_default(&self) -> NetDefault;
+  pub fn net_hosts(&self) -> impl Iterator<Item = &String>;
+  pub fn exec_default(&self) -> ExecDefault;
+  pub fn exec_allowed(&self) -> impl Iterator<Item = &String>;
+  pub fn syscall_deny(&self) -> impl Iterator<Item = &String>;
+  pub fn env_read_vars(&self) -> impl Iterator<Item = &String>;
+}
 ```
 
 `qqrm-policy-compiler`
