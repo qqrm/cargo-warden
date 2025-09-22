@@ -11,6 +11,7 @@ pub(crate) struct IsolationConfig {
     pub(crate) mode: Mode,
     pub(crate) syscall_deny: Vec<String>,
     pub(crate) maps_layout: MapsLayout,
+    pub(crate) allowed_env_vars: Vec<String>,
 }
 
 pub(crate) fn setup_isolation(
@@ -44,12 +45,16 @@ pub(crate) fn setup_isolation(
 
     let compiled = qqrm_policy_compiler::compile(&policy)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
-    let CompiledPolicy { maps_layout, .. } = compiled;
+    let CompiledPolicy {
+        maps_layout,
+        allowed_env_vars,
+    } = compiled;
 
     Ok(IsolationConfig {
         mode: policy.mode,
         syscall_deny: policy.syscall_deny().cloned().collect(),
         maps_layout,
+        allowed_env_vars,
     })
 }
 

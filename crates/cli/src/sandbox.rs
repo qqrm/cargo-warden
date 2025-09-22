@@ -17,6 +17,7 @@ pub(crate) fn run_in_sandbox(
         mode,
         &isolation.syscall_deny,
         &isolation.maps_layout,
+        &isolation.allowed_env_vars,
     );
     let shutdown_result = sandbox.shutdown();
     let status = match run_result {
