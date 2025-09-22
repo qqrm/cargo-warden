@@ -88,6 +88,7 @@ impl RealSandbox {
                 "bprm_check_security",
                 "file_open",
                 "file_permission",
+                "inode_rename",
                 "inode_unlink",
             ] {
                 let program = bpf
