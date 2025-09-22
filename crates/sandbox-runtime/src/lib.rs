@@ -1,6 +1,7 @@
 mod agent;
 mod bpf;
 mod cgroup;
+mod command_env;
 mod fake;
 mod layout;
 mod maps;
