@@ -1892,3 +1892,46 @@ mod tests {
         assert_eq!(sendmsg6(&denied as *const _ as *mut c_void), 0);
     }
 }
+
+#[cfg(all(feature = "fuzzing", not(target_arch = "bpf"), not(test)))]
+mod fuzzing_shims {
+    use core::ffi::c_void;
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn bpf_ringbuf_output(
+        _ringbuf: *mut c_void,
+        _data: *const c_void,
+        _len: u64,
+        _flags: u64,
+    ) -> i64 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn bpf_get_current_pid_tgid() -> u64 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn bpf_probe_read_user_str(dst: *mut u8, size: u32, src: *const u8) -> i32 {
+        if dst.is_null() || src.is_null() || size == 0 {
+            return -1;
+        }
+        let size = size as usize;
+        let mut copied = 0usize;
+        unsafe {
+            while copied < size {
+                let byte = *src.add(copied);
+                *dst.add(copied) = byte;
+                copied += 1;
+                if byte == 0 {
+                    return copied as i32;
+                }
+            }
+            if size > 0 {
+                *dst.add(size - 1) = 0;
+            }
+        }
+        size as i32
+    }
+}
