@@ -1,3 +1,4 @@
+use crate::command_env::restrict_command_environment;
 use crate::layout::LayoutRecorder;
 use crate::util::{events_path, fake_cgroup_dir};
 use policy_core::Mode;
@@ -44,10 +45,12 @@ impl FakeSandbox {
         mode: Mode,
         _deny: &[String],
         layout: &MapsLayout,
+        allowed_env: &[String],
     ) -> io::Result<ExitStatus> {
         if let Some(recorder) = &mut self.layout_recorder {
             recorder.record(layout, mode)?;
         }
+        restrict_command_environment(&mut command, allowed_env);
         command.status()
     }
 

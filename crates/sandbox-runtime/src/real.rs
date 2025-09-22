@@ -1,6 +1,7 @@
 use crate::agent::{AgentHandle, start_agent};
 use crate::bpf::{load_bpf, take_events_ring};
 use crate::cgroup::Cgroup;
+use crate::command_env::restrict_command_environment;
 use crate::maps::{populate_maps, write_mode_flag};
 use crate::seccomp::apply_seccomp;
 use crate::util::events_path;
@@ -54,9 +55,10 @@ impl RealSandbox {
         mode: Mode,
         deny: &[String],
         layout: &MapsLayout,
+        allowed_env: &[String],
     ) -> io::Result<ExitStatus> {
         let mut command = command;
-        self.install_pre_exec(&mut command, deny, layout.clone(), mode)?;
+        self.install_pre_exec(&mut command, deny, layout.clone(), mode, allowed_env)?;
         let mut child = command.spawn()?;
         child.wait()
     }
@@ -141,7 +143,9 @@ impl RealSandbox {
         deny: &[String],
         layout: MapsLayout,
         mode: Mode,
+        allowed_env: &[String],
     ) -> io::Result<()> {
+        restrict_command_environment(cmd, allowed_env);
         let procs_fd = self.cgroup.procs_fd_raw()?;
         let rules = deny.to_vec();
         let bpf_ptr = self.bpf.get() as usize;
