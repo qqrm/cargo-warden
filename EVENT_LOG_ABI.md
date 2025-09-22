@@ -24,4 +24,6 @@ pub struct Event {
 - **verdict** – allow (`0`) or deny (`1`).
 - **container_id** – identifier of the container or sandbox.
 - **caps** – Linux capability bitmask held by the process.
+- Rename operations emit separate events for the source and destination paths when write access is denied, ensuring fake
+  sandbox consumers and layout recorders observe both sides of the attempted move.
 
