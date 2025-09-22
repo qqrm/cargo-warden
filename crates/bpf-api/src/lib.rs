@@ -19,6 +19,8 @@ pub const EVENT_RINGBUF_CAPACITY_BYTES: u32 = 4096;
 pub const EVENT_COUNT_SLOTS: u32 = 1;
 /// Number of entries in the mode flags map.
 pub const MODE_FLAGS_CAPACITY: u32 = 1;
+/// Maximum number of workload-to-unit mappings supported by the eBPF map.
+pub const WORKLOAD_UNITS_CAPACITY: u32 = 256;
 /// Flag value stored in the mode map when running in observe mode.
 pub const MODE_FLAG_OBSERVE: u32 = 0;
 /// Flag value stored in the mode map when running in enforce mode.

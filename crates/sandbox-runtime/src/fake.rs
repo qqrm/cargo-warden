@@ -54,6 +54,10 @@ impl FakeSandbox {
         command.status()
     }
 
+    pub(crate) fn write_workload_units(&mut self, _entries: &[(u32, u32)]) -> io::Result<()> {
+        Ok(())
+    }
+
     pub(crate) fn shutdown(mut self) -> io::Result<()> {
         if let Some(agent) = self.agent.take() {
             agent.stop()?;

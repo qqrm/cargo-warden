@@ -2,7 +2,7 @@ use crate::agent::{AgentHandle, start_agent};
 use crate::bpf::{load_bpf, take_events_ring};
 use crate::cgroup::Cgroup;
 use crate::command_env::restrict_command_environment;
-use crate::maps::{populate_maps, write_mode_flag};
+use crate::maps::{populate_maps, write_mode_flag, write_workload_units};
 use crate::seccomp::apply_seccomp;
 use crate::util::events_path;
 use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
@@ -61,6 +61,10 @@ impl RealSandbox {
         self.install_pre_exec(&mut command, deny, layout.clone(), mode, allowed_env)?;
         let mut child = command.spawn()?;
         child.wait()
+    }
+
+    pub(crate) fn write_workload_units(&self, entries: &[(u32, u32)]) -> io::Result<()> {
+        self.with_bpf(|bpf| write_workload_units(bpf, entries))
     }
 
     pub(crate) fn shutdown(mut self) -> io::Result<()> {
