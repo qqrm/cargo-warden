@@ -48,6 +48,14 @@ impl Sandbox {
         }
     }
 
+    /// Populates workload-to-unit mappings prior to launching a command.
+    pub fn write_workload_units(&mut self, units: &[(u32, u32)]) -> io::Result<()> {
+        match &mut self.inner {
+            SandboxImpl::Real(real) => real.write_workload_units(units),
+            SandboxImpl::Fake(fake) => fake.write_workload_units(units),
+        }
+    }
+
     /// Shuts down the sandbox runtime, releasing all resources.
     pub fn shutdown(self) -> io::Result<()> {
         match self.inner {
@@ -154,6 +162,17 @@ mod tests {
         let allowed = vec!["ALLOWED_OVERRIDE".to_string(), "PATH".to_string()];
         let status = sandbox.run(command, Mode::Enforce, &[], &empty_layout(), &allowed)?;
         assert!(status.success());
+        Ok(())
+    }
+
+    #[test]
+    fn write_workload_units_available() -> io::Result<()> {
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let _fake = VarGuard::set(super::FAKE_SANDBOX_ENV, "1");
+
+        let mut sandbox = Sandbox::new()?;
+        sandbox.write_workload_units(&[(1, 2)])?;
+        sandbox.shutdown()?;
         Ok(())
     }
 }

@@ -6,14 +6,14 @@
 #[cfg(target_arch = "bpf")]
 use aya_bpf::{
     macros::map,
-    maps::{Array, RingBuf},
+    maps::{Array, HashMap, RingBuf},
 };
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 use bpf_api::{self, Event};
 #[cfg(any(test, feature = "fuzzing"))]
 use bpf_host::{
     fs::{dentry_path_ptr, file_mode_bits, file_path_ptr},
-    maps::{DummyRingBuf, TestArray},
+    maps::{DummyRingBuf, TestArray, TestHashMap},
 };
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 use core::{ffi::c_void, mem::size_of};
@@ -366,6 +366,15 @@ define_map!(
 define_map!(MODE_FLAGS, "MODE_FLAGS", u32, bpf_api::MODE_FLAGS_CAPACITY);
 
 #[cfg(target_arch = "bpf")]
+#[map(name = "WORKLOAD_UNITS")]
+static mut WORKLOAD_UNITS: HashMap<u32, u32> =
+    HashMap::with_max_entries(bpf_api::WORKLOAD_UNITS_CAPACITY, 0);
+
+#[cfg(any(test, feature = "fuzzing"))]
+static WORKLOAD_UNITS: TestHashMap<u32, u32, { bpf_api::WORKLOAD_UNITS_CAPACITY as usize }> =
+    TestHashMap::new();
+
+#[cfg(target_arch = "bpf")]
 type EventsMap = RingBuf;
 #[cfg(any(test, feature = "fuzzing"))]
 type EventsMap = DummyRingBuf;
@@ -521,7 +530,37 @@ static mut CURRENT_UNIT: u32 = 0;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn current_unit() -> u32 {
+    refresh_current_unit();
     unsafe { CURRENT_UNIT }
+}
+
+#[cfg(target_arch = "bpf")]
+fn refresh_current_unit() {
+    let pid = unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 };
+    let unit = unsafe { WORKLOAD_UNITS.get(&pid).copied().unwrap_or(0) };
+    unsafe {
+        CURRENT_UNIT = unit;
+    }
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn refresh_current_unit() {
+    let pid = unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 };
+    if let Some(unit) = WORKLOAD_UNITS.get(pid) {
+        unsafe {
+            CURRENT_UNIT = unit;
+        }
+    }
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn set_workload_unit(pid: u32, unit: u32) {
+    WORKLOAD_UNITS.insert(pid, unit);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_workload_units() {
+    WORKLOAD_UNITS.clear();
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -1362,6 +1401,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn file_events_include_workload_unit() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        set_workload_unit(1234, 5);
+        set_fs_rules(&[fs_rule_entry(0, "/workspace/data", FS_READ)]);
+        let path = "/workspace/data/file.txt";
+        let path_bytes = c_string(path);
+        let mut file = TestFile {
+            path: path_bytes.as_ptr(),
+            mode: FMODE_READ,
+        };
+        unsafe {
+            CURRENT_UNIT = 0;
+        }
+        LAST_EVENT.lock().unwrap().take();
+        assert_eq!(
+            file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut()),
+            0
+        );
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.unit, 5);
+    }
+
     fn rule_entry(
         unit: u32,
         addr: std::net::IpAddr,
@@ -1419,6 +1483,7 @@ mod tests {
         NET_PARENTS.clear();
         NET_PARENTS_LENGTH.clear();
         reset_mode_flags();
+        clear_workload_units();
         unsafe {
             CURRENT_UNIT = 0;
         }
@@ -1437,6 +1502,7 @@ mod tests {
         FS_RULES.clear();
         FS_RULES_LENGTH.clear();
         reset_mode_flags();
+        clear_workload_units();
         unsafe {
             CURRENT_UNIT = 0;
         }
