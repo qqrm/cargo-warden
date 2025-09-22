@@ -5,6 +5,7 @@
 
 #[cfg(target_arch = "bpf")]
 use aya_bpf::{
+    helpers::bpf_probe_read_kernel,
     macros::map,
     maps::{Array, HashMap, RingBuf},
 };
@@ -781,18 +782,94 @@ fn read_user_path(path_ptr: *const u8) -> Option<[u8; 256]> {
 }
 
 #[cfg(target_arch = "bpf")]
-fn file_path_ptr(_file: *mut c_void) -> Option<*const u8> {
-    None
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct file {
+    f_path: path,
+    f_mode: u32,
 }
 
 #[cfg(target_arch = "bpf")]
-fn file_mode_bits(_file: *mut c_void) -> Option<u32> {
-    None
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct path {
+    dentry: *mut dentry,
 }
 
 #[cfg(target_arch = "bpf")]
-fn dentry_path_ptr(_dentry: *mut c_void) -> Option<*const u8> {
-    None
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct dentry {
+    d_name: qstr,
+}
+
+#[cfg(target_arch = "bpf")]
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct qstr {
+    name: *const u8,
+}
+
+#[cfg(target_arch = "bpf")]
+fn read_kernel_value<T: Copy>(ptr: *const T) -> Option<T> {
+    unsafe { bpf_probe_read_kernel(ptr).ok() }
+}
+
+#[cfg(target_arch = "bpf")]
+fn file_path_ptr(file: *mut c_void) -> Option<*const u8> {
+    if file.is_null() {
+        return None;
+    }
+
+    unsafe {
+        let file_ptr = file as *const file;
+        let path = read_kernel_value(core::ptr::addr_of!((*file_ptr).f_path))?;
+        let dentry_ptr = path.dentry;
+        if dentry_ptr.is_null() {
+            return None;
+        }
+        let name = read_kernel_value(core::ptr::addr_of!((*dentry_ptr).d_name))?;
+        let name_ptr = name.name;
+        if name_ptr.is_null() {
+            None
+        } else {
+            Some(name_ptr)
+        }
+    }
+}
+
+#[cfg(target_arch = "bpf")]
+fn file_mode_bits(file: *mut c_void) -> Option<u32> {
+    if file.is_null() {
+        return None;
+    }
+
+    unsafe {
+        let file_ptr = file as *const file;
+        read_kernel_value(core::ptr::addr_of!((*file_ptr).f_mode))
+    }
+}
+
+#[cfg(target_arch = "bpf")]
+fn dentry_path_ptr(dentry: *mut c_void) -> Option<*const u8> {
+    if dentry.is_null() {
+        return None;
+    }
+
+    unsafe {
+        let dentry_ptr = dentry as *const dentry;
+        let name = read_kernel_value(core::ptr::addr_of!((*dentry_ptr).d_name))?;
+        let name_ptr = name.name;
+        if name_ptr.is_null() {
+            None
+        } else {
+            Some(name_ptr)
+        }
+    }
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -1267,6 +1344,24 @@ mod tests {
     }
 
     #[test]
+    fn file_open_rejects_null_path_pointer() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        let mut file = TestFile {
+            path: ptr::null(),
+            mode: FMODE_READ,
+        };
+        let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
+        assert_ne!(result, 0);
+        assert!(LAST_EVENT.lock().unwrap().is_none());
+        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
     fn file_permission_allows_matching_rule() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
@@ -1464,6 +1559,28 @@ mod tests {
     }
 
     #[test]
+    fn inode_rename_requires_non_null_paths() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        let mut old_dentry = TestDentry { name: ptr::null() };
+        let mut new_dentry = TestDentry { name: ptr::null() };
+        let result = inode_rename(
+            ptr::null_mut(),
+            (&mut old_dentry) as *mut _ as *mut c_void,
+            ptr::null_mut(),
+            (&mut new_dentry) as *mut _ as *mut c_void,
+            0,
+        );
+        assert_ne!(result, 0);
+        assert!(LAST_EVENT.lock().unwrap().is_none());
+        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
     fn inode_unlink_requires_write_permission() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
@@ -1522,6 +1639,18 @@ mod tests {
         assert_eq!(event.action, ACTION_UNLINK);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
+    }
+
+    #[test]
+    fn inode_unlink_requires_valid_path_pointer() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        LAST_EVENT.lock().unwrap().take();
+        let mut dentry = TestDentry { name: ptr::null() };
+        let result = inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void);
+        assert_ne!(result, 0);
+        assert!(LAST_EVENT.lock().unwrap().is_none());
     }
 
     #[test]
