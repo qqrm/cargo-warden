@@ -70,6 +70,83 @@ pub mod maps {
             Self
         }
     }
+
+    /// Simplified hash map implementation for host-based tests.
+    pub struct TestHashMap<K: Copy + PartialEq, V: Copy, const N: usize> {
+        data: UnsafeCell<[Option<(K, V)>; N]>,
+    }
+
+    unsafe impl<K: Copy + PartialEq, V: Copy, const N: usize> Sync for TestHashMap<K, V, N> {}
+
+    impl<K: Copy + PartialEq, V: Copy, const N: usize> Default for TestHashMap<K, V, N> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl<K: Copy + PartialEq, V: Copy, const N: usize> TestHashMap<K, V, N> {
+        /// Creates an empty hash map instance.
+        pub const fn new() -> Self {
+            Self {
+                data: UnsafeCell::new([None; N]),
+            }
+        }
+
+        /// Retrieves a value for the provided key when it exists.
+        pub fn get(&self, key: K) -> Option<V> {
+            unsafe {
+                (*self.data.get()).iter().find_map(|slot| {
+                    slot.and_then(
+                        |(stored, value)| {
+                            if stored == key { Some(value) } else { None }
+                        },
+                    )
+                })
+            }
+        }
+
+        /// Inserts or updates the value for the provided key.
+        pub fn insert(&self, key: K, value: V) {
+            unsafe {
+                let slots = &mut *self.data.get();
+                for slot in slots.iter_mut() {
+                    if let Some((stored, _)) = slot
+                        && *stored == key
+                    {
+                        *slot = Some((key, value));
+                        return;
+                    }
+                }
+                if let Some(empty) = slots.iter_mut().find(|slot| slot.is_none()) {
+                    *empty = Some((key, value));
+                    return;
+                }
+                if let Some(slot) = slots.first_mut() {
+                    *slot = Some((key, value));
+                }
+            }
+        }
+
+        /// Removes the value associated with the provided key.
+        pub fn remove(&self, key: K) {
+            unsafe {
+                for slot in (*self.data.get()).iter_mut() {
+                    if slot.map(|(stored, _)| stored == key).unwrap_or(false) {
+                        *slot = None;
+                    }
+                }
+            }
+        }
+
+        /// Clears all entries from the hash map.
+        pub fn clear(&self) {
+            unsafe {
+                for slot in (*self.data.get()).iter_mut() {
+                    *slot = None;
+                }
+            }
+        }
+    }
 }
 
 pub mod fs {
@@ -132,5 +209,5 @@ pub mod net {
 }
 
 pub use fs::{TestDentry, TestFile};
-pub use maps::{DummyRingBuf, TestArray};
+pub use maps::{DummyRingBuf, TestArray, TestHashMap};
 pub use net::resolve_host;

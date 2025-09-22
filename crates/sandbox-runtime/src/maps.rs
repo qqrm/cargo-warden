@@ -1,4 +1,4 @@
-use aya::maps::{Array, MapData};
+use aya::maps::{Array, HashMap, MapData};
 use aya::{Ebpf, Pod};
 use bpf_api::{
     ExecAllowEntry, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE, NetParentEntry, NetRuleEntry,
@@ -37,6 +37,42 @@ pub(crate) fn populate_maps(bpf: &mut Ebpf, layout: &MapsLayout) -> io::Result<(
         &layout.fs_rules,
         |entry| FsRuleEntryPod(*entry),
     )?;
+    Ok(())
+}
+
+pub(crate) fn write_workload_units(bpf: &mut Ebpf, entries: &[(u32, u32)]) -> io::Result<()> {
+    if entries.len() > bpf_api::WORKLOAD_UNITS_CAPACITY as usize {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "map WORKLOAD_UNITS capacity {} exceeded by {} entries",
+                bpf_api::WORKLOAD_UNITS_CAPACITY,
+                entries.len()
+            ),
+        ));
+    }
+
+    let map_name = "WORKLOAD_UNITS";
+    let map = bpf
+        .map_mut(map_name)
+        .ok_or_else(|| map_not_found(map_name))?;
+    let mut hash = HashMap::<&mut MapData, u32, u32>::try_from(map)
+        .map_err(|err| io::Error::other(format!("{map_name}: {err}")))?;
+    let mut existing = Vec::new();
+    {
+        for next in hash.keys() {
+            let key = next.map_err(|err| io::Error::other(format!("iterate {map_name}: {err}")))?;
+            existing.push(key);
+        }
+    }
+    for key in existing {
+        hash.remove(&key)
+            .map_err(|err| io::Error::other(format!("remove {map_name}[{key}]: {err}")))?;
+    }
+    for (key, value) in entries {
+        hash.insert(key, value, 0)
+            .map_err(|err| io::Error::other(format!("set {map_name}[{key}]: {err}")))?;
+    }
     Ok(())
 }
 
