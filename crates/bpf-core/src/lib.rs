@@ -28,6 +28,9 @@ const EPERM: i32 = 1;
 const ACTION_OPEN: u8 = 0;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const ACTION_RENAME: u8 = 1;
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const ACTION_UNLINK: u8 = 2;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -989,6 +992,48 @@ pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
+#[unsafe(link_section = "lsm/inode_rename")]
+pub extern "C" fn inode_rename(
+    _old_dir: *mut c_void,
+    old_dentry: *mut c_void,
+    _new_dir: *mut c_void,
+    new_dentry: *mut c_void,
+    _flags: u32,
+) -> i32 {
+    let old_path_ptr = match dentry_path_ptr(old_dentry) {
+        Some(ptr) => ptr,
+        None => return deny_with_mode(),
+    };
+    let Some(old_path) = read_user_path(old_path_ptr) else {
+        return deny_with_mode();
+    };
+    let new_path_ptr = match dentry_path_ptr(new_dentry) {
+        Some(ptr) => ptr,
+        None => return deny_with_mode(),
+    };
+    let Some(new_path) = read_user_path(new_path_ptr) else {
+        return deny_with_mode();
+    };
+
+    let mut allowed = true;
+
+    if !fs_allowed(&old_path, bpf_api::FS_WRITE) {
+        let event = fs_event(ACTION_RENAME, &old_path, false);
+        publish_event(&event);
+        allowed = false;
+    }
+
+    if !fs_allowed(&new_path, bpf_api::FS_WRITE) {
+        let event = fs_event(ACTION_RENAME, &new_path, false);
+        publish_event(&event);
+        allowed = false;
+    }
+
+    if allowed { 0 } else { deny_with_mode() }
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/inode_unlink")]
 pub extern "C" fn inode_unlink(_dir: *mut c_void, dentry: *mut c_void) -> i32 {
     let path_ptr = match dentry_path_ptr(dentry) {
@@ -1282,6 +1327,140 @@ mod tests {
         };
         let file_ptr = (&mut file) as *mut _ as *mut c_void;
         assert_ne!(file_permission(file_ptr, MAY_READ), 0);
+    }
+
+    #[test]
+    fn inode_rename_denies_when_source_not_allowed() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        let old_path = "/workspace/src.txt";
+        let new_path = "/workspace/dst.txt";
+        set_fs_rules(&[fs_rule_entry(0, new_path, FS_WRITE)]);
+        let old_bytes = c_string(old_path);
+        let new_bytes = c_string(new_path);
+        let mut old_dentry = TestDentry {
+            name: old_bytes.as_ptr(),
+        };
+        let mut new_dentry = TestDentry {
+            name: new_bytes.as_ptr(),
+        };
+        let result = inode_rename(
+            ptr::null_mut(),
+            (&mut old_dentry) as *mut _ as *mut c_void,
+            ptr::null_mut(),
+            (&mut new_dentry) as *mut _ as *mut c_void,
+            0,
+        );
+        assert_ne!(result, 0);
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_RENAME);
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), old_path);
+        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn inode_rename_denies_when_target_not_allowed() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        let old_path = "/workspace/allowed.txt";
+        let new_path = "/workspace/blocked.txt";
+        set_fs_rules(&[fs_rule_entry(0, old_path, FS_WRITE)]);
+        let old_bytes = c_string(old_path);
+        let new_bytes = c_string(new_path);
+        let mut old_dentry = TestDentry {
+            name: old_bytes.as_ptr(),
+        };
+        let mut new_dentry = TestDentry {
+            name: new_bytes.as_ptr(),
+        };
+        let result = inode_rename(
+            ptr::null_mut(),
+            (&mut old_dentry) as *mut _ as *mut c_void,
+            ptr::null_mut(),
+            (&mut new_dentry) as *mut _ as *mut c_void,
+            0,
+        );
+        assert_ne!(result, 0);
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_RENAME);
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), new_path);
+        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn inode_rename_allows_when_rules_cover_both_paths() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        let old_path = "/workspace/dir/source.txt";
+        let new_path = "/workspace/dir/dest.txt";
+        set_fs_rules(&[fs_rule_entry(0, "/workspace/dir", FS_WRITE)]);
+        let old_bytes = c_string(old_path);
+        let new_bytes = c_string(new_path);
+        let mut old_dentry = TestDentry {
+            name: old_bytes.as_ptr(),
+        };
+        let mut new_dentry = TestDentry {
+            name: new_bytes.as_ptr(),
+        };
+        let result = inode_rename(
+            ptr::null_mut(),
+            (&mut old_dentry) as *mut _ as *mut c_void,
+            ptr::null_mut(),
+            (&mut new_dentry) as *mut _ as *mut c_void,
+            0,
+        );
+        assert_eq!(result, 0);
+        assert!(LAST_EVENT.lock().unwrap().is_none());
+        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn inode_rename_observe_mode_allows_but_logs() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        enable_observe_mode();
+        assert!(is_observe_mode(), "observe mode should be enabled");
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        let old_path = "/workspace/src.txt";
+        let new_path = "/workspace/dst.txt";
+        let old_bytes = c_string(old_path);
+        let new_bytes = c_string(new_path);
+        let mut old_dentry = TestDentry {
+            name: old_bytes.as_ptr(),
+        };
+        let mut new_dentry = TestDentry {
+            name: new_bytes.as_ptr(),
+        };
+        let result = inode_rename(
+            ptr::null_mut(),
+            (&mut old_dentry) as *mut _ as *mut c_void,
+            ptr::null_mut(),
+            (&mut new_dentry) as *mut _ as *mut c_void,
+            0,
+        );
+        assert_eq!(result, 0);
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_RENAME);
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), new_path);
+        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert_eq!(count, 2);
     }
 
     #[test]
