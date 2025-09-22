@@ -31,9 +31,6 @@ const ACTION_OPEN: u8 = 0;
 const ACTION_UNLINK: u8 = 2;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-const MODE_FLAG_OBSERVE: u32 = 1;
-
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn deny() -> i32 {
     -EPERM
 }
@@ -413,7 +410,11 @@ unsafe fn load_length(map: &LengthMap) -> u32 {
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn is_observe_mode() -> bool {
     let flags = unsafe { load_mode_flags() };
-    (flags & MODE_FLAG_OBSERVE) != 0
+    match flags {
+        bpf_api::MODE_FLAG_OBSERVE => true,
+        bpf_api::MODE_FLAG_ENFORCE => false,
+        _ => false,
+    }
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -1029,6 +1030,10 @@ mod tests {
         reset_network_state();
         reset_fs_state();
         reset_exec_state();
+        assert!(
+            !is_observe_mode(),
+            "enforce mode should be active by default"
+        );
         let path = c_string("/workspace/bin/forbidden");
         let mut filename_ptr = path.as_ptr();
         let mut ctx = (&mut filename_ptr) as *mut *const u8;
@@ -1043,6 +1048,7 @@ mod tests {
         reset_fs_state();
         reset_exec_state();
         enable_observe_mode();
+        assert!(is_observe_mode(), "observe mode should be enabled");
         let path = c_string("/workspace/bin/forbidden");
         let mut filename_ptr = path.as_ptr();
         let mut ctx = (&mut filename_ptr) as *mut *const u8;
@@ -1103,6 +1109,7 @@ mod tests {
         reset_network_state();
         reset_fs_state();
         enable_observe_mode();
+        assert!(is_observe_mode(), "observe mode should be enabled");
         EVENT_COUNTS.clear();
         LAST_EVENT.lock().unwrap().take();
         let path = "/workspace/forbidden.txt";
@@ -1157,6 +1164,7 @@ mod tests {
         reset_network_state();
         reset_fs_state();
         enable_observe_mode();
+        assert!(is_observe_mode(), "observe mode should be enabled");
         let path = "/workspace/read-only";
         set_fs_rules(&[fs_rule_entry(0, path, FS_READ)]);
         let path_bytes = c_string(path);
@@ -1283,6 +1291,7 @@ mod tests {
         reset_network_state();
         reset_fs_state();
         enable_observe_mode();
+        assert!(is_observe_mode(), "observe mode should be enabled");
         let path = "/workspace/temp.txt";
         let path_bytes = c_string(path);
         let mut dentry = TestDentry {
@@ -1401,6 +1410,7 @@ mod tests {
 
     fn reset_mode_flags() {
         MODE_FLAGS.clear();
+        MODE_FLAGS.set(0, bpf_api::MODE_FLAG_ENFORCE);
     }
 
     fn reset_network_state() {
@@ -1434,7 +1444,7 @@ mod tests {
 
     fn enable_observe_mode() {
         reset_mode_flags();
-        MODE_FLAGS.set(0, MODE_FLAG_OBSERVE);
+        MODE_FLAGS.set(0, bpf_api::MODE_FLAG_OBSERVE);
     }
 
     fn reset_exec_state() {
@@ -1544,6 +1554,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         enable_observe_mode();
+        assert!(is_observe_mode(), "observe mode should be enabled");
         let denied = SockAddr {
             user_ip4: u32::from_be_bytes([203, 0, 113, 2]),
             user_ip6: [0; 4],
@@ -1623,6 +1634,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         enable_observe_mode();
+        assert!(is_observe_mode(), "observe mode should be enabled");
         let denied_addr = std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2);
         let denied = SockAddr {
             user_ip4: 0,
