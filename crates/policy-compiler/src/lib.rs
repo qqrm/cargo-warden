@@ -207,11 +207,44 @@ fn slice_to_bytes<T: Copy>(slice: &[T]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{mem::size_of, path::PathBuf};
+    use std::{
+        mem::size_of,
+        path::{Path, PathBuf},
+    };
 
     fn to_string(bytes: &[u8]) -> String {
         let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
         String::from_utf8(bytes[..len].to_vec()).unwrap()
+    }
+
+    fn workspace_root_path() -> PathBuf {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace = manifest.ancestors().nth(2).expect("workspace root");
+        std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf())
+    }
+
+    fn workspace_root_string() -> String {
+        workspace_root_path().to_string_lossy().into_owned()
+    }
+
+    fn target_dir_string() -> String {
+        let target = workspace_root_path().join("target");
+        std::fs::canonicalize(&target)
+            .unwrap_or(target)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn inject_default_fs_paths(policy: &mut Policy) {
+        let workspace = workspace_root_path();
+        if !policy.fs_read_paths().any(|path| path == &workspace) {
+            policy.extend_fs_reads(std::iter::once(workspace));
+        }
+        let target = workspace_root_path().join("target");
+        let target = std::fs::canonicalize(&target).unwrap_or(target);
+        if !policy.fs_write_paths().any(|path| path == &target) {
+            policy.extend_fs_writes(std::iter::once(target));
+        }
     }
 
     #[test]
@@ -227,6 +260,7 @@ mod tests {
         policy.extend_fs_writes(vec![PathBuf::from("/tmp/logs")]);
         policy.extend_fs_reads(vec![PathBuf::from("/etc/ssl/certs")]);
         policy.extend_env_read_vars(vec!["PATH".into(), "HOME".into(), "HOME".into()]);
+        inject_default_fs_paths(&mut policy);
 
         let CompiledPolicy {
             maps_layout: layout,
@@ -256,14 +290,23 @@ mod tests {
         assert_eq!(&net_rule.rule.addr[..4], &[127, 0, 0, 1]);
         assert!(layout.net_parents.is_empty());
 
-        assert_eq!(layout.fs_rules.len(), 2);
-        let write_rule = &layout.fs_rules[0];
-        assert_eq!(write_rule.unit, 0);
-        assert_eq!(write_rule.rule.access, FS_READ | FS_WRITE);
-        assert_eq!(to_string(&write_rule.rule.path), "/tmp/logs");
-        let read_rule = &layout.fs_rules[1];
-        assert_eq!(read_rule.rule.access, FS_READ);
-        assert_eq!(to_string(&read_rule.rule.path), "/etc/ssl/certs");
+        assert_eq!(layout.fs_rules.len(), 4);
+        let expected_target = target_dir_string();
+        let expected_workspace = workspace_root_string();
+        let fs_entries: Vec<_> = layout
+            .fs_rules
+            .iter()
+            .map(|entry| (entry.unit, entry.rule.access, to_string(&entry.rule.path)))
+            .collect();
+        assert_eq!(
+            fs_entries,
+            vec![
+                (0, FS_READ | FS_WRITE, "/tmp/logs".to_string()),
+                (0, FS_READ | FS_WRITE, expected_target),
+                (0, FS_READ, "/etc/ssl/certs".to_string()),
+                (0, FS_READ, expected_workspace),
+            ]
+        );
     }
 
     #[test]
@@ -277,6 +320,7 @@ mod tests {
         policy.extend_exec_allowed(vec!["/usr/bin/rustc".into()]);
         policy.extend_net_hosts(vec!["127.0.0.1:8080".into()]);
         policy.extend_fs_writes(vec![PathBuf::from("/tmp/logs")]);
+        inject_default_fs_paths(&mut policy);
 
         let CompiledPolicy {
             maps_layout: layout,

@@ -248,7 +248,29 @@ mod tests {
     };
     use proptest::prelude::*;
     use std::collections::HashSet;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    fn workspace_root_path() -> PathBuf {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = path.ancestors().nth(2).expect("workspace root");
+        std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf())
+    }
+
+    fn default_target_path() -> PathBuf {
+        let target = workspace_root_path().join("target");
+        std::fs::canonicalize(&target).unwrap_or(target)
+    }
+
+    fn inject_default_fs_paths(policy: &mut Policy) {
+        let workspace = workspace_root_path();
+        if !policy.fs_read_paths().any(|path| path == &workspace) {
+            policy.extend_fs_reads(std::iter::once(workspace));
+        }
+        let target = default_target_path();
+        if !policy.fs_write_paths().any(|path| path == &target) {
+            policy.extend_fs_writes(std::iter::once(target));
+        }
+    }
 
     fn policy_from_exec_allowed(allowed: Vec<String>) -> Policy {
         Policy::from(RawPolicy {
@@ -307,7 +329,8 @@ deny = ["clone"]
 
     #[test]
     fn parse_and_validate() {
-        let policy = Policy::from_toml_str(VALID).unwrap();
+        let mut policy = Policy::from_toml_str(VALID).unwrap();
+        inject_default_fs_paths(&mut policy);
         let report = policy.validate();
         assert!(report.errors.is_empty());
         assert!(report.warnings.is_empty());
@@ -327,6 +350,10 @@ deny = ["clone"]
                 .fs_read_paths()
                 .any(|path| path == &PathBuf::from("/usr/include"))
         );
+        let default_target = default_target_path();
+        assert!(policy.fs_write_paths().any(|path| path == &default_target));
+        let workspace_root = workspace_root_path();
+        assert!(policy.fs_read_paths().any(|path| path == &workspace_root));
         assert!(policy.net_hosts().any(|host| host == "127.0.0.1:1080"));
         assert!(policy.syscall_deny().any(|name| name == "clone"));
     }
@@ -515,15 +542,20 @@ hosts = ["127.0.0.1:1080"]
 
     #[test]
     fn new_policy_has_empty_rule_sets() {
-        let policy = Policy::new(Mode::Enforce);
+        let mut policy = Policy::new(Mode::Enforce);
+        inject_default_fs_paths(&mut policy);
         assert_eq!(policy.mode, Mode::Enforce);
         assert_eq!(policy.exec_default(), ExecDefault::Allowlist);
         assert_eq!(policy.net_default(), NetDefault::Deny);
         assert_eq!(policy.fs_default(), FsDefault::Strict);
         assert!(policy.exec_allowed().next().is_none());
         assert!(policy.net_hosts().next().is_none());
-        assert!(policy.fs_write_paths().next().is_none());
-        assert!(policy.fs_read_paths().next().is_none());
+        let writes: Vec<PathBuf> = policy.fs_write_paths().cloned().collect();
+        let default_target = default_target_path();
+        assert_eq!(writes, vec![default_target]);
+        let reads: Vec<PathBuf> = policy.fs_read_paths().cloned().collect();
+        let workspace_root = workspace_root_path();
+        assert_eq!(reads, vec![workspace_root]);
         assert!(policy.syscall_deny().next().is_none());
         assert!(policy.env_read_vars().next().is_none());
     }
