@@ -10,6 +10,8 @@ pub enum ValidationError {
     DuplicateFsWrite(String),
     #[error("duplicate fs read rule: {0}")]
     DuplicateFsRead(String),
+    #[error("duplicate env read rule: {0}")]
+    DuplicateEnv(String),
     #[error("path {0} present in both read and write allowlists")]
     FsReadWriteConflict(String),
     #[error("duplicate syscall deny rule: {0}")]

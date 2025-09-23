@@ -140,158 +140,106 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct NetRules {
-    pub(crate) default: NetDefault,
-    hosts: DuplicateAwareSet<String>,
-}
-
-impl Default for NetRules {
-    fn default() -> Self {
-        Self {
-            default: NetDefault::Deny,
-            hosts: DuplicateAwareSet::default(),
+macro_rules! define_duplicate_rules {
+    ($name:ident, $value_ty:ty, $field:ident, $default_ty:ty) => {
+        #[derive(Debug, Clone)]
+        pub(crate) struct $name {
+            pub(crate) default: $default_ty,
+            $field: DuplicateAwareSet<$value_ty>,
         }
-    }
-}
 
-impl NetRules {
-    pub(crate) fn with_default(default: NetDefault) -> Self {
-        Self {
-            default,
-            ..Self::default()
+        impl Default for $name {
+            fn default() -> Self {
+                Self {
+                    default: <$default_ty>::default(),
+                    $field: DuplicateAwareSet::default(),
+                }
+            }
         }
-    }
 
-    pub(crate) fn insert_raw(&mut self, host: String) {
-        self.hosts.insert(host);
-    }
+        impl $name {
+            pub(crate) fn with_default(default: $default_ty) -> Self {
+                Self {
+                    default,
+                    ..Self::default()
+                }
+            }
 
-    pub(crate) fn extend<I>(&mut self, iter: I)
-    where
-        I: IntoIterator<Item = String>,
-    {
-        self.hosts.extend(iter);
-    }
+            pub(crate) fn insert_raw(&mut self, value: $value_ty) {
+                self.$field.insert(value);
+            }
 
-    pub(crate) fn merge(&mut self, other: NetRules) {
-        self.default = other.default;
-        self.hosts.merge(other.hosts);
-    }
+            pub(crate) fn extend<I>(&mut self, iter: I)
+            where
+                I: IntoIterator<Item = $value_ty>,
+            {
+                self.$field.extend(iter);
+            }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &String> {
-        self.hosts.iter()
-    }
+            pub(crate) fn merge(&mut self, other: $name) {
+                self.default = other.default;
+                self.$field.merge(other.$field);
+            }
 
-    pub(crate) fn first_duplicate(&self) -> Option<&String> {
-        self.hosts.first_duplicate()
-    }
+            pub(crate) fn iter(&self) -> impl Iterator<Item = &$value_ty> {
+                self.$field.iter()
+            }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.hosts.is_empty()
-    }
-}
+            pub(crate) fn first_duplicate(&self) -> Option<&$value_ty> {
+                self.$field.first_duplicate()
+            }
 
-#[derive(Debug, Clone)]
-pub(crate) struct ExecRules {
-    pub(crate) default: ExecDefault,
-    allowed: DuplicateAwareSet<String>,
-}
-
-impl Default for ExecRules {
-    fn default() -> Self {
-        Self {
-            default: ExecDefault::Allowlist,
-            allowed: DuplicateAwareSet::default(),
+            pub(crate) fn is_empty(&self) -> bool {
+                self.$field.is_empty()
+            }
         }
-    }
-}
-
-impl ExecRules {
-    pub(crate) fn with_default(default: ExecDefault) -> Self {
-        Self {
-            default,
-            ..Self::default()
+    };
+    ($name:ident, $value_ty:ty, $field:ident) => {
+        #[derive(Debug, Clone)]
+        pub(crate) struct $name {
+            $field: DuplicateAwareSet<$value_ty>,
         }
-    }
 
-    pub(crate) fn insert_raw(&mut self, value: String) {
-        self.allowed.insert(value);
-    }
+        impl Default for $name {
+            fn default() -> Self {
+                Self {
+                    $field: DuplicateAwareSet::default(),
+                }
+            }
+        }
 
-    pub(crate) fn extend<I>(&mut self, iter: I)
-    where
-        I: IntoIterator<Item = String>,
-    {
-        self.allowed.extend(iter);
-    }
+        impl $name {
+            pub(crate) fn insert_raw(&mut self, value: $value_ty) {
+                self.$field.insert(value);
+            }
 
-    pub(crate) fn merge(&mut self, other: ExecRules) {
-        self.default = other.default;
-        self.allowed.merge(other.allowed);
-    }
+            pub(crate) fn extend<I>(&mut self, iter: I)
+            where
+                I: IntoIterator<Item = $value_ty>,
+            {
+                self.$field.extend(iter);
+            }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &String> {
-        self.allowed.iter()
-    }
+            pub(crate) fn merge(&mut self, other: $name) {
+                self.$field.merge(other.$field);
+            }
 
-    pub(crate) fn first_duplicate(&self) -> Option<&String> {
-        self.allowed.first_duplicate()
-    }
+            pub(crate) fn iter(&self) -> impl Iterator<Item = &$value_ty> {
+                self.$field.iter()
+            }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.allowed.is_empty()
-    }
+            pub(crate) fn first_duplicate(&self) -> Option<&$value_ty> {
+                self.$field.first_duplicate()
+            }
+
+            pub(crate) fn is_empty(&self) -> bool {
+                self.$field.is_empty()
+            }
+        }
+    };
 }
 
-#[derive(Debug, Clone, Default)]
-pub(crate) struct SyscallRules {
-    deny: DuplicateAwareSet<String>,
-}
-
-impl SyscallRules {
-    pub(crate) fn insert_raw(&mut self, name: String) {
-        self.deny.insert(name);
-    }
-
-    pub(crate) fn extend<I>(&mut self, iter: I)
-    where
-        I: IntoIterator<Item = String>,
-    {
-        self.deny.extend(iter);
-    }
-
-    pub(crate) fn merge(&mut self, other: SyscallRules) {
-        self.deny.merge(other.deny);
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &String> {
-        self.deny.iter()
-    }
-
-    pub(crate) fn first_duplicate(&self) -> Option<&String> {
-        self.deny.first_duplicate()
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub(crate) struct EnvRules {
-    read: BTreeSet<String>,
-}
-
-impl EnvRules {
-    pub(crate) fn extend<I>(&mut self, iter: I)
-    where
-        I: IntoIterator<Item = String>,
-    {
-        self.read.extend(iter);
-    }
-
-    pub(crate) fn merge(&mut self, other: EnvRules) {
-        self.read.extend(other.read);
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &String> {
-        self.read.iter()
-    }
-}
+define_duplicate_rules!(NetRules, String, hosts, NetDefault);
+define_duplicate_rules!(ExecRules, String, allowed, ExecDefault);
+define_duplicate_rules!(SyscallRules, String, deny);
+define_duplicate_rules!(EnvRules, String, read);
