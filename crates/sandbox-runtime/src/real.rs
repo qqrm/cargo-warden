@@ -7,7 +7,9 @@ use crate::seccomp::apply_seccomp;
 use crate::util::events_path;
 use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
-use aya::programs::{CgroupAttachMode, CgroupSockAddr, Link, Lsm};
+use aya::programs::{
+    CgroupAttachMode, CgroupSockAddr, Link, Lsm, TracePoint, trace_point::TracePointLink,
+};
 use aya::{Btf, Ebpf};
 use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
@@ -22,6 +24,7 @@ pub(crate) struct RealSandbox {
     cgroup: Cgroup,
     lsm_links: Vec<LsmLink>,
     cgroup_links: Vec<CgroupSockAddrLink>,
+    trace_links: Vec<TracePointLink>,
     agent: Option<AgentHandle>,
     events_path: std::path::PathBuf,
 }
@@ -39,11 +42,13 @@ impl RealSandbox {
             cgroup,
             lsm_links: Vec::new(),
             cgroup_links: Vec::new(),
+            trace_links: Vec::new(),
             agent: None,
             events_path,
         };
         sandbox.attach_lsm()?;
         sandbox.attach_cgroup()?;
+        sandbox.attach_tracepoints()?;
         let ring = sandbox.with_bpf(take_events_ring)?;
         sandbox.agent = Some(start_agent(ring, sandbox.events_path.clone())?);
         Ok(sandbox)
@@ -78,6 +83,10 @@ impl RealSandbox {
         for link in self.cgroup_links.drain(..) {
             link.detach()
                 .map_err(|err| io::Error::other(format!("detach cgroup link: {err}")))?;
+        }
+        for link in self.trace_links.drain(..) {
+            link.detach()
+                .map_err(|err| io::Error::other(format!("detach tracepoint link: {err}")))?;
         }
         self.cgroup.cleanup()?;
         Ok(())
@@ -147,6 +156,37 @@ impl RealSandbox {
             Ok(())
         })?;
         self.cgroup_links.extend(links);
+        Ok(())
+    }
+
+    fn attach_tracepoints(&mut self) -> io::Result<()> {
+        let mut links = Vec::new();
+        self.with_bpf(|bpf| {
+            for (name, category, event) in [
+                ("sys_enter_execve", "syscalls", "sys_enter_execve"),
+                ("sched_process_fork", "sched", "sched_process_fork"),
+                ("sched_process_exit", "sched", "sched_process_exit"),
+            ] {
+                let program = bpf
+                    .program_mut(name)
+                    .ok_or_else(|| program_not_found(name))?;
+                let program: &mut TracePoint = program.try_into().map_err(|err| {
+                    io::Error::other(format!("program {name} type mismatch: {err}"))
+                })?;
+                program
+                    .load()
+                    .map_err(|err| io::Error::other(format!("load {name}: {err}")))?;
+                let link_id = program
+                    .attach(category, event)
+                    .map_err(|err| io::Error::other(format!("attach {name}: {err}")))?;
+                let link = program
+                    .take_link(link_id)
+                    .map_err(|err| io::Error::other(format!("link {name}: {err}")))?;
+                links.push(link);
+            }
+            Ok(())
+        })?;
+        self.trace_links.extend(links);
         Ok(())
     }
 

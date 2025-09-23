@@ -258,21 +258,24 @@ User’s local trust database:
 * `cgroup/connect4` and `cgroup/connect6` – deny outbound connections, allow only from allowlist or to `127.0.0.1:proxy`.
 * `cgroup/sendmsg4` and `cgroup/sendmsg6` – deny UDP bypass of DNS and proxy.
 
-**Uprobes**
+**Tracepoints**
 
-* `cargo` and `rustc` – mark processes with unit types via argv for precise policy mapping.
+* `syscalls/sys_enter_execve` – inspect argv to classify commands and store pid→unit mappings.
+* `sched/sched_process_fork` – inherit the parent's unit for newly forked tasks.
+* `sched/sched_process_exit` – remove workload entries when tasks terminate.
 
 **Performance structures in eBPF**
 
 * Prefix trees for read/write path checks.
 * Hash set of allowed exec paths.
 * Compact bitmasks for capability flags.
+* Hash map (`WORKLOAD_UNITS`) mapping pid to workload units for policy lookups.
 
 ## 11. Execution Flow
 
 * `cli` creates a cgroup for the build and loads eBPF programs.
 * Launches `cargo` as a child process; the entire process tree inherits the cgroup.
-* Uprobes tag processes and populate eBPF maps with policy IDs.
+* Tracepoints classify commands, populate `WORKLOAD_UNITS`, and keep unit hierarchy in sync.
 * On risky operations eBPF returns Allow or `EPERM`.
 * `qqrm-agent-lite` reads events from a ring buffer and writes a report.
 
