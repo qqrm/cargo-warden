@@ -40,7 +40,9 @@ pub(crate) fn exec_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> 
          hosts = []\n\
          \n\
          [allow.fs]\n\
+         # Strict mode implicitly allows writing to the Cargo target directory (including OUT_DIR).\n\
          write_extra = []\n\
+         # Strict mode implicitly allows reading from the workspace root.\n\
          read_extra = []\n",
         allowed
     );
@@ -80,6 +82,12 @@ mod tests {
         assert!(config.contains("fs.default = \"strict\""));
         assert!(config.contains("net.default = \"deny\""));
         assert!(config.contains("exec.default = \"allowlist\""));
+        assert!(config.contains(
+            "# Strict mode implicitly allows writing to the Cargo target directory (including OUT_DIR)."
+        ));
+        assert!(
+            config.contains("# Strict mode implicitly allows reading from the workspace root.")
+        );
 
         let policy = Policy::from_toml_str(&config).unwrap();
         assert_eq!(policy.mode, Mode::Enforce);
