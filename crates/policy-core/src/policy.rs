@@ -261,7 +261,7 @@ mod tests {
         std::fs::canonicalize(&target).unwrap_or(target)
     }
 
-    fn inject_default_fs_paths(policy: &mut Policy) {
+    fn ensure_default_fs_paths(policy: &mut Policy) {
         let workspace = workspace_root_path();
         if !policy.fs_read_paths().any(|path| path == &workspace) {
             policy.extend_fs_reads(std::iter::once(workspace));
@@ -330,7 +330,7 @@ deny = ["clone"]
     #[test]
     fn parse_and_validate() {
         let mut policy = Policy::from_toml_str(VALID).unwrap();
-        inject_default_fs_paths(&mut policy);
+        ensure_default_fs_paths(&mut policy);
         let report = policy.validate();
         assert!(report.errors.is_empty());
         assert!(report.warnings.is_empty());
@@ -543,7 +543,7 @@ hosts = ["127.0.0.1:1080"]
     #[test]
     fn new_policy_has_empty_rule_sets() {
         let mut policy = Policy::new(Mode::Enforce);
-        inject_default_fs_paths(&mut policy);
+        ensure_default_fs_paths(&mut policy);
         assert_eq!(policy.mode, Mode::Enforce);
         assert_eq!(policy.exec_default(), ExecDefault::Allowlist);
         assert_eq!(policy.net_default(), NetDefault::Deny);

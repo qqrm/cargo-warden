@@ -1280,7 +1280,28 @@ mod tests {
         LAST_EVENT.lock().unwrap().take();
         let rules = default_fs_rules();
         set_fs_rules(&rules);
-        let path = "/var/warden/forbidden.txt";
+        let allowed_path = format!("{}/README.md", workspace_root_string());
+        let allowed_bytes = c_string(&allowed_path);
+        let mut allowed_file = TestFile {
+            path: allowed_bytes.as_ptr(),
+            mode: FMODE_READ,
+        };
+        assert_eq!(
+            file_open(
+                (&mut allowed_file) as *mut _ as *mut c_void,
+                ptr::null_mut()
+            ),
+            0
+        );
+        let allowed_event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(allowed_event.action, ACTION_OPEN);
+        assert_eq!(allowed_event.verdict, 0);
+        assert_eq!(bytes_to_string(&allowed_event.path_or_addr), allowed_path);
+        let allowed_count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert_eq!(allowed_count, 1);
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        let path = "/etc/warden/forbidden.txt";
         let path_bytes = c_string(path);
         let mut file = TestFile {
             path: path_bytes.as_ptr(),
@@ -1440,7 +1461,25 @@ mod tests {
         reset_fs_state();
         let rules = default_fs_rules();
         set_fs_rules(&rules);
-        let file_path = c_string("/var/warden/data.txt");
+        let workspace_path = format!("{}/SPEC.md", workspace_root_string());
+        let workspace_bytes = c_string(&workspace_path);
+        let mut workspace_file = TestFile {
+            path: workspace_bytes.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let workspace_ptr = (&mut workspace_file) as *mut _ as *mut c_void;
+        assert_eq!(file_permission(workspace_ptr, MAY_READ), 0);
+
+        let target_path = format!("{}/build/artifact.txt", target_dir_string());
+        let target_bytes = c_string(&target_path);
+        let mut target_file = TestFile {
+            path: target_bytes.as_ptr(),
+            mode: FMODE_READ | FMODE_WRITE,
+        };
+        let target_ptr = (&mut target_file) as *mut _ as *mut c_void;
+        assert_eq!(file_permission(target_ptr, MAY_WRITE), 0);
+
+        let file_path = c_string("/etc/warden/data.txt");
         let mut file = TestFile {
             path: file_path.as_ptr(),
             mode: FMODE_READ,
@@ -1522,8 +1561,8 @@ mod tests {
         reset_fs_state();
         EVENT_COUNTS.clear();
         LAST_EVENT.lock().unwrap().take();
-        let old_path = "/workspace/src.txt";
-        let new_path = "/workspace/dst.txt";
+        let old_path = "/etc/warden/src.txt";
+        let new_path = "/etc/warden/dst.txt";
         set_fs_rules(&[fs_rule_entry(0, new_path, FS_WRITE)]);
         let old_bytes = c_string(old_path);
         let new_bytes = c_string(new_path);
@@ -1556,8 +1595,8 @@ mod tests {
         reset_fs_state();
         EVENT_COUNTS.clear();
         LAST_EVENT.lock().unwrap().take();
-        let old_path = "/workspace/allowed.txt";
-        let new_path = "/workspace/blocked.txt";
+        let old_path = "/etc/warden/allowed.txt";
+        let new_path = "/etc/warden/blocked.txt";
         set_fs_rules(&[fs_rule_entry(0, old_path, FS_WRITE)]);
         let old_bytes = c_string(old_path);
         let new_bytes = c_string(new_path);
@@ -1623,8 +1662,8 @@ mod tests {
         assert!(is_observe_mode(), "observe mode should be enabled");
         EVENT_COUNTS.clear();
         LAST_EVENT.lock().unwrap().take();
-        let old_path = "/workspace/src.txt";
-        let new_path = "/workspace/dst.txt";
+        let old_path = "/etc/warden/src.txt";
+        let new_path = "/etc/warden/dst.txt";
         let old_bytes = c_string(old_path);
         let new_bytes = c_string(new_path);
         let mut old_dentry = TestDentry {
@@ -1676,7 +1715,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        let path = "/workspace/temp.txt";
+        let path = "/etc/warden/temp.txt";
         let path_bytes = c_string(path);
         let mut dentry = TestDentry {
             name: path_bytes.as_ptr(),
@@ -1718,7 +1757,7 @@ mod tests {
         reset_fs_state();
         enable_observe_mode();
         assert!(is_observe_mode(), "observe mode should be enabled");
-        let path = "/workspace/temp.txt";
+        let path = "/etc/warden/temp.txt";
         let path_bytes = c_string(path);
         let mut dentry = TestDentry {
             name: path_bytes.as_ptr(),
