@@ -235,7 +235,7 @@ mod tests {
             .into_owned()
     }
 
-    fn inject_default_fs_paths(policy: &mut Policy) {
+    fn ensure_default_fs_paths(policy: &mut Policy) {
         let workspace = workspace_root_path();
         if !policy.fs_read_paths().any(|path| path == &workspace) {
             policy.extend_fs_reads(std::iter::once(workspace));
@@ -260,7 +260,7 @@ mod tests {
         policy.extend_fs_writes(vec![PathBuf::from("/tmp/logs")]);
         policy.extend_fs_reads(vec![PathBuf::from("/etc/ssl/certs")]);
         policy.extend_env_read_vars(vec!["PATH".into(), "HOME".into(), "HOME".into()]);
-        inject_default_fs_paths(&mut policy);
+        ensure_default_fs_paths(&mut policy);
 
         let CompiledPolicy {
             maps_layout: layout,
@@ -320,7 +320,7 @@ mod tests {
         policy.extend_exec_allowed(vec!["/usr/bin/rustc".into()]);
         policy.extend_net_hosts(vec!["127.0.0.1:8080".into()]);
         policy.extend_fs_writes(vec![PathBuf::from("/tmp/logs")]);
-        inject_default_fs_paths(&mut policy);
+        ensure_default_fs_paths(&mut policy);
 
         let CompiledPolicy {
             maps_layout: layout,
