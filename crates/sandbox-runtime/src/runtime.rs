@@ -1,8 +1,10 @@
 use crate::fake::FakeSandbox;
 use crate::real::RealSandbox;
+use crate::workload::detect_program_unit;
 use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
 use std::env;
+use std::ffi::OsString;
 use std::io;
 use std::process::{Command, ExitStatus};
 
@@ -42,6 +44,12 @@ impl Sandbox {
         layout: &MapsLayout,
         allowed_env: &[String],
     ) -> io::Result<ExitStatus> {
+        let program = command.get_program().to_owned();
+        let args: Vec<OsString> = command.get_args().map(|arg| arg.to_owned()).collect();
+        let unit = detect_program_unit(&program, &args);
+        let parent_pid = std::process::id();
+        self.write_workload_units(&[(parent_pid, unit)])?;
+
         match &mut self.inner {
             SandboxImpl::Real(real) => real.run(command, mode, deny, layout, allowed_env),
             SandboxImpl::Fake(fake) => fake.run(command, mode, deny, layout, allowed_env),

@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use bpf_api::{MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE};
+use bpf_api::{MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE, UNIT_RUSTC};
 use event_reporting::EventRecord;
 use sandbox_runtime::LayoutSnapshot;
 use serde_json::json;
@@ -78,6 +78,7 @@ fn init_cargo_package(dir: &Path) -> io::Result<()> {
 const DENIED_ENDPOINT: &str = "198.51.100.10:443";
 const DENIED_PID: u32 = 7777;
 const DENIED_ACTION: u8 = 4;
+const DENIED_UNIT: u8 = UNIT_RUSTC as u8;
 const RENAME_PATH: &str = "/var/warden/forbidden";
 const RENAME_ACTION: u8 = 1;
 
@@ -107,12 +108,13 @@ fn make_executable(_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 fn write_violation_script(
     dir: &Path,
     action: u8,
+    unit: u8,
     path_or_addr: &str,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     let script_path = dir.join(format!("deny-action-{action}.sh"));
     let deny_event = json!({
         "pid": DENIED_PID,
-        "unit": 0,
+        "unit": unit,
         "action": action,
         "verdict": 1,
         "container_id": 0,
@@ -186,7 +188,8 @@ fn fake_sandbox_enforce_denial_fails_child() -> Result<(), Box<dyn std::error::E
     let events_path = dir.path().join("enforce-events.jsonl");
     let layout_path = dir.path().join("enforce-layout.jsonl");
     let cgroup_path = dir.path().join("enforce-cgroup");
-    let script_path = write_violation_script(dir.path(), DENIED_ACTION, DENIED_ENDPOINT)?;
+    let script_path =
+        write_violation_script(dir.path(), DENIED_ACTION, DENIED_UNIT, DENIED_ENDPOINT)?;
     let policy_path = write_policy_for_mode(dir.path(), &script_path, "enforce")?;
 
     fs::File::create(&events_path)?;
@@ -222,6 +225,7 @@ fn fake_sandbox_enforce_denial_fails_child() -> Result<(), Box<dyn std::error::E
     let event = &events[0];
     assert_eq!(event.pid, DENIED_PID);
     assert_eq!(event.action, DENIED_ACTION);
+    assert_eq!(event.unit, DENIED_UNIT);
     assert_eq!(event.verdict, 1);
     assert_eq!(event.path_or_addr, DENIED_ENDPOINT);
 
@@ -245,7 +249,7 @@ fn fake_sandbox_enforce_rename_denial_reports_event() -> Result<(), Box<dyn std:
     let events_path = dir.path().join("rename-events.jsonl");
     let layout_path = dir.path().join("rename-layout.jsonl");
     let cgroup_path = dir.path().join("rename-cgroup");
-    let script_path = write_violation_script(dir.path(), RENAME_ACTION, RENAME_PATH)?;
+    let script_path = write_violation_script(dir.path(), RENAME_ACTION, DENIED_UNIT, RENAME_PATH)?;
     let policy_path = write_policy_for_mode(dir.path(), &script_path, "enforce")?;
 
     fs::File::create(&events_path)?;
@@ -278,6 +282,7 @@ fn fake_sandbox_enforce_rename_denial_reports_event() -> Result<(), Box<dyn std:
     let event = &events[0];
     assert_eq!(event.pid, DENIED_PID);
     assert_eq!(event.action, RENAME_ACTION);
+    assert_eq!(event.unit, DENIED_UNIT);
     assert_eq!(event.verdict, 1);
     assert_eq!(event.path_or_addr, RENAME_PATH);
 
@@ -301,7 +306,8 @@ fn fake_sandbox_observe_denial_allows_child() -> Result<(), Box<dyn std::error::
     let events_path = dir.path().join("observe-events.jsonl");
     let layout_path = dir.path().join("observe-layout.jsonl");
     let cgroup_path = dir.path().join("observe-cgroup");
-    let script_path = write_violation_script(dir.path(), DENIED_ACTION, DENIED_ENDPOINT)?;
+    let script_path =
+        write_violation_script(dir.path(), DENIED_ACTION, DENIED_UNIT, DENIED_ENDPOINT)?;
     let policy_path = write_policy_for_mode(dir.path(), &script_path, "observe")?;
 
     fs::File::create(&events_path)?;
@@ -338,6 +344,7 @@ fn fake_sandbox_observe_denial_allows_child() -> Result<(), Box<dyn std::error::
     let event = &events[0];
     assert_eq!(event.pid, DENIED_PID);
     assert_eq!(event.action, DENIED_ACTION);
+    assert_eq!(event.unit, DENIED_UNIT);
     assert_eq!(event.verdict, 1);
     assert_eq!(event.path_or_addr, DENIED_ENDPOINT);
 
