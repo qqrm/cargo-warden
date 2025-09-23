@@ -293,20 +293,20 @@ mod tests {
         assert_eq!(layout.fs_rules.len(), 4);
         let expected_target = target_dir_string();
         let expected_workspace = workspace_root_string();
-        let fs_entries: Vec<_> = layout
+        let mut fs_entries: Vec<_> = layout
             .fs_rules
             .iter()
             .map(|entry| (entry.unit, entry.rule.access, to_string(&entry.rule.path)))
             .collect();
-        assert_eq!(
-            fs_entries,
-            vec![
-                (0, FS_READ | FS_WRITE, "/tmp/logs".to_string()),
-                (0, FS_READ | FS_WRITE, expected_target),
-                (0, FS_READ, "/etc/ssl/certs".to_string()),
-                (0, FS_READ, expected_workspace),
-            ]
-        );
+        fs_entries.sort();
+        let mut expected_fs_entries = vec![
+            (0, FS_READ | FS_WRITE, "/tmp/logs".to_string()),
+            (0, FS_READ | FS_WRITE, expected_target),
+            (0, FS_READ, "/etc/ssl/certs".to_string()),
+            (0, FS_READ, expected_workspace),
+        ];
+        expected_fs_entries.sort();
+        assert_eq!(fs_entries, expected_fs_entries);
     }
 
     #[test]
