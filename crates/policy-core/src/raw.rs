@@ -4,6 +4,16 @@ use crate::workspace::RawPolicyOverride;
 use serde::Deserialize;
 use std::path::PathBuf;
 
+macro_rules! raw_wrapper {
+    ($name:ident, $field:ident, $ty:ty) => {
+        #[derive(Debug, Deserialize, Clone, Default)]
+        pub(crate) struct $name {
+            #[serde(default)]
+            pub(crate) $field: $ty,
+        }
+    };
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub(crate) struct RawPolicy {
     pub(crate) mode: Mode,
@@ -101,23 +111,9 @@ impl RawPolicy {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
-pub(crate) struct RawFsPolicy {
-    #[serde(default)]
-    pub(crate) default: FsDefault,
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-pub(crate) struct RawNetPolicy {
-    #[serde(default)]
-    pub(crate) default: NetDefault,
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-pub(crate) struct RawExecPolicy {
-    #[serde(default)]
-    pub(crate) default: ExecDefault,
-}
+raw_wrapper!(RawFsPolicy, default, FsDefault);
+raw_wrapper!(RawNetPolicy, default, NetDefault);
+raw_wrapper!(RawExecPolicy, default, ExecDefault);
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub(crate) struct RawSyscallPolicy {
@@ -137,17 +133,8 @@ pub(crate) struct RawAllowSection {
     pub(crate) env: RawEnvAllow,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
-pub(crate) struct RawExecAllow {
-    #[serde(default)]
-    pub(crate) allowed: Vec<String>,
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-pub(crate) struct RawNetAllow {
-    #[serde(default)]
-    pub(crate) hosts: Vec<String>,
-}
+raw_wrapper!(RawExecAllow, allowed, Vec<String>);
+raw_wrapper!(RawNetAllow, hosts, Vec<String>);
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub(crate) struct RawFsAllow {
@@ -157,8 +144,4 @@ pub(crate) struct RawFsAllow {
     pub(crate) read_extra: Vec<PathBuf>,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
-pub(crate) struct RawEnvAllow {
-    #[serde(default)]
-    pub(crate) read: Vec<String>,
-}
+raw_wrapper!(RawEnvAllow, read, Vec<String>);
