@@ -201,13 +201,20 @@ impl Policy {
         if let Some(dup) = self.net.first_duplicate() {
             errors.push(DuplicateNet(dup.clone()));
         }
+        if !self.env.is_empty()
+            && let Some(dup) = self.env.first_duplicate()
+        {
+            errors.push(DuplicateEnv(dup.clone()));
+        }
         if let Some(dup) = self.fs.first_duplicate_write() {
             errors.push(DuplicateFsWrite(dup.to_string_lossy().into()));
         }
         if let Some(dup) = self.fs.first_duplicate_read() {
             errors.push(DuplicateFsRead(dup.to_string_lossy().into()));
         }
-        if let Some(dup) = self.syscall.first_duplicate() {
+        if !self.syscall.is_empty()
+            && let Some(dup) = self.syscall.first_duplicate()
+        {
             errors.push(DuplicateSyscall(dup.clone()));
         }
 
@@ -537,6 +544,18 @@ hosts = ["127.0.0.1:1080"]
         assert!(matches!(
             &report.errors[0],
             ValidationError::DuplicateSyscall(dup) if dup == "clone"
+        ));
+    }
+
+    #[test]
+    fn extend_env_read_reports_duplicates() {
+        let mut policy = Policy::new(Mode::Enforce);
+        policy.extend_env_read_vars(vec!["HOME".into(), "HOME".into()]);
+        let report = policy.validate();
+        assert_eq!(report.errors.len(), 1);
+        assert!(matches!(
+            &report.errors[0],
+            ValidationError::DuplicateEnv(dup) if dup == "HOME"
         ));
     }
 

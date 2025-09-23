@@ -66,7 +66,9 @@ impl From<RawPolicy> for Policy {
         }
 
         let mut env_rules = EnvRules::default();
-        env_rules.extend(env_read);
+        for var in env_read {
+            env_rules.insert_raw(var);
+        }
 
         Policy {
             mode,
