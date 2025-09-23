@@ -202,12 +202,18 @@ allowed = ["rustc", "rustdoc", "ar", "ld", "cc", "pkg-config"]
 hosts = ["127.0.0.1:1080"]  # example local proxy
 
 [allow.fs]
+# Strict mode implicitly allows writing to the Cargo target directory (including OUT_DIR).
 write_extra = ["/tmp/warden-scratch"]
+# Strict mode implicitly allows reading from the workspace root.
 read_extra  = ["/usr/include"]
 
 [allow.env]
 read = ["CARGO", "OUT_DIR"]
 ```
+
+Strict filesystem mode automatically whitelists the workspace root for reads and the
+Cargo `target` directory (which covers `OUT_DIR`) for writes. The `allow.fs`
+settings extend those implicit permissions for additional paths.
 
 Optional declarations in package `Cargo.toml`:
 
