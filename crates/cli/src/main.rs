@@ -8,10 +8,19 @@ use clap::{Parser, Subcommand, ValueEnum};
 use policy_core::Mode;
 use std::process::exit;
 
+use crate::commands::report::ReportFormat as ExecReportFormat;
+
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum CliMode {
     Observe,
     Enforce,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum CliReportFormat {
+    Text,
+    Json,
+    Sarif,
 }
 
 impl From<CliMode> for Mode {
@@ -19,6 +28,16 @@ impl From<CliMode> for Mode {
         match mode {
             CliMode::Observe => Mode::Observe,
             CliMode::Enforce => Mode::Enforce,
+        }
+    }
+}
+
+impl From<CliReportFormat> for ExecReportFormat {
+    fn from(format: CliReportFormat) -> Self {
+        match format {
+            CliReportFormat::Text => ExecReportFormat::Text,
+            CliReportFormat::Json => ExecReportFormat::Json,
+            CliReportFormat::Sarif => ExecReportFormat::Sarif,
         }
     }
 }
@@ -63,11 +82,14 @@ enum Commands {
     Init,
     /// Show active policy and recent events.
     Status,
-    /// Export events to a SARIF report.
+    /// Export events in text, JSON, or SARIF format.
     Report {
-        /// Output file for the SARIF report.
-        #[arg(long = "output", value_name = "FILE", default_value = "warden.sarif")]
-        output: String,
+        /// Output format for the report.
+        #[arg(long = "format", value_enum, default_value_t = CliReportFormat::Text)]
+        format: CliReportFormat,
+        /// Output file for the SARIF report (defaults to `warden.sarif`).
+        #[arg(long = "output", value_name = "FILE")]
+        output: Option<String>,
     },
 }
 
@@ -106,8 +128,8 @@ fn main() {
                 exit(1);
             }
         }
-        Commands::Report { output } => {
-            if let Err(e) = commands::report::exec(&output) {
+        Commands::Report { format, output } => {
+            if let Err(e) = commands::report::exec(format.into(), output.as_deref()) {
                 eprintln!("report failed: {e}");
                 exit(1);
             }
@@ -211,6 +233,37 @@ mod tests {
         let cli = Cli::parse_from(["cargo-warden", "report"]);
         match cli.command {
             Commands::Report { .. } => {}
+            _ => panic!("expected report command"),
+        }
+    }
+
+    #[test]
+    fn parse_report_defaults_to_text() {
+        let cli = Cli::parse_from(["cargo-warden", "report"]);
+        match cli.command {
+            Commands::Report { format, output } => {
+                assert!(matches!(format, CliReportFormat::Text));
+                assert!(output.is_none());
+            }
+            _ => panic!("expected report command"),
+        }
+    }
+
+    #[test]
+    fn parse_report_accepts_sarif_output() {
+        let cli = Cli::parse_from([
+            "cargo-warden",
+            "report",
+            "--format",
+            "sarif",
+            "--output",
+            "custom.sarif",
+        ]);
+        match cli.command {
+            Commands::Report { format, output } => {
+                assert!(matches!(format, CliReportFormat::Sarif));
+                assert_eq!(output.as_deref(), Some("custom.sarif"));
+            }
             _ => panic!("expected report command"),
         }
     }
