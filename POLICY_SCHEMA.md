@@ -15,7 +15,9 @@ allowed = ["rustc", "rustdoc"]
 hosts = ["127.0.0.1:1080"]
 
 [allow.fs]
+# Strict mode implicitly allows writing to the Cargo target directory (including OUT_DIR).
 write_extra = ["/tmp/warden-scratch"]
+# Strict mode implicitly allows reading from the workspace root.
 read_extra = ["/usr/include"]
 
 [allow.env]
@@ -58,10 +60,12 @@ List of executables permitted when `exec.default = "allowlist"`.
 List of hosts allowed when `net.default = "deny"`. Each entry uses `host:port` form.
 
 ### `allow.fs.write_extra`
-Additional paths allowed for writing when `fs.default = "strict"`.
+Additional write paths permitted beyond the implicit Cargo `target` directory when
+`fs.default = "strict"`.
 
 ### `allow.fs.read_extra`
-Additional paths allowed for reading when `fs.default = "strict"`.
+Additional read paths permitted beyond the workspace root when
+`fs.default = "strict"`.
 
 ### `allow.env.read`
 Environment variables that build scripts are allowed to read explicitly.

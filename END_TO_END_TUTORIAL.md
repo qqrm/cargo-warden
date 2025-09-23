@@ -27,11 +27,18 @@ allowed = ["rustc", "rustdoc", "rustfmt"]
 hosts = ["127.0.0.1:8080"]
 
 [allow.fs]
+# Strict mode implicitly allows writing to the Cargo target directory (including OUT_DIR).
 write_extra = ["/tmp/warden-scratch"]
+# Strict mode implicitly allows reading from the workspace root.
 read_extra = ["/usr/include"]
 ```
 
 Save changes.
+
+Strict filesystem mode always grants write access to Cargo's `target` directory (which
+covers `OUT_DIR`) and read access to the workspace root. The `write_extra` and
+`read_extra` arrays extend those implicit permissions when the build needs
+additional paths.
 
 ## 3. Build under enforcement
 
