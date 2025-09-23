@@ -1,4 +1,4 @@
-use policy_core::{Mode, Policy, WorkspacePolicy};
+use policy_core::{FsDefault, Mode, Policy, WorkspacePolicy};
 use qqrm_policy_compiler::{self, CompiledPolicy, MapsLayout};
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -25,6 +25,7 @@ pub(crate) fn setup_isolation(
         merge_policy(&mut policy, extra);
     }
     policy.extend_exec_allowed(allow.iter().cloned());
+    extend_fs_access(&mut policy)?;
     if let Some(mode) = mode_override {
         policy.mode = mode;
     }
@@ -177,6 +178,61 @@ fn load_cargo_metadata() -> io::Result<CargoMetadata> {
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
 }
 
+fn extend_fs_access(policy: &mut Policy) -> io::Result<()> {
+    if policy.fs_default() != FsDefault::Strict {
+        return Ok(());
+    }
+
+    let metadata = load_cargo_metadata()?;
+    maybe_extend_fs_read(policy, &metadata.workspace_root);
+    maybe_extend_fs_write(policy, &metadata.target_directory);
+
+    Ok(())
+}
+
+fn maybe_extend_fs_read(policy: &mut Policy, path: &Path) {
+    let normalized = normalize_path(path);
+    if !contains_path(policy.fs_read_paths(), &normalized) {
+        policy.extend_fs_reads(std::iter::once(normalized));
+    }
+}
+
+fn maybe_extend_fs_write(policy: &mut Policy, path: &Path) {
+    let normalized = normalize_path(path);
+    if !contains_path(policy.fs_write_paths(), &normalized) {
+        policy.extend_fs_writes(std::iter::once(normalized));
+    }
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn contains_path<'a>(paths: impl Iterator<Item = &'a PathBuf>, candidate: &Path) -> bool {
+    let candidate_canon = std::fs::canonicalize(candidate).ok();
+    for existing in paths {
+        if existing.as_path() == candidate {
+            return true;
+        }
+        if let Some(ref canon) = candidate_canon
+            && existing.as_path() == canon.as_path()
+        {
+            return true;
+        }
+        if let Ok(existing_canon) = std::fs::canonicalize(existing) {
+            if existing_canon == candidate {
+                return true;
+            }
+            if let Some(ref canon) = candidate_canon
+                && existing_canon == canon.as_path()
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn workspace_member_from_dir(metadata: &CargoMetadata) -> io::Result<Option<String>> {
     let member_ids: HashSet<&str> = metadata
         .workspace_members
@@ -226,6 +282,8 @@ fn empty_policy() -> Policy {
 struct CargoMetadata {
     packages: Vec<CargoPackage>,
     workspace_members: Vec<String>,
+    workspace_root: PathBuf,
+    target_directory: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -238,8 +296,10 @@ struct CargoPackage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bpf_api::{FS_READ, FS_WRITE};
     use serial_test::serial;
-    use std::fs::write;
+    use std::fs::{self, write};
+    use std::path::Path;
 
     fn exec_paths(layout: &MapsLayout) -> Vec<String> {
         layout
@@ -256,11 +316,39 @@ mod tests {
             .collect()
     }
 
+    fn fs_entries(layout: &MapsLayout) -> Vec<(String, u8)> {
+        layout
+            .fs_rules
+            .iter()
+            .map(|entry| {
+                let len = entry
+                    .rule
+                    .path
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(entry.rule.path.len());
+                let path = String::from_utf8_lossy(&entry.rule.path[..len]).into_owned();
+                (path, entry.rule.access)
+            })
+            .collect()
+    }
+
+    fn init_cargo_package(dir: &Path) {
+        write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        write(dir.join("src/lib.rs"), "pub fn fixture() {}\n").unwrap();
+    }
+
     #[test]
     #[serial]
     fn setup_isolation_merges_syscalls_and_allow_entries() {
         let dir = tempfile::tempdir().unwrap();
         let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
 
         write(
             "warden.toml",
@@ -320,6 +408,20 @@ deny = ["execve"]
         assert!(exec.contains(&"/bin/bash".to_string()));
         assert!(exec.contains(&"/usr/bin/git".to_string()));
         assert_eq!(exec.len(), 3);
+
+        let metadata = super::load_cargo_metadata().unwrap();
+        let workspace = super::normalize_path(&metadata.workspace_root);
+        let target = super::normalize_path(&metadata.target_directory);
+        let fs_rules = fs_entries(&isolation.maps_layout);
+        assert!(
+            fs_rules
+                .iter()
+                .any(|(path, access)| path == &workspace.to_string_lossy() && *access == FS_READ)
+        );
+        assert!(fs_rules.iter().any(|(path, access)| {
+            path == &target.to_string_lossy() && *access == (FS_READ | FS_WRITE)
+        }));
+        assert_eq!(fs_rules.len(), 2);
     }
 
     #[test]
@@ -327,6 +429,7 @@ deny = ["execve"]
     fn setup_isolation_defaults_to_empty_policy() {
         let dir = tempfile::tempdir().unwrap();
         let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
 
         let isolation = setup_isolation(&[], &[], None).unwrap();
 
@@ -334,6 +437,20 @@ deny = ["execve"]
         assert!(isolation.syscall_deny.is_empty());
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
         assert!(isolation.maps_layout.net_rules.is_empty());
+
+        let metadata = super::load_cargo_metadata().unwrap();
+        let workspace = super::normalize_path(&metadata.workspace_root);
+        let target = super::normalize_path(&metadata.target_directory);
+        let fs_rules = fs_entries(&isolation.maps_layout);
+        assert!(
+            fs_rules
+                .iter()
+                .any(|(path, access)| path == &workspace.to_string_lossy() && *access == FS_READ)
+        );
+        assert!(fs_rules.iter().any(|(path, access)| {
+            path == &target.to_string_lossy() && *access == (FS_READ | FS_WRITE)
+        }));
+        assert_eq!(fs_rules.len(), 2);
     }
 
     #[test]
@@ -341,6 +458,7 @@ deny = ["execve"]
     fn setup_isolation_uses_cli_allow_when_no_file() {
         let dir = tempfile::tempdir().unwrap();
         let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
 
         let allow = vec!["/bin/bash".to_string()];
         let isolation = setup_isolation(&allow, &[], None).unwrap();
@@ -348,6 +466,20 @@ deny = ["execve"]
         assert_eq!(isolation.mode, Mode::Enforce);
         let exec = exec_paths(&isolation.maps_layout);
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
+
+        let metadata = super::load_cargo_metadata().unwrap();
+        let workspace = super::normalize_path(&metadata.workspace_root);
+        let target = super::normalize_path(&metadata.target_directory);
+        let fs_rules = fs_entries(&isolation.maps_layout);
+        assert!(
+            fs_rules
+                .iter()
+                .any(|(path, access)| path == &workspace.to_string_lossy() && *access == FS_READ)
+        );
+        assert!(fs_rules.iter().any(|(path, access)| {
+            path == &target.to_string_lossy() && *access == (FS_READ | FS_WRITE)
+        }));
+        assert_eq!(fs_rules.len(), 2);
     }
 
     #[test]
@@ -355,6 +487,7 @@ deny = ["execve"]
     fn setup_isolation_applies_mode_override() {
         let dir = tempfile::tempdir().unwrap();
         let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
 
         write(
             "warden.toml",
@@ -379,6 +512,7 @@ exec.default = "allow"
     fn setup_isolation_reports_duplicate_cli_allow() {
         let dir = tempfile::tempdir().unwrap();
         let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
 
         let allow = vec!["/bin/bash".to_string(), "/bin/bash".to_string()];
         let err = match setup_isolation(&allow, &[], None) {
@@ -389,5 +523,40 @@ exec.default = "allow"
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         let message = err.to_string();
         assert!(message.contains("duplicate exec allow rule: /bin/bash"));
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_skips_duplicate_fs_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
+
+        let metadata = super::load_cargo_metadata().unwrap();
+        let workspace = metadata.workspace_root.to_string_lossy().into_owned();
+        let target = metadata.target_directory.to_string_lossy().into_owned();
+
+        write(
+            "warden.toml",
+            format!(
+                "mode = \"enforce\"\nfs.default = \"strict\"\nnet.default = \"deny\"\nexec.default = \"allowlist\"\n\n[allow.fs]\nwrite_extra = [\"{target}\"]\nread_extra = [\"{workspace}\"]\n"
+            ),
+        )
+        .unwrap();
+
+        let isolation = setup_isolation(&[], &[], None).unwrap();
+        let fs_rules = fs_entries(&isolation.maps_layout);
+
+        assert_eq!(fs_rules.len(), 2);
+        assert!(
+            fs_rules
+                .iter()
+                .any(|(path, access)| { path == &workspace && *access == FS_READ })
+        );
+        assert!(
+            fs_rules
+                .iter()
+                .any(|(path, access)| { path == &target && *access == (FS_READ | FS_WRITE) })
+        );
     }
 }

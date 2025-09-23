@@ -65,6 +65,16 @@ fn read_event_records(path: &Path) -> Result<Vec<EventRecord>, Box<dyn std::erro
     Ok(events)
 }
 
+fn init_cargo_package(dir: &Path) -> io::Result<()> {
+    fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::create_dir_all(dir.join("src"))?;
+    fs::write(dir.join("src/lib.rs"), "pub fn fixture() {}\n")?;
+    Ok(())
+}
+
 const DENIED_ENDPOINT: &str = "198.51.100.10:443";
 const DENIED_PID: u32 = 7777;
 const DENIED_ACTION: u8 = 4;
@@ -168,6 +178,7 @@ allowed = [{script_entry}]
 #[test]
 fn fake_sandbox_enforce_denial_fails_child() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempdir()?;
+    init_cargo_package(dir.path())?;
     let events_path = dir.path().join("enforce-events.jsonl");
     let layout_path = dir.path().join("enforce-layout.jsonl");
     let cgroup_path = dir.path().join("enforce-cgroup");
@@ -226,6 +237,7 @@ fn fake_sandbox_enforce_denial_fails_child() -> Result<(), Box<dyn std::error::E
 #[test]
 fn fake_sandbox_observe_denial_allows_child() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempdir()?;
+    init_cargo_package(dir.path())?;
     let events_path = dir.path().join("observe-events.jsonl");
     let layout_path = dir.path().join("observe-layout.jsonl");
     let cgroup_path = dir.path().join("observe-cgroup");
@@ -285,6 +297,7 @@ fn fake_sandbox_observe_denial_allows_child() -> Result<(), Box<dyn std::error::
 #[test]
 fn run_fake_sandbox_records_layout() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempdir()?;
+    init_cargo_package(dir.path())?;
     let events_path = dir.path().join("warden-events.jsonl");
     let layout_path = dir.path().join("fake-layout.jsonl");
     let cgroup_path = dir.path().join("fake-cgroup");
