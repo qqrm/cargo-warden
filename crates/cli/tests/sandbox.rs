@@ -78,6 +78,8 @@ fn init_cargo_package(dir: &Path) -> io::Result<()> {
 const DENIED_ENDPOINT: &str = "198.51.100.10:443";
 const DENIED_PID: u32 = 7777;
 const DENIED_ACTION: u8 = 4;
+const RENAME_PATH: &str = "/var/warden/forbidden";
+const RENAME_ACTION: u8 = 1;
 
 fn run_in_fake_sandbox(
     mut cmd: Command,
@@ -102,18 +104,20 @@ fn make_executable(_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn write_denied_action_script(
+fn write_violation_script(
     dir: &Path,
+    action: u8,
+    path_or_addr: &str,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    let script_path = dir.join("denied-action.sh");
+    let script_path = dir.join(format!("deny-action-{action}.sh"));
     let deny_event = json!({
         "pid": DENIED_PID,
         "unit": 0,
-        "action": DENIED_ACTION,
+        "action": action,
         "verdict": 1,
         "container_id": 0,
         "caps": 0,
-        "path_or_addr": DENIED_ENDPOINT,
+        "path_or_addr": path_or_addr,
     })
     .to_string();
     fs::write(
@@ -182,7 +186,7 @@ fn fake_sandbox_enforce_denial_fails_child() -> Result<(), Box<dyn std::error::E
     let events_path = dir.path().join("enforce-events.jsonl");
     let layout_path = dir.path().join("enforce-layout.jsonl");
     let cgroup_path = dir.path().join("enforce-cgroup");
-    let script_path = write_denied_action_script(dir.path())?;
+    let script_path = write_violation_script(dir.path(), DENIED_ACTION, DENIED_ENDPOINT)?;
     let policy_path = write_policy_for_mode(dir.path(), &script_path, "enforce")?;
 
     fs::File::create(&events_path)?;
@@ -235,13 +239,69 @@ fn fake_sandbox_enforce_denial_fails_child() -> Result<(), Box<dyn std::error::E
 }
 
 #[test]
+fn fake_sandbox_enforce_rename_denial_reports_event() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempdir()?;
+    init_cargo_package(dir.path())?;
+    let events_path = dir.path().join("rename-events.jsonl");
+    let layout_path = dir.path().join("rename-layout.jsonl");
+    let cgroup_path = dir.path().join("rename-cgroup");
+    let script_path = write_violation_script(dir.path(), RENAME_ACTION, RENAME_PATH)?;
+    let policy_path = write_policy_for_mode(dir.path(), &script_path, "enforce")?;
+
+    fs::File::create(&events_path)?;
+
+    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    cmd.arg("run")
+        .arg("--policy")
+        .arg(&policy_path)
+        .arg("--")
+        .arg(&script_path)
+        .arg(&events_path)
+        .arg("enforce")
+        .current_dir(dir.path())
+        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
+        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
+        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
+        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path);
+
+    let (status, events) = run_in_fake_sandbox(cmd, &events_path)?;
+
+    assert!(!status.success(), "rename denial should fail command");
+    assert_eq!(status.code(), Some(42));
+    assert_eq!(
+        events.len(),
+        1,
+        "expected single rename event: {:?}",
+        events
+    );
+
+    let event = &events[0];
+    assert_eq!(event.pid, DENIED_PID);
+    assert_eq!(event.action, RENAME_ACTION);
+    assert_eq!(event.verdict, 1);
+    assert_eq!(event.path_or_addr, RENAME_PATH);
+
+    let snapshots = read_snapshots(&layout_path)?;
+    let snapshot = snapshots.last().expect("layout snapshot present");
+    assert_eq!(snapshot.mode, "enforce");
+    assert_eq!(snapshot.mode_flag, Some(MODE_FLAG_ENFORCE));
+
+    assert!(
+        !cgroup_path.exists(),
+        "fake sandbox should clean up cgroup directory"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fake_sandbox_observe_denial_allows_child() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempdir()?;
     init_cargo_package(dir.path())?;
     let events_path = dir.path().join("observe-events.jsonl");
     let layout_path = dir.path().join("observe-layout.jsonl");
     let cgroup_path = dir.path().join("observe-cgroup");
-    let script_path = write_denied_action_script(dir.path())?;
+    let script_path = write_violation_script(dir.path(), DENIED_ACTION, DENIED_ENDPOINT)?;
     let policy_path = write_policy_for_mode(dir.path(), &script_path, "observe")?;
 
     fs::File::create(&events_path)?;

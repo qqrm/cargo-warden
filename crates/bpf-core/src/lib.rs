@@ -1689,6 +1689,39 @@ mod tests {
     }
 
     #[test]
+    fn inode_rename_denies_when_both_paths_not_allowed() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        let old_path = "/etc/warden/src.txt";
+        let new_path = "/etc/warden/dst.txt";
+        let old_bytes = c_string(old_path);
+        let new_bytes = c_string(new_path);
+        let mut old_dentry = TestDentry {
+            name: old_bytes.as_ptr(),
+        };
+        let mut new_dentry = TestDentry {
+            name: new_bytes.as_ptr(),
+        };
+        let result = inode_rename(
+            ptr::null_mut(),
+            (&mut old_dentry) as *mut _ as *mut c_void,
+            ptr::null_mut(),
+            (&mut new_dentry) as *mut _ as *mut c_void,
+            0,
+        );
+        assert_ne!(result, 0);
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_RENAME);
+        assert_eq!(event.verdict, 1);
+        assert_eq!(bytes_to_string(&event.path_or_addr), new_path);
+        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert_eq!(count, 2);
+    }
+
+    #[test]
     fn inode_rename_requires_non_null_paths() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
