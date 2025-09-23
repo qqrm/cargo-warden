@@ -1149,6 +1149,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aya",
+ "cfg-if",
  "event-reporting",
  "futures-core",
  "futures-util",
