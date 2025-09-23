@@ -1,5 +1,6 @@
 use aya::maps::{MapData, ring_buf::RingBuf};
 use bpf_api::Event;
+use cfg_if::cfg_if;
 use log::{info, warn};
 use prometheus::{Encoder, IntCounter, Registry, TextEncoder};
 use std::fs::{File, OpenOptions};
@@ -39,6 +40,11 @@ static DENIED_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
 pub mod proto {
     tonic::include_proto!("agent");
 }
+
+#[cfg(feature = "grpc")]
+type EventSender<'a> = &'a broadcast::Sender<EventRecord>;
+#[cfg(not(feature = "grpc"))]
+type EventSender<'a> = &'a ();
 
 /// Log rotation settings.
 #[derive(Debug, Clone)]
@@ -188,13 +194,24 @@ pub fn run_with_shutdown(
             }
             let event = unsafe { *(item.as_ptr() as *const Event) };
             let record = event_record_from_event(event);
-            #[cfg(feature = "grpc")]
-            {
-                write_outputs(&record, &mut file, &path, cfg.rotation.as_ref(), Some(&tx))?;
-            }
-            #[cfg(not(feature = "grpc"))]
-            {
-                write_outputs(&record, &mut file, &path, cfg.rotation.as_ref())?;
+            cfg_if! {
+                if #[cfg(feature = "grpc")] {
+                    write_outputs(
+                        &record,
+                        &mut file,
+                        &path,
+                        cfg.rotation.as_ref(),
+                        Some(&tx),
+                    )?;
+                } else {
+                    write_outputs(
+                        &record,
+                        &mut file,
+                        &path,
+                        cfg.rotation.as_ref(),
+                        None,
+                    )?;
+                }
             }
         }
     }
@@ -228,13 +245,13 @@ fn start_metrics_server(port: u16) {
     });
 }
 
-#[cfg(feature = "grpc")]
+#[cfg_attr(not(feature = "grpc"), allow(unused_variables))]
 fn write_outputs(
     record: &EventRecord,
     file: &mut File,
     path: &Path,
     rotation: Option<&RotationConfig>,
-    tx: Option<&broadcast::Sender<EventRecord>>,
+    tx: Option<EventSender<'_>>,
 ) -> Result<(), anyhow::Error> {
     let json = serde_json::to_string(record)?;
     writeln!(file, "{}", json)?;
@@ -249,31 +266,9 @@ fn write_outputs(
     if let Some(msg) = diagnostic(record) {
         warn!("{}", msg);
     }
+    #[cfg(feature = "grpc")]
     if let Some(sender) = tx {
         let _ = sender.send(record.clone());
-    }
-    Ok(())
-}
-
-#[cfg(not(feature = "grpc"))]
-fn write_outputs(
-    record: &EventRecord,
-    file: &mut File,
-    path: &Path,
-    rotation: Option<&RotationConfig>,
-) -> Result<(), anyhow::Error> {
-    let json = serde_json::to_string(record)?;
-    writeln!(file, "{}", json)?;
-    info!("{}", json);
-    EVENT_COUNTER.inc();
-    if record.verdict == VERDICT_DENIED {
-        DENIED_COUNTER.inc();
-    }
-    if let Some(cfg) = rotation {
-        rotate_if_needed(file, path, cfg)?;
-    }
-    if let Some(msg) = diagnostic(record) {
-        warn!("{}", msg);
     }
     Ok(())
 }
@@ -464,15 +459,14 @@ mod tests {
         };
         let mut tmp = NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
-        #[cfg(feature = "grpc")]
-        {
-            use tokio::sync::broadcast;
-            let (tx, _) = broadcast::channel(1);
-            write_outputs(&record, tmp.as_file_mut(), &path, None, Some(&tx)).unwrap();
-        }
-        #[cfg(not(feature = "grpc"))]
-        {
-            write_outputs(&record, tmp.as_file_mut(), &path, None).unwrap();
+        cfg_if! {
+            if #[cfg(feature = "grpc")] {
+                use tokio::sync::broadcast;
+                let (tx, _) = broadcast::channel(1);
+                write_outputs(&record, tmp.as_file_mut(), &path, None, Some(&tx)).unwrap();
+            } else {
+                write_outputs(&record, tmp.as_file_mut(), &path, None, None).unwrap();
+            }
         }
         tmp.as_file_mut().rewind().unwrap();
         let mut content = String::new();
@@ -518,15 +512,14 @@ mod tests {
         };
         let mut tmp = NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
-        #[cfg(feature = "grpc")]
-        {
-            use tokio::sync::broadcast;
-            let (tx, _) = broadcast::channel(1);
-            write_outputs(&record, tmp.as_file_mut(), &path, None, Some(&tx)).unwrap();
-        }
-        #[cfg(not(feature = "grpc"))]
-        {
-            write_outputs(&record, tmp.as_file_mut(), &path, None).unwrap();
+        cfg_if! {
+            if #[cfg(feature = "grpc")] {
+                use tokio::sync::broadcast;
+                let (tx, _) = broadcast::channel(1);
+                write_outputs(&record, tmp.as_file_mut(), &path, None, Some(&tx)).unwrap();
+            } else {
+                write_outputs(&record, tmp.as_file_mut(), &path, None, None).unwrap();
+            }
         }
         assert_eq!(EVENT_COUNTER.get(), 1);
         assert_eq!(DENIED_COUNTER.get(), 1);
