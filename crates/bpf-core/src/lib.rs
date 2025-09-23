@@ -1138,11 +1138,39 @@ mod tests {
         resolve_host,
     };
     use core::ffi::c_void;
+    use std::path::{Path, PathBuf};
     use std::ptr;
     use std::sync::Mutex;
 
     static LAST_EVENT: Mutex<Option<Event>> = Mutex::new(None);
     static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn workspace_root_path() -> PathBuf {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace = manifest.ancestors().nth(2).expect("workspace root");
+        std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf())
+    }
+
+    fn workspace_root_string() -> String {
+        workspace_root_path().to_string_lossy().into_owned()
+    }
+
+    fn target_dir_string() -> String {
+        let target = workspace_root_path().join("target");
+        std::fs::canonicalize(&target)
+            .unwrap_or(target)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn default_fs_rules() -> Vec<bpf_api::FsRuleEntry> {
+        let target = target_dir_string();
+        let workspace = workspace_root_string();
+        vec![
+            fs_rule_entry(0, &target, FS_READ | FS_WRITE),
+            fs_rule_entry(0, &workspace, FS_READ),
+        ]
+    }
 
     #[unsafe(no_mangle)]
     extern "C" fn bpf_ringbuf_output(
@@ -1224,7 +1252,7 @@ mod tests {
         reset_fs_state();
         EVENT_COUNTS.clear();
         LAST_EVENT.lock().unwrap().take();
-        let path = "/workspace/allowed/file.txt";
+        let path = "/var/warden/allowed/file.txt";
         set_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
         let path_bytes = c_string(path);
         let mut file = TestFile {
@@ -1250,7 +1278,9 @@ mod tests {
         reset_fs_state();
         EVENT_COUNTS.clear();
         LAST_EVENT.lock().unwrap().take();
-        let path = "/workspace/forbidden.txt";
+        let rules = default_fs_rules();
+        set_fs_rules(&rules);
+        let path = "/var/warden/forbidden.txt";
         let path_bytes = c_string(path);
         let mut file = TestFile {
             path: path_bytes.as_ptr(),
@@ -1273,7 +1303,7 @@ mod tests {
         assert!(is_observe_mode(), "observe mode should be enabled");
         EVENT_COUNTS.clear();
         LAST_EVENT.lock().unwrap().take();
-        let path = "/workspace/forbidden.txt";
+        let path = "/var/warden/forbidden.txt";
         let path_bytes = c_string(path);
         let mut file = TestFile {
             path: path_bytes.as_ptr(),
@@ -1344,6 +1374,31 @@ mod tests {
     }
 
     #[test]
+    fn file_open_allows_workspace_defaults() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        EVENT_COUNTS.clear();
+        LAST_EVENT.lock().unwrap().take();
+        let rules = default_fs_rules();
+        set_fs_rules(&rules);
+        let path = format!("{}/README.md", workspace_root_string());
+        let path_bytes = c_string(&path);
+        let mut file = TestFile {
+            path: path_bytes.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
+        assert_eq!(result, 0);
+        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        assert_eq!(event.action, ACTION_OPEN);
+        assert_eq!(event.verdict, 0);
+        assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
     fn file_open_rejects_null_path_pointer() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
@@ -1383,7 +1438,9 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        let file_path = c_string("/workspace/forbidden/data.txt");
+        let rules = default_fs_rules();
+        set_fs_rules(&rules);
+        let file_path = c_string("/var/warden/data.txt");
         let mut file = TestFile {
             path: file_path.as_ptr(),
             mode: FMODE_READ,
@@ -1393,13 +1450,47 @@ mod tests {
     }
 
     #[test]
+    fn file_permission_allows_workspace_default_read() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        let rules = default_fs_rules();
+        set_fs_rules(&rules);
+        let path = format!("{}/SPEC.md", workspace_root_string());
+        let path_bytes = c_string(&path);
+        let mut file = TestFile {
+            path: path_bytes.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        assert_eq!(file_permission(file_ptr, MAY_READ), 0);
+    }
+
+    #[test]
+    fn file_permission_allows_target_default_write() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        let rules = default_fs_rules();
+        set_fs_rules(&rules);
+        let path = format!("{}/build/artifact.txt", target_dir_string());
+        let path_bytes = c_string(&path);
+        let mut file = TestFile {
+            path: path_bytes.as_ptr(),
+            mode: FMODE_READ | FMODE_WRITE,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        assert_eq!(file_permission(file_ptr, MAY_WRITE), 0);
+    }
+
+    #[test]
     fn file_permission_allows_prefix_rule() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        let rule_path = "/workspace/data";
+        let rule_path = "/var/data";
         set_fs_rules(&[fs_rule_entry(0, rule_path, FS_READ | FS_WRITE)]);
-        let file_path = c_string("/workspace/data/subdir/file.txt");
+        let file_path = c_string("/var/data/subdir/file.txt");
         let mut file = TestFile {
             path: file_path.as_ptr(),
             mode: FMODE_READ,
@@ -1413,9 +1504,9 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        let rule_path = "/workspace/data";
+        let rule_path = "/var/data";
         set_fs_rules(&[fs_rule_entry(0, rule_path, FS_READ | FS_WRITE)]);
-        let file_path = c_string("/workspace/database");
+        let file_path = c_string("/var/database");
         let mut file = TestFile {
             path: file_path.as_ptr(),
             mode: FMODE_READ,
