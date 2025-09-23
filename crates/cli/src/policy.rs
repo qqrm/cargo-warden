@@ -184,8 +184,15 @@ fn extend_fs_access(policy: &mut Policy) -> io::Result<()> {
     }
 
     let metadata = load_cargo_metadata()?;
-    maybe_extend_fs_read(policy, &metadata.workspace_root);
-    maybe_extend_fs_write(policy, &metadata.target_directory);
+    let build_paths = detect_build_paths(&metadata);
+
+    maybe_extend_fs_read(policy, &build_paths.workspace_root);
+    for target in build_paths.target_dirs {
+        maybe_extend_fs_write(policy, &target);
+    }
+    for out_dir in build_paths.out_dirs {
+        maybe_extend_fs_write(policy, &out_dir);
+    }
 
     Ok(())
 }
@@ -205,7 +212,18 @@ fn maybe_extend_fs_write(policy: &mut Policy, path: &Path) {
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    match path.canonicalize() {
+        Ok(canonical) => canonical,
+        Err(_) => {
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else if let Ok(cwd) = std::env::current_dir() {
+                cwd.join(path)
+            } else {
+                path.to_path_buf()
+            }
+        }
+    }
 }
 
 fn contains_path<'a>(paths: impl Iterator<Item = &'a PathBuf>, candidate: &Path) -> bool {
@@ -278,6 +296,51 @@ fn empty_policy() -> Policy {
     Policy::new(Mode::Enforce)
 }
 
+struct BuildPaths {
+    workspace_root: PathBuf,
+    target_dirs: Vec<PathBuf>,
+    out_dirs: Vec<PathBuf>,
+}
+
+fn detect_build_paths(metadata: &CargoMetadata) -> BuildPaths {
+    let workspace_root = metadata.workspace_root.clone();
+
+    let mut target_dirs = Vec::new();
+    if let Some(env_target) = env_path("CARGO_TARGET_DIR") {
+        target_dirs.push(env_target);
+    }
+    target_dirs.push(metadata.target_directory.clone());
+    dedup_paths(&mut target_dirs);
+
+    let mut out_dirs = Vec::new();
+    if let Some(out_dir) = env_path("OUT_DIR") {
+        out_dirs.push(out_dir);
+    }
+    if let Some(tmp_dir) = env_path("CARGO_TARGET_TMPDIR") {
+        out_dirs.push(tmp_dir);
+    }
+    dedup_paths(&mut out_dirs);
+
+    BuildPaths {
+        workspace_root,
+        target_dirs,
+        out_dirs,
+    }
+}
+
+fn env_path(var: &str) -> Option<PathBuf> {
+    let value = std::env::var_os(var)?;
+    if value.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(value))
+}
+
+fn dedup_paths(paths: &mut Vec<PathBuf>) {
+    let mut seen = HashSet::new();
+    paths.retain(|path| seen.insert(path.clone()));
+}
+
 #[derive(Deserialize)]
 struct CargoMetadata {
     packages: Vec<CargoPackage>,
@@ -296,6 +359,7 @@ struct CargoPackage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{DirGuard, EnvVarGuard};
     use bpf_api::{FS_READ, FS_WRITE};
     use serial_test::serial;
     use std::fs::{self, write};
@@ -343,11 +407,20 @@ mod tests {
         write(dir.join("src/lib.rs"), "pub fn fixture() {}\n").unwrap();
     }
 
+    fn guard_build_env() -> (EnvVarGuard, EnvVarGuard, EnvVarGuard) {
+        (
+            EnvVarGuard::unset("OUT_DIR"),
+            EnvVarGuard::unset("CARGO_TARGET_DIR"),
+            EnvVarGuard::unset("CARGO_TARGET_TMPDIR"),
+        )
+    }
+
     #[test]
     #[serial]
     fn setup_isolation_merges_syscalls_and_allow_entries() {
         let dir = tempfile::tempdir().unwrap();
-        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
         write(
@@ -428,7 +501,8 @@ deny = ["execve"]
     #[serial]
     fn setup_isolation_defaults_to_empty_policy() {
         let dir = tempfile::tempdir().unwrap();
-        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
         let isolation = setup_isolation(&[], &[], None).unwrap();
@@ -457,7 +531,8 @@ deny = ["execve"]
     #[serial]
     fn setup_isolation_uses_cli_allow_when_no_file() {
         let dir = tempfile::tempdir().unwrap();
-        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
         let allow = vec!["/bin/bash".to_string()];
@@ -486,7 +561,8 @@ deny = ["execve"]
     #[serial]
     fn setup_isolation_applies_mode_override() {
         let dir = tempfile::tempdir().unwrap();
-        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
         write(
@@ -511,7 +587,8 @@ exec.default = "allow"
     #[serial]
     fn setup_isolation_reports_duplicate_cli_allow() {
         let dir = tempfile::tempdir().unwrap();
-        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
         let allow = vec!["/bin/bash".to_string(), "/bin/bash".to_string()];
@@ -529,7 +606,8 @@ exec.default = "allow"
     #[serial]
     fn setup_isolation_skips_duplicate_fs_rules() {
         let dir = tempfile::tempdir().unwrap();
-        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
         let metadata = super::load_cargo_metadata().unwrap();
@@ -558,5 +636,40 @@ exec.default = "allow"
                 .iter()
                 .any(|(path, access)| { path == &target && *access == (FS_READ | FS_WRITE) })
         );
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_includes_out_dir_from_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _guard = DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
+
+        let out_dir_path = dir.path().join("custom-out");
+        fs::create_dir_all(&out_dir_path).unwrap();
+        let out_guard = EnvVarGuard::set("OUT_DIR", out_dir_path.as_os_str().to_os_string());
+
+        let isolation = setup_isolation(&[], &[], None).unwrap();
+        drop(out_guard);
+
+        let metadata = super::load_cargo_metadata().unwrap();
+        let workspace = super::normalize_path(&metadata.workspace_root);
+        let target = super::normalize_path(&metadata.target_directory);
+        let out_dir = super::normalize_path(&out_dir_path);
+
+        let fs_rules = fs_entries(&isolation.maps_layout);
+        assert!(
+            fs_rules
+                .iter()
+                .any(|(path, access)| path == &workspace.to_string_lossy() && *access == FS_READ)
+        );
+        assert!(fs_rules.iter().any(|(path, access)| {
+            path == &target.to_string_lossy() && *access == (FS_READ | FS_WRITE)
+        }));
+        assert!(fs_rules.iter().any(|(path, access)| {
+            path == &out_dir.to_string_lossy() && *access == (FS_READ | FS_WRITE)
+        }));
+        assert_eq!(fs_rules.len(), 3);
     }
 }
