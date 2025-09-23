@@ -191,8 +191,22 @@ pub mod fs {
             None
         } else {
             let dentry = unsafe { &*(dentry as *const TestDentry) };
-            Some(dentry.name)
+            if dentry.name.is_null() {
+                None
+            } else {
+                Some(dentry.name)
+            }
         }
+    }
+
+    /// Extracts both source and destination path pointers from simulated rename dentries.
+    pub fn rename_path_ptrs(
+        old_dentry: *mut c_void,
+        new_dentry: *mut c_void,
+    ) -> Option<(*const u8, *const u8)> {
+        let old = dentry_path_ptr(old_dentry)?;
+        let new = dentry_path_ptr(new_dentry)?;
+        Some((old, new))
     }
 }
 
@@ -208,6 +222,56 @@ pub mod net {
     }
 }
 
-pub use fs::{TestDentry, TestFile};
+pub use fs::{TestDentry, TestFile, rename_path_ptrs};
 pub use maps::{DummyRingBuf, TestArray, TestHashMap};
 pub use net::resolve_host;
+
+#[cfg(test)]
+mod tests {
+    use super::fs::{
+        TestDentry, TestFile, dentry_path_ptr, file_mode_bits, file_path_ptr, rename_path_ptrs,
+    };
+    use core::ffi::c_void;
+    use std::ffi::CString;
+    use std::ptr;
+
+    #[test]
+    fn file_helpers_expose_pointer_and_mode() {
+        let path = CString::new("/tmp/example").unwrap();
+        let path_ptr = path.as_ptr() as *const u8;
+        let mut file = TestFile {
+            path: path_ptr,
+            mode: 0o3,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        assert_eq!(file_path_ptr(file_ptr), Some(path_ptr));
+        assert_eq!(file_mode_bits(file_ptr), Some(0o3));
+    }
+
+    #[test]
+    fn rename_path_ptrs_return_both_entries() {
+        let old = CString::new("/tmp/old").unwrap();
+        let new = CString::new("/tmp/new").unwrap();
+        let old_ptr_raw = old.as_ptr() as *const u8;
+        let new_ptr_raw = new.as_ptr() as *const u8;
+        let mut old_dentry = TestDentry { name: old_ptr_raw };
+        let mut new_dentry = TestDentry { name: new_ptr_raw };
+        let old_ptr = (&mut old_dentry) as *mut _ as *mut c_void;
+        let new_ptr = (&mut new_dentry) as *mut _ as *mut c_void;
+        let (resolved_old, resolved_new) =
+            rename_path_ptrs(old_ptr, new_ptr).expect("rename pointers");
+        assert_eq!(resolved_old, old_ptr_raw);
+        assert_eq!(resolved_new, new_ptr_raw);
+    }
+
+    #[test]
+    fn rename_path_ptrs_return_none_on_null() {
+        let mut old_dentry = TestDentry { name: ptr::null() };
+        let mut new_dentry = TestDentry { name: ptr::null() };
+        let old_ptr = (&mut old_dentry) as *mut _ as *mut c_void;
+        let new_ptr = (&mut new_dentry) as *mut _ as *mut c_void;
+        assert!(rename_path_ptrs(old_ptr, new_ptr).is_none());
+        assert!(dentry_path_ptr(old_ptr).is_none());
+        assert!(dentry_path_ptr(new_ptr).is_none());
+    }
+}
