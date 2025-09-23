@@ -461,6 +461,87 @@ read_extra = ["/etc/ssl/certs"]
 }
 
 #[test]
+fn strict_mode_auto_paths_allow_build() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempdir()?;
+    init_cargo_package(dir.path())?;
+
+    let events_path = dir.path().join("strict-events.jsonl");
+    let layout_path = dir.path().join("strict-layout.jsonl");
+    let cgroup_path = dir.path().join("strict-cgroup");
+    fs::File::create(&events_path)?;
+
+    let target_override = dir.path().join("custom-target");
+    let out_dir_override = dir.path().join("custom-out");
+    fs::create_dir_all(&target_override)?;
+    fs::create_dir_all(&out_dir_override)?;
+
+    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    cmd.arg("run")
+        .arg("--")
+        .arg("true")
+        .current_dir(dir.path())
+        .env("CARGO_TARGET_DIR", &target_override)
+        .env("OUT_DIR", &out_dir_override)
+        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
+        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
+        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
+        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path);
+    cmd.assert().success();
+
+    let snapshots = read_snapshots(&layout_path)?;
+    let snapshot = snapshots.last().expect("layout snapshot present");
+
+    let workspace = dir
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| dir.path().to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    let target = target_override
+        .canonicalize()
+        .unwrap_or(target_override.clone())
+        .to_string_lossy()
+        .into_owned();
+    let out_dir = out_dir_override
+        .canonicalize()
+        .unwrap_or(out_dir_override.clone())
+        .to_string_lossy()
+        .into_owned();
+
+    assert!(
+        snapshot
+            .fs
+            .iter()
+            .any(|rule| rule.path == workspace && rule.read && !rule.write),
+        "expected workspace read rule: {:?}",
+        snapshot.fs
+    );
+    assert!(
+        snapshot
+            .fs
+            .iter()
+            .any(|rule| rule.path == target && rule.write),
+        "expected target write rule: {:?}",
+        snapshot.fs
+    );
+    assert!(
+        snapshot
+            .fs
+            .iter()
+            .any(|rule| rule.path == out_dir && rule.write),
+        "expected out dir write rule: {:?}",
+        snapshot.fs
+    );
+
+    assert!(
+        !cgroup_path.exists(),
+        "fake sandbox should remove cgroup directory"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn workspace_policy_overrides_modify_layout() -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempdir()?;
     let workspace_root = dir.path();
