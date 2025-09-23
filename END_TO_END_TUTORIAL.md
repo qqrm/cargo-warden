@@ -64,7 +64,25 @@ Tail the log to observe decisions in real time:
 tail -f warden.log
 ```
 
-## 5. Workspaces
+## 5. Export reports
+
+```bash
+cargo warden report
+```
+
+By default, the command prints recent sandbox events in a readable text format. Use JSON when integrating with tooling:
+
+```bash
+cargo warden report --format json
+```
+
+Generate a SARIF file for ingestion by security scanners:
+
+```bash
+cargo warden report --format sarif --output warden.sarif
+```
+
+## 6. Workspaces
 
 For multi-crate workspaces, create `workspace.warden.toml` to override rules per member:
 
