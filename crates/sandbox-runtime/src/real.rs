@@ -7,7 +7,7 @@ use crate::seccomp::apply_seccomp;
 use crate::util::events_path;
 use aya::programs::cgroup_sock_addr::CgroupSockAddrLink;
 use aya::programs::lsm::LsmLink;
-use aya::programs::{CgroupAttachMode, CgroupSockAddr, Lsm};
+use aya::programs::{CgroupAttachMode, CgroupSockAddr, Link, Lsm};
 use aya::{Btf, Ebpf};
 use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
@@ -70,6 +70,14 @@ impl RealSandbox {
     pub(crate) fn shutdown(mut self) -> io::Result<()> {
         if let Some(agent) = self.agent.take() {
             agent.stop()?;
+        }
+        for link in self.lsm_links.drain(..) {
+            link.detach()
+                .map_err(|err| io::Error::other(format!("detach LSM link: {err}")))?;
+        }
+        for link in self.cgroup_links.drain(..) {
+            link.detach()
+                .map_err(|err| io::Error::other(format!("detach cgroup link: {err}")))?;
         }
         self.cgroup.cleanup()?;
         Ok(())
