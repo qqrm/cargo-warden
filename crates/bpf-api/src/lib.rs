@@ -21,6 +21,16 @@ pub const EVENT_COUNT_SLOTS: u32 = 1;
 pub const MODE_FLAGS_CAPACITY: u32 = 1;
 /// Maximum number of workload-to-unit mappings supported by the eBPF map.
 pub const WORKLOAD_UNITS_CAPACITY: u32 = 256;
+/// Unit identifier for commands that do not match a specialized category.
+pub const UNIT_OTHER: u32 = 0;
+/// Unit identifier for Cargo build script binaries.
+pub const UNIT_BUILD_SCRIPT: u32 = 1;
+/// Unit identifier for procedural macro compilers and hosts.
+pub const UNIT_PROC_MACRO: u32 = 2;
+/// Unit identifier for `rustc` compilation jobs.
+pub const UNIT_RUSTC: u32 = 3;
+/// Unit identifier for linker processes spawned by the toolchain.
+pub const UNIT_LINKER: u32 = 4;
 /// Flag value stored in the mode map when running in observe mode.
 pub const MODE_FLAG_OBSERVE: u32 = 0;
 /// Flag value stored in the mode map when running in enforce mode.

@@ -5,6 +5,7 @@
 
 #[cfg(target_arch = "bpf")]
 use aya_bpf::{
+    cty::{c_char, c_long},
     helpers::bpf_probe_read_kernel,
     macros::map,
     maps::{Array, HashMap, RingBuf},
@@ -33,6 +34,12 @@ const ACTION_RENAME: u8 = 1;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const ACTION_UNLINK: u8 = 2;
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const MAX_CAPTURED_ARGS: usize = 4;
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const MAX_ARG_LENGTH: usize = 48;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn deny() -> i32 {
@@ -530,6 +537,186 @@ fn path_matches(a: &[u8; 256], b: &[u8; 256]) -> bool {
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn find_c_string_len(bytes: &[u8]) -> usize {
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0 {
+            return i;
+        }
+        i += 1;
+    }
+    bytes.len()
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn slice_eq_ignore_ascii_case(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < left.len() {
+        let a = left[i];
+        let b = right[i];
+        if a == b {
+            i += 1;
+            continue;
+        }
+        let upper_a = if a.is_ascii_uppercase() { a + 32 } else { a };
+        let upper_b = if b.is_ascii_uppercase() { b + 32 } else { b };
+        if upper_a != upper_b {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn contains_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if haystack.len() < needle.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i + needle.len() <= haystack.len() {
+        if slice_eq_ignore_ascii_case(&haystack[i..i + needle.len()], needle) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn filename_from_path(path: &[u8]) -> &[u8] {
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < path.len() {
+        match path[i] {
+            b'/' | b'\\' => start = i + 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    &path[start..]
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn arg_matches_proc_macro(arg: &[u8]) -> bool {
+    contains_ascii_case_insensitive(arg, b"proc-macro")
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn args_include_proc_macro(args: &[&[u8]]) -> bool {
+    let mut i = 0usize;
+    while i < args.len() {
+        let current = args[i];
+        if contains_ascii_case_insensitive(current, b"--crate-type=proc-macro") {
+            return true;
+        }
+        if slice_eq_ignore_ascii_case(current, b"--crate-type") {
+            if let Some(next) = args.get(i + 1)
+                && arg_matches_proc_macro(next)
+            {
+                return true;
+            }
+        } else if slice_eq_ignore_ascii_case(current, b"--crate-type=proc-macro") {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn is_build_script(path: &[u8], filename: &[u8]) -> bool {
+    contains_ascii_case_insensitive(filename, b"build-script")
+        || contains_ascii_case_insensitive(path, b"/build-script-")
+        || contains_ascii_case_insensitive(path, b"\\build-script-")
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn is_rustc(filename: &[u8]) -> bool {
+    slice_eq_ignore_ascii_case(filename, b"rustc")
+        || slice_eq_ignore_ascii_case(filename, b"rustc.exe")
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn is_cargo(filename: &[u8]) -> bool {
+    slice_eq_ignore_ascii_case(filename, b"cargo")
+        || slice_eq_ignore_ascii_case(filename, b"cargo.exe")
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn is_linker(filename: &[u8]) -> bool {
+    const LINKER_NAMES: [&[u8]; 12] = [
+        b"ld",
+        b"ld.lld",
+        b"ld64",
+        b"lld",
+        b"link",
+        b"link.exe",
+        b"cc",
+        b"clang",
+        b"clang++",
+        b"gcc",
+        b"g++",
+        b"collect2",
+    ];
+    let mut i = 0usize;
+    while i < LINKER_NAMES.len() {
+        if slice_eq_ignore_ascii_case(filename, LINKER_NAMES[i]) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn classify_workload_unit(path: &[u8], args: &[&[u8]]) -> u32 {
+    let filename = filename_from_path(path);
+    if is_build_script(path, filename) {
+        return bpf_api::UNIT_BUILD_SCRIPT;
+    }
+    if is_linker(filename) {
+        return bpf_api::UNIT_LINKER;
+    }
+    if is_rustc(filename) {
+        if args_include_proc_macro(args) {
+            return bpf_api::UNIT_PROC_MACRO;
+        }
+        return bpf_api::UNIT_RUSTC;
+    }
+    if is_cargo(filename) {
+        return bpf_api::UNIT_OTHER;
+    }
+    bpf_api::UNIT_OTHER
+}
+
+#[cfg(target_arch = "bpf")]
+fn workload_unit_for_pid(pid: u32) -> u32 {
+    unsafe { WORKLOAD_UNITS.get(&pid).copied().unwrap_or(0) }
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn workload_unit_for_pid(pid: u32) -> u32 {
+    WORKLOAD_UNITS.get(pid).unwrap_or(0)
+}
+
+#[cfg(target_arch = "bpf")]
+fn set_workload_unit(pid: u32, unit: u32) {
+    let _ = unsafe { WORKLOAD_UNITS.insert(&pid, &unit, 0) };
+}
+
+#[cfg(target_arch = "bpf")]
+fn remove_workload_unit(pid: u32) {
+    let _ = unsafe { WORKLOAD_UNITS.remove(&pid) };
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 static mut CURRENT_UNIT: u32 = 0;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -541,7 +728,7 @@ fn current_unit() -> u32 {
 #[cfg(target_arch = "bpf")]
 fn refresh_current_unit() {
     let pid = unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 };
-    let unit = unsafe { WORKLOAD_UNITS.get(&pid).copied().unwrap_or(0) };
+    let unit = workload_unit_for_pid(pid);
     unsafe {
         CURRENT_UNIT = unit;
     }
@@ -550,10 +737,9 @@ fn refresh_current_unit() {
 #[cfg(any(test, feature = "fuzzing"))]
 fn refresh_current_unit() {
     let pid = unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 };
-    if let Some(unit) = WORKLOAD_UNITS.get(pid) {
-        unsafe {
-            CURRENT_UNIT = unit;
-        }
+    let unit = workload_unit_for_pid(pid);
+    unsafe {
+        CURRENT_UNIT = unit;
     }
 }
 
@@ -563,8 +749,130 @@ fn set_workload_unit(pid: u32, unit: u32) {
 }
 
 #[cfg(any(test, feature = "fuzzing"))]
+fn remove_workload_unit(pid: u32) {
+    WORKLOAD_UNITS.remove(pid);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
 fn clear_workload_units() {
     WORKLOAD_UNITS.clear();
+}
+
+#[cfg(target_arch = "bpf")]
+#[repr(C)]
+struct SysEnterExecveArgs {
+    _unused: u64,
+    syscall: u64,
+    args: [u64; 6],
+}
+
+#[cfg(target_arch = "bpf")]
+#[repr(C)]
+struct SchedProcessForkArgs {
+    _unused: u64,
+    parent_comm: [c_char; 16],
+    parent_pid: i32,
+    parent_tgid: i32,
+    child_comm: [c_char; 16],
+    child_pid: i32,
+    child_tgid: i32,
+}
+
+#[cfg(target_arch = "bpf")]
+#[repr(C)]
+struct SchedProcessExitArgs {
+    _unused: u64,
+    comm: [c_char; 16],
+    pid: i32,
+    prio: i32,
+    state: c_long,
+}
+
+#[cfg(target_arch = "bpf")]
+fn classify_and_record_exec(ctx: &SysEnterExecveArgs) {
+    let pid = unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 };
+    let filename_ptr = ctx.args[0] as *const u8;
+    let argv_ptr = ctx.args[1] as *const u64;
+    let mut path = [0u8; 256];
+    let mut unit = bpf_api::UNIT_OTHER;
+
+    if !filename_ptr.is_null() {
+        let read =
+            unsafe { bpf_probe_read_user_str(path.as_mut_ptr(), path.len() as u32, filename_ptr) };
+        if read >= 0 {
+            let mut arg_buffers = [[0u8; MAX_ARG_LENGTH]; MAX_CAPTURED_ARGS];
+            let mut arg_refs: [&[u8]; MAX_CAPTURED_ARGS] = [&[]; MAX_CAPTURED_ARGS];
+            let mut captured = 0usize;
+            if !argv_ptr.is_null() {
+                let mut idx = 0usize;
+                while idx < MAX_CAPTURED_ARGS {
+                    let mut arg_ptr_value: u64 = 0;
+                    let read_ptr = unsafe {
+                        bpf_probe_read_user(
+                            (&mut arg_ptr_value as *mut u64).cast(),
+                            core::mem::size_of::<u64>() as u32,
+                            argv_ptr.add(idx).cast(),
+                        )
+                    };
+                    if read_ptr < 0 || arg_ptr_value == 0 {
+                        break;
+                    }
+                    let read_arg = unsafe {
+                        bpf_probe_read_user_str(
+                            arg_buffers[idx].as_mut_ptr(),
+                            MAX_ARG_LENGTH as u32,
+                            arg_ptr_value as *const u8,
+                        )
+                    };
+                    if read_arg >= 0 {
+                        let mut length = read_arg as usize;
+                        if length > 0 {
+                            length = length.saturating_sub(1).min(MAX_ARG_LENGTH - 1);
+                        }
+                        arg_refs[idx] = &arg_buffers[idx][..length];
+                        captured = idx + 1;
+                    }
+                    idx += 1;
+                }
+            }
+            let path_len = find_c_string_len(&path);
+            let command_path = &path[..path_len];
+            unit = classify_workload_unit(command_path, &arg_refs[..captured]);
+        }
+    }
+
+    set_workload_unit(pid, unit);
+}
+
+#[cfg(target_arch = "bpf")]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "tracepoint/syscalls/sys_enter_execve")]
+pub extern "C" fn sys_enter_execve(ctx: *mut c_void) -> i32 {
+    let args = unsafe { &*(ctx as *const SysEnterExecveArgs) };
+    classify_and_record_exec(args);
+    0
+}
+
+#[cfg(target_arch = "bpf")]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "tracepoint/sched/sched_process_fork")]
+pub extern "C" fn sched_process_fork(ctx: *mut c_void) -> i32 {
+    let args = unsafe { &*(ctx as *const SchedProcessForkArgs) };
+    let parent = args.parent_tgid as u32;
+    let child = args.child_tgid as u32;
+    let unit = workload_unit_for_pid(parent);
+    set_workload_unit(child, unit);
+    0
+}
+
+#[cfg(target_arch = "bpf")]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "tracepoint/sched/sched_process_exit")]
+pub extern "C" fn sched_process_exit(ctx: *mut c_void) -> i32 {
+    let args = unsafe { &*(ctx as *const SchedProcessExitArgs) };
+    let pid = args.pid as u32;
+    remove_workload_unit(pid);
+    0
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -969,6 +1277,7 @@ fn check6(ctx: *mut c_void) -> i32 {
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 unsafe extern "C" {
     fn bpf_probe_read_user_str(dst: *mut u8, size: u32, src: *const u8) -> i32;
+    fn bpf_probe_read_user(dst: *mut c_void, size: u32, src: *const c_void) -> i32;
     fn bpf_ringbuf_output(ringbuf: *mut c_void, data: *const c_void, len: u64, flags: u64) -> i64;
     fn bpf_get_current_pid_tgid() -> u64;
 }
@@ -1144,6 +1453,7 @@ mod tests {
 
     static LAST_EVENT: Mutex<Option<Event>> = Mutex::new(None);
     static TEST_LOCK: Mutex<()> = Mutex::new(());
+    const TEST_PID: u32 = 1234;
 
     fn workspace_root_path() -> PathBuf {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1187,7 +1497,12 @@ mod tests {
 
     #[unsafe(no_mangle)]
     extern "C" fn bpf_get_current_pid_tgid() -> u64 {
-        1234u64 << 32
+        (TEST_PID as u64) << 32
+    }
+
+    fn assign_unit(unit: u32) {
+        set_workload_unit(TEST_PID, unit);
+        refresh_current_unit();
     }
 
     #[unsafe(no_mangle)]
@@ -1832,9 +2147,7 @@ mod tests {
             path: path_bytes.as_ptr(),
             mode: FMODE_READ,
         };
-        unsafe {
-            CURRENT_UNIT = 2;
-        }
+        assign_unit(2);
         assert_eq!(
             file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut()),
             0
@@ -1863,9 +2176,7 @@ mod tests {
             path: path_bytes.as_ptr(),
             mode: FMODE_WRITE,
         };
-        unsafe {
-            CURRENT_UNIT = 7;
-        }
+        assign_unit(7);
         assert_eq!(
             file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut()),
             0
@@ -1877,7 +2188,6 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        set_workload_unit(1234, 5);
         set_fs_rules(&[fs_rule_entry(0, "/workspace/data", FS_READ)]);
         let path = "/workspace/data/file.txt";
         let path_bytes = c_string(path);
@@ -1885,9 +2195,7 @@ mod tests {
             path: path_bytes.as_ptr(),
             mode: FMODE_READ,
         };
-        unsafe {
-            CURRENT_UNIT = 0;
-        }
+        assign_unit(5);
         LAST_EVENT.lock().unwrap().take();
         assert_eq!(
             file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut()),
@@ -1895,6 +2203,28 @@ mod tests {
         );
         let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
         assert_eq!(event.unit, 5);
+    }
+
+    #[test]
+    fn classify_workload_units_from_paths() {
+        let rustc = super::classify_workload_unit(b"/usr/bin/rustc", &[]);
+        assert_eq!(rustc, bpf_api::UNIT_RUSTC);
+
+        let proc_macro_args = [&b"--crate-type=proc-macro"[..]];
+        let proc_macro = super::classify_workload_unit(b"/usr/bin/rustc", &proc_macro_args);
+        assert_eq!(proc_macro, bpf_api::UNIT_PROC_MACRO);
+
+        let build_script = super::classify_workload_unit(
+            b"/workspace/target/debug/build/foo-12345/build-script-build",
+            &[],
+        );
+        assert_eq!(build_script, bpf_api::UNIT_BUILD_SCRIPT);
+
+        let linker = super::classify_workload_unit(b"/usr/bin/ld", &[]);
+        assert_eq!(linker, bpf_api::UNIT_LINKER);
+
+        let cargo = super::classify_workload_unit(b"/usr/bin/cargo", &[]);
+        assert_eq!(cargo, bpf_api::UNIT_OTHER);
     }
 
     fn rule_entry(
@@ -1955,9 +2285,7 @@ mod tests {
         NET_PARENTS_LENGTH.clear();
         reset_mode_flags();
         clear_workload_units();
-        unsafe {
-            CURRENT_UNIT = 0;
-        }
+        refresh_current_unit();
     }
 
     fn set_fs_rules(entries: &[bpf_api::FsRuleEntry]) {
@@ -1974,9 +2302,7 @@ mod tests {
         FS_RULES_LENGTH.clear();
         reset_mode_flags();
         clear_workload_units();
-        unsafe {
-            CURRENT_UNIT = 0;
-        }
+        refresh_current_unit();
     }
 
     fn enable_observe_mode() {
@@ -2066,22 +2392,16 @@ mod tests {
             family: 2,
             protocol: 6,
         };
-        unsafe {
-            CURRENT_UNIT = 1;
-        }
+        assign_unit(1);
         assert_eq!(connect4(&allowed as *const _ as *mut c_void), 0);
         assert_ne!(connect4(&other as *const _ as *mut c_void), 0);
         assert_eq!(sendmsg4(&allowed as *const _ as *mut c_void), 0);
         assert_ne!(sendmsg4(&other as *const _ as *mut c_void), 0);
-        unsafe {
-            CURRENT_UNIT = 2;
-        }
+        assign_unit(2);
         assert_eq!(connect4(&allowed as *const _ as *mut c_void), 0);
         assert_eq!(sendmsg4(&allowed as *const _ as *mut c_void), 0);
         assert_ne!(connect4(&other as *const _ as *mut c_void), 0);
-        unsafe {
-            CURRENT_UNIT = 3;
-        }
+        assign_unit(3);
         assert_ne!(connect4(&allowed as *const _ as *mut c_void), 0);
         assert_ne!(sendmsg4(&allowed as *const _ as *mut c_void), 0);
     }
@@ -2146,22 +2466,16 @@ mod tests {
             family: 10,
             protocol: 6,
         };
-        unsafe {
-            CURRENT_UNIT = 1;
-        }
+        assign_unit(1);
         assert_eq!(connect6(&allowed as *const _ as *mut c_void), 0);
         assert_ne!(connect6(&other as *const _ as *mut c_void), 0);
         assert_eq!(sendmsg6(&allowed as *const _ as *mut c_void), 0);
         assert_ne!(sendmsg6(&other as *const _ as *mut c_void), 0);
-        unsafe {
-            CURRENT_UNIT = 2;
-        }
+        assign_unit(2);
         assert_eq!(connect6(&allowed as *const _ as *mut c_void), 0);
         assert_eq!(sendmsg6(&allowed as *const _ as *mut c_void), 0);
         assert_ne!(connect6(&other as *const _ as *mut c_void), 0);
-        unsafe {
-            CURRENT_UNIT = 3;
-        }
+        assign_unit(3);
         assert_ne!(connect6(&allowed as *const _ as *mut c_void), 0);
         assert_ne!(sendmsg6(&allowed as *const _ as *mut c_void), 0);
     }
@@ -2225,5 +2539,16 @@ mod fuzzing_shims {
             }
         }
         size as i32
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn bpf_probe_read_user(dst: *mut c_void, size: u32, src: *const c_void) -> i32 {
+        if dst.is_null() || src.is_null() {
+            return -1;
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, size as usize);
+        }
+        0
     }
 }

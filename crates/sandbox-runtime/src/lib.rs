@@ -9,6 +9,7 @@ mod real;
 mod runtime;
 mod seccomp;
 mod util;
+mod workload;
 
 pub use layout::{FsRuleSnapshot, LayoutSnapshot, NetParentSnapshot, NetRuleSnapshot};
 pub use runtime::Sandbox;
