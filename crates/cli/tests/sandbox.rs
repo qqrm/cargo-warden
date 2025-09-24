@@ -6,8 +6,6 @@ use qqrm_testkits::{LayoutSnapshotExt, TestProject};
 
 const DENIED_ENDPOINT: &str = "198.51.100.10:443";
 const DENIED_PID: u32 = 7777;
-const DENIED_TGID: u32 = 8888;
-const DENIED_TIME_NS: u64 = 1_234_567_890;
 const DENIED_ACTION: u8 = 4;
 const DENIED_UNIT: u8 = UNIT_RUSTC as u8;
 const RENAME_PATH: &str = "/var/warden/forbidden";
@@ -19,108 +17,6 @@ fn assert_denial(event: &EventRecord, action: u8, path_or_addr: &str) {
     assert_eq!(event.unit, DENIED_UNIT);
     assert_eq!(event.verdict, 1);
     assert_eq!(event.path_or_addr, path_or_addr);
-}
-
-fn run_in_fake_sandbox(
-    mut cmd: Command,
-    events_path: &Path,
-) -> Result<(std::process::ExitStatus, Vec<EventRecord>), Box<dyn std::error::Error>> {
-    let output = cmd.output()?;
-    let status = output.status;
-    let events = read_event_records(events_path)?;
-    Ok((status, events))
-}
-
-#[cfg(unix)]
-fn make_executable(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(path, perms)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn make_executable(_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    Ok(())
-}
-
-fn write_violation_script(
-    dir: &Path,
-    action: u8,
-    unit: u8,
-    path_or_addr: &str,
-) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    let script_path = dir.join(format!("deny-action-{action}.sh"));
-    let deny_event = json!({
-        "pid": DENIED_PID,
-        "tgid": DENIED_TGID,
-        "time_ns": DENIED_TIME_NS,
-        "unit": unit,
-        "action": action,
-        "verdict": 1,
-        "container_id": 0,
-        "caps": 0,
-        "path_or_addr": path_or_addr,
-        "needed_perm": "allow.net.hosts",
-    })
-    .to_string();
-    fs::write(
-        &script_path,
-        format!(
-            r#"#!/bin/sh
-set -eu
-
-EVENTS="$1"
-MODE="$2"
-
-printf '%s\n' '{event}' >> "$EVENTS"
-
-if [ "$MODE" = "enforce" ]; then
-    exit 42
-fi
-
-exit 0
-"#,
-            event = deny_event
-        ),
-    )?;
-    make_executable(&script_path)?;
-    Ok(script_path)
-}
-
-fn write_policy_for_mode(
-    dir: &Path,
-    script_path: &Path,
-    mode: &str,
-) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    let script_str = script_path.as_os_str();
-    let script_utf8 = script_str.to_str().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "script path is not valid UTF-8")
-    })?;
-    let script_entry = serde_json::to_string(script_utf8)?;
-    let policy_path = dir.join(format!("{mode}-policy.toml"));
-    fs::write(
-        &policy_path,
-        format!(
-            r#"mode = "{mode}"
-
-[fs]
-default = "strict"
-
-[net]
-default = "deny"
-
-[exec]
-default = "allowlist"
-
-[allow.exec]
-allowed = [{script_entry}]
-"#,
-            mode = mode,
-            script_entry = script_entry,
-        ),
-    )?;
-    Ok(policy_path)
 }
 
 #[test]
