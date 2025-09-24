@@ -77,6 +77,8 @@ fn init_cargo_package(dir: &Path) -> io::Result<()> {
 
 const DENIED_ENDPOINT: &str = "198.51.100.10:443";
 const DENIED_PID: u32 = 7777;
+const DENIED_TGID: u32 = 8888;
+const DENIED_TIME_NS: u64 = 1_234_567_890;
 const DENIED_ACTION: u8 = 4;
 const DENIED_UNIT: u8 = UNIT_RUSTC as u8;
 const RENAME_PATH: &str = "/var/warden/forbidden";
@@ -114,12 +116,15 @@ fn write_violation_script(
     let script_path = dir.join(format!("deny-action-{action}.sh"));
     let deny_event = json!({
         "pid": DENIED_PID,
+        "tgid": DENIED_TGID,
+        "time_ns": DENIED_TIME_NS,
         "unit": unit,
         "action": action,
         "verdict": 1,
         "container_id": 0,
         "caps": 0,
         "path_or_addr": path_or_addr,
+        "needed_perm": "allow.net.hosts",
     })
     .to_string();
     fs::write(

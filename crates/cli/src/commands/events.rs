@@ -38,12 +38,15 @@ mod tests {
             "{}",
             serde_json::json!({
                 "pid": 1,
+                "tgid": 10,
+                "time_ns": 1000,
                 "unit": 0,
                 "action": 3,
                 "verdict": 0,
                 "container_id": 0,
                 "caps": 0,
-                "path_or_addr": "/bin/echo"
+                "path_or_addr": "/bin/echo",
+                "needed_perm": ""
             })
         )
         .unwrap();
@@ -52,12 +55,15 @@ mod tests {
             "{}",
             serde_json::json!({
                 "pid": 2,
+                "tgid": 20,
+                "time_ns": 2000,
                 "unit": 0,
                 "action": 4,
                 "verdict": 1,
                 "container_id": 0,
                 "caps": 0,
-                "path_or_addr": "1.2.3.4:80"
+                "path_or_addr": "1.2.3.4:80",
+                "needed_perm": "allow.net.hosts"
             })
         )
         .unwrap();
