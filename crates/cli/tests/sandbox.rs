@@ -1,79 +1,8 @@
 use assert_cmd::Command;
 use bpf_api::{MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE, UNIT_RUSTC};
 use event_reporting::EventRecord;
-use sandbox_runtime::LayoutSnapshot;
-use serde_json::json;
-use std::fs;
-use std::io;
-use std::path::Path;
-use std::time::Duration;
-use tempfile::tempdir;
-
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
-fn read_snapshots(path: &Path) -> Result<Vec<LayoutSnapshot>, Box<dyn std::error::Error>> {
-    let layout_contents = fs::read_to_string(path)?;
-    let snapshots = layout_contents
-        .lines()
-        .map(serde_json::from_str)
-        .collect::<Result<Vec<LayoutSnapshot>, _>>()?;
-    Ok(snapshots)
-}
-
-fn wait_for_fake_agent(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let mut attempts = 0;
-    loop {
-        match fs::read_to_string(path) {
-            Ok(contents) => {
-                if contents.lines().any(|line| line.contains("\"fake\":true")) {
-                    return Ok(contents);
-                }
-                if attempts > 50 {
-                    return Err(format!(
-                        "fake agent did not record final entry in {}: {}",
-                        path.display(),
-                        contents
-                    )
-                    .into());
-                }
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                if attempts > 50 {
-                    return Err(format!(
-                        "fake agent never created events file at {}",
-                        path.display()
-                    )
-                    .into());
-                }
-            }
-            Err(err) => return Err(err.into()),
-        }
-        attempts += 1;
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn read_event_records(path: &Path) -> Result<Vec<EventRecord>, Box<dyn std::error::Error>> {
-    let contents = wait_for_fake_agent(path)?;
-    let mut events = Vec::new();
-    for line in contents.lines() {
-        if let Ok(event) = serde_json::from_str::<EventRecord>(line) {
-            events.push(event);
-        }
-    }
-    Ok(events)
-}
-
-fn init_cargo_package(dir: &Path) -> io::Result<()> {
-    fs::write(
-        dir.join("Cargo.toml"),
-        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-    )?;
-    fs::create_dir_all(dir.join("src"))?;
-    fs::write(dir.join("src/lib.rs"), "pub fn fixture() {}\n")?;
-    Ok(())
-}
+use policy_core::Mode;
+use qqrm_testkits::{LayoutSnapshotExt, TestProject};
 
 const DENIED_ENDPOINT: &str = "198.51.100.10:443";
 const DENIED_PID: u32 = 7777;
@@ -82,296 +11,154 @@ const DENIED_UNIT: u8 = UNIT_RUSTC as u8;
 const RENAME_PATH: &str = "/var/warden/forbidden";
 const RENAME_ACTION: u8 = 1;
 
-fn run_in_fake_sandbox(
-    mut cmd: Command,
-    events_path: &Path,
-) -> Result<(std::process::ExitStatus, Vec<EventRecord>), Box<dyn std::error::Error>> {
-    let output = cmd.output()?;
-    let status = output.status;
-    let events = read_event_records(events_path)?;
-    Ok((status, events))
-}
-
-#[cfg(unix)]
-fn make_executable(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(path, perms)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn make_executable(_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    Ok(())
-}
-
-fn write_violation_script(
-    dir: &Path,
-    action: u8,
-    unit: u8,
-    path_or_addr: &str,
-) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    let script_path = dir.join(format!("deny-action-{action}.sh"));
-    let deny_event = json!({
-        "pid": DENIED_PID,
-        "unit": unit,
-        "action": action,
-        "verdict": 1,
-        "container_id": 0,
-        "caps": 0,
-        "path_or_addr": path_or_addr,
-    })
-    .to_string();
-    fs::write(
-        &script_path,
-        format!(
-            r#"#!/bin/sh
-set -eu
-
-EVENTS="$1"
-MODE="$2"
-
-printf '%s\n' '{event}' >> "$EVENTS"
-
-if [ "$MODE" = "enforce" ]; then
-    exit 42
-fi
-
-exit 0
-"#,
-            event = deny_event
-        ),
-    )?;
-    make_executable(&script_path)?;
-    Ok(script_path)
-}
-
-fn write_policy_for_mode(
-    dir: &Path,
-    script_path: &Path,
-    mode: &str,
-) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    let script_str = script_path.as_os_str();
-    let script_utf8 = script_str.to_str().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "script path is not valid UTF-8")
-    })?;
-    let script_entry = serde_json::to_string(script_utf8)?;
-    let policy_path = dir.join(format!("{mode}-policy.toml"));
-    fs::write(
-        &policy_path,
-        format!(
-            r#"mode = "{mode}"
-
-[fs]
-default = "strict"
-
-[net]
-default = "deny"
-
-[exec]
-default = "allowlist"
-
-[allow.exec]
-allowed = [{script_entry}]
-"#,
-            mode = mode,
-            script_entry = script_entry,
-        ),
-    )?;
-    Ok(policy_path)
+fn assert_denial(event: &EventRecord, action: u8, path_or_addr: &str) {
+    assert_eq!(event.pid, DENIED_PID);
+    assert_eq!(event.action, action);
+    assert_eq!(event.unit, DENIED_UNIT);
+    assert_eq!(event.verdict, 1);
+    assert_eq!(event.path_or_addr, path_or_addr);
 }
 
 #[test]
 fn fake_sandbox_enforce_denial_fails_child() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempdir()?;
-    init_cargo_package(dir.path())?;
-    let events_path = dir.path().join("enforce-events.jsonl");
-    let layout_path = dir.path().join("enforce-layout.jsonl");
-    let cgroup_path = dir.path().join("enforce-cgroup");
-    let script_path =
-        write_violation_script(dir.path(), DENIED_ACTION, DENIED_UNIT, DENIED_ENDPOINT)?;
-    let policy_path = write_policy_for_mode(dir.path(), &script_path, "enforce")?;
+    let project = TestProject::new()?;
+    project.init_cargo_package("fixture")?;
+    let sandbox = project.fake_sandbox("enforce")?;
+    sandbox.touch_event_log()?;
 
-    fs::File::create(&events_path)?;
+    let script = project.write_violation_script(
+        "deny-action",
+        DENIED_ACTION,
+        DENIED_UNIT,
+        DENIED_ENDPOINT,
+    )?;
+    let policy = project.write_exec_policy("enforce", Mode::Enforce, &[&script])?;
 
     let mut cmd = Command::cargo_bin("cargo-warden")?;
     cmd.arg("run")
         .arg("--policy")
-        .arg(&policy_path)
+        .arg(&policy)
         .arg("--")
-        .arg(&script_path)
-        .arg(&events_path)
+        .arg(&script)
+        .arg(sandbox.events_path())
         .arg("enforce")
-        .current_dir(dir.path())
-        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
-        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
-        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
-        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path);
+        .current_dir(project.path());
+    sandbox.apply_assert(&mut cmd);
 
-    let (status, events) = run_in_fake_sandbox(cmd, &events_path)?;
+    cmd.assert().failure().code(42);
 
-    assert!(
-        !status.success(),
-        "expected failure exit status when sandbox denies action"
-    );
-    assert_eq!(status.code(), Some(42));
-
+    let events = sandbox.read_events()?;
     assert_eq!(
         events.len(),
         1,
         "expected single denial event: {:?}",
         events
     );
-    let event = &events[0];
-    assert_eq!(event.pid, DENIED_PID);
-    assert_eq!(event.action, DENIED_ACTION);
-    assert_eq!(event.unit, DENIED_UNIT);
-    assert_eq!(event.verdict, 1);
-    assert_eq!(event.path_or_addr, DENIED_ENDPOINT);
+    assert_denial(&events[0], DENIED_ACTION, DENIED_ENDPOINT);
 
-    let snapshots = read_snapshots(&layout_path)?;
-    let snapshot = snapshots.last().expect("layout snapshot present");
-    assert_eq!(snapshot.mode, "enforce");
+    let snapshot = sandbox.last_layout()?;
+    assert_eq!(snapshot.mode(), "enforce");
     assert_eq!(snapshot.mode_flag, Some(MODE_FLAG_ENFORCE));
-
-    assert!(
-        !cgroup_path.exists(),
-        "fake sandbox should clean up cgroup directory"
-    );
+    sandbox.assert_cgroup_removed()?;
 
     Ok(())
 }
 
 #[test]
 fn fake_sandbox_enforce_rename_denial_reports_event() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempdir()?;
-    init_cargo_package(dir.path())?;
-    let events_path = dir.path().join("rename-events.jsonl");
-    let layout_path = dir.path().join("rename-layout.jsonl");
-    let cgroup_path = dir.path().join("rename-cgroup");
-    let script_path = write_violation_script(dir.path(), RENAME_ACTION, DENIED_UNIT, RENAME_PATH)?;
-    let policy_path = write_policy_for_mode(dir.path(), &script_path, "enforce")?;
+    let project = TestProject::new()?;
+    project.init_cargo_package("fixture")?;
+    let sandbox = project.fake_sandbox("rename")?;
+    sandbox.touch_event_log()?;
 
-    fs::File::create(&events_path)?;
+    let script =
+        project.write_violation_script("deny-rename", RENAME_ACTION, DENIED_UNIT, RENAME_PATH)?;
+    let policy = project.write_exec_policy("rename", Mode::Enforce, &[&script])?;
 
     let mut cmd = Command::cargo_bin("cargo-warden")?;
     cmd.arg("run")
         .arg("--policy")
-        .arg(&policy_path)
+        .arg(&policy)
         .arg("--")
-        .arg(&script_path)
-        .arg(&events_path)
+        .arg(&script)
+        .arg(sandbox.events_path())
         .arg("enforce")
-        .current_dir(dir.path())
-        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
-        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
-        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
-        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path);
+        .current_dir(project.path());
+    sandbox.apply_assert(&mut cmd);
 
-    let (status, events) = run_in_fake_sandbox(cmd, &events_path)?;
+    cmd.assert().failure().code(42);
 
-    assert!(!status.success(), "rename denial should fail command");
-    assert_eq!(status.code(), Some(42));
+    let events = sandbox.read_events()?;
     assert_eq!(
         events.len(),
         1,
         "expected single rename event: {:?}",
         events
     );
+    assert_denial(&events[0], RENAME_ACTION, RENAME_PATH);
 
-    let event = &events[0];
-    assert_eq!(event.pid, DENIED_PID);
-    assert_eq!(event.action, RENAME_ACTION);
-    assert_eq!(event.unit, DENIED_UNIT);
-    assert_eq!(event.verdict, 1);
-    assert_eq!(event.path_or_addr, RENAME_PATH);
-
-    let snapshots = read_snapshots(&layout_path)?;
-    let snapshot = snapshots.last().expect("layout snapshot present");
-    assert_eq!(snapshot.mode, "enforce");
+    let snapshot = sandbox.last_layout()?;
+    assert_eq!(snapshot.mode(), "enforce");
     assert_eq!(snapshot.mode_flag, Some(MODE_FLAG_ENFORCE));
-
-    assert!(
-        !cgroup_path.exists(),
-        "fake sandbox should clean up cgroup directory"
-    );
+    sandbox.assert_cgroup_removed()?;
 
     Ok(())
 }
 
 #[test]
 fn fake_sandbox_observe_denial_allows_child() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempdir()?;
-    init_cargo_package(dir.path())?;
-    let events_path = dir.path().join("observe-events.jsonl");
-    let layout_path = dir.path().join("observe-layout.jsonl");
-    let cgroup_path = dir.path().join("observe-cgroup");
-    let script_path =
-        write_violation_script(dir.path(), DENIED_ACTION, DENIED_UNIT, DENIED_ENDPOINT)?;
-    let policy_path = write_policy_for_mode(dir.path(), &script_path, "observe")?;
+    let project = TestProject::new()?;
+    project.init_cargo_package("fixture")?;
+    let sandbox = project.fake_sandbox("observe")?;
+    sandbox.touch_event_log()?;
 
-    fs::File::create(&events_path)?;
+    let script = project.write_violation_script(
+        "deny-observe",
+        DENIED_ACTION,
+        DENIED_UNIT,
+        DENIED_ENDPOINT,
+    )?;
+    let policy = project.write_exec_policy("observe", Mode::Observe, &[&script])?;
 
     let mut cmd = Command::cargo_bin("cargo-warden")?;
     cmd.arg("run")
         .arg("--policy")
-        .arg(&policy_path)
+        .arg(&policy)
         .arg("--")
-        .arg(&script_path)
-        .arg(&events_path)
+        .arg(&script)
+        .arg(sandbox.events_path())
         .arg("observe")
-        .current_dir(dir.path())
-        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
-        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
-        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
-        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path);
+        .current_dir(project.path());
+    sandbox.apply_assert(&mut cmd);
 
-    let (status, events) = run_in_fake_sandbox(cmd, &events_path)?;
+    cmd.assert().success().code(0);
 
-    assert!(
-        status.success(),
-        "observe mode should allow denied action, got status: {:?}",
-        status
-    );
-    assert_eq!(status.code(), Some(0));
-
+    let events = sandbox.read_events()?;
     assert_eq!(
         events.len(),
         1,
         "expected single denial event: {:?}",
         events
     );
-    let event = &events[0];
-    assert_eq!(event.pid, DENIED_PID);
-    assert_eq!(event.action, DENIED_ACTION);
-    assert_eq!(event.unit, DENIED_UNIT);
-    assert_eq!(event.verdict, 1);
-    assert_eq!(event.path_or_addr, DENIED_ENDPOINT);
+    assert_denial(&events[0], DENIED_ACTION, DENIED_ENDPOINT);
 
-    let snapshots = read_snapshots(&layout_path)?;
-    let snapshot = snapshots.last().expect("layout snapshot present");
-    assert_eq!(snapshot.mode, "observe");
+    let snapshot = sandbox.last_layout()?;
+    assert_eq!(snapshot.mode(), "observe");
     assert_eq!(snapshot.mode_flag, Some(MODE_FLAG_OBSERVE));
-
-    assert!(
-        !cgroup_path.exists(),
-        "fake sandbox should clean up cgroup directory"
-    );
+    sandbox.assert_cgroup_removed()?;
 
     Ok(())
 }
 
 #[test]
 fn run_fake_sandbox_records_layout() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempdir()?;
-    init_cargo_package(dir.path())?;
-    let events_path = dir.path().join("warden-events.jsonl");
-    let layout_path = dir.path().join("fake-layout.jsonl");
-    let cgroup_path = dir.path().join("fake-cgroup");
-    let policy_path = dir.path().join("policy.toml");
+    let project = TestProject::new()?;
+    project.init_cargo_package("fixture")?;
+    let sandbox = project.fake_sandbox("layout")?;
+    sandbox.touch_event_log()?;
 
-    fs::write(
-        &policy_path,
+    project.write(
+        "policy.toml",
         r#"
 mode = "enforce"
 
@@ -393,41 +180,36 @@ read_extra = ["/etc/ssl/certs"]
 "#,
     )?;
 
+    let policy = project.child("policy.toml");
+
     let mut cmd = Command::cargo_bin("cargo-warden")?;
     cmd.arg("run")
         .arg("--allow")
         .arg("/bin/echo")
         .arg("--policy")
-        .arg(&policy_path)
+        .arg(&policy)
         .arg("--")
         .arg("true")
-        .current_dir(dir.path())
-        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
-        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
-        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
-        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path);
+        .current_dir(project.path());
+    sandbox.apply_assert(&mut cmd);
     cmd.assert().success();
 
-    let snapshots = read_snapshots(&layout_path)?;
+    let snapshots = sandbox.read_layouts()?;
     assert!(
         !snapshots.is_empty(),
-        "expected at least one layout snapshot in {}",
-        layout_path.display()
+        "expected at least one layout snapshot"
     );
     let snapshot = snapshots.last().unwrap();
 
-    assert_eq!(snapshot.mode, "enforce");
+    assert_eq!(snapshot.mode(), "enforce");
     assert_eq!(snapshot.mode_flag, Some(MODE_FLAG_ENFORCE));
     assert!(
-        snapshot.exec.iter().any(|path| path == "/bin/echo"),
+        snapshot.exec_contains("/bin/echo"),
         "expected exec allowlist entry for /bin/echo: {:?}",
         snapshot.exec
     );
     assert!(
-        snapshot
-            .net
-            .iter()
-            .any(|rule| rule.addr == "127.0.0.1" && rule.port == 8080),
+        snapshot.net_contains("127.0.0.1", 8080),
         "expected net rule for 127.0.0.1:8080: {:?}",
         snapshot.net
     );
@@ -436,72 +218,59 @@ read_extra = ["/etc/ssl/certs"]
         "expected no net parents: {:?}",
         snapshot.net_parents
     );
+    let logs_rule = snapshot.fs_rule("/tmp/logs").expect("logs rule present");
     assert!(
-        snapshot
-            .fs
-            .iter()
-            .any(|rule| rule.path == "/tmp/logs" && rule.write),
+        logs_rule.write,
         "expected write rule for /tmp/logs: {:?}",
         snapshot.fs
     );
     assert!(
-        snapshot
-            .fs
-            .iter()
-            .any(|rule| rule.path == "/etc/ssl/certs" && rule.read && !rule.write),
+        snapshot.fs_contains("/etc/ssl/certs", true, false),
         "expected read-only rule for /etc/ssl/certs: {:?}",
         snapshot.fs
     );
 
-    let contents = fs::read_to_string(&events_path)?;
+    let events_log = sandbox.raw_event_log()?;
     assert!(
-        contents.lines().any(|line| line.contains("\"fake\":true")),
-        "expected fake event in {}: {contents}",
-        events_path.display()
+        events_log
+            .lines()
+            .any(|line| line.contains("\"fake\":true")),
+        "expected fake event marker in log: {}",
+        events_log
     );
-    assert!(
-        !cgroup_path.exists(),
-        "expected fake cgroup removal: {}",
-        cgroup_path.display()
-    );
+    sandbox.assert_cgroup_removed()?;
+
     Ok(())
 }
 
 #[test]
 fn strict_mode_auto_paths_allow_build() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempdir()?;
-    init_cargo_package(dir.path())?;
+    let project = TestProject::new()?;
+    project.init_cargo_package("fixture")?;
+    let sandbox = project.fake_sandbox("strict")?;
+    sandbox.touch_event_log()?;
 
-    let events_path = dir.path().join("strict-events.jsonl");
-    let layout_path = dir.path().join("strict-layout.jsonl");
-    let cgroup_path = dir.path().join("strict-cgroup");
-    fs::File::create(&events_path)?;
-
-    let target_override = dir.path().join("custom-target");
-    let out_dir_override = dir.path().join("custom-out");
-    fs::create_dir_all(&target_override)?;
-    fs::create_dir_all(&out_dir_override)?;
+    let target_override = project.child("custom-target");
+    let out_dir_override = project.child("custom-out");
+    project.create_dir_all(&target_override)?;
+    project.create_dir_all(&out_dir_override)?;
 
     let mut cmd = Command::cargo_bin("cargo-warden")?;
     cmd.arg("run")
         .arg("--")
         .arg("true")
-        .current_dir(dir.path())
+        .current_dir(project.path())
         .env("CARGO_TARGET_DIR", &target_override)
-        .env("OUT_DIR", &out_dir_override)
-        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
-        .env("QQRM_WARDEN_EVENTS_PATH", &events_path)
-        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_path)
-        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_path);
+        .env("OUT_DIR", &out_dir_override);
+    sandbox.apply_assert(&mut cmd);
     cmd.assert().success();
 
-    let snapshots = read_snapshots(&layout_path)?;
-    let snapshot = snapshots.last().expect("layout snapshot present");
+    let snapshot = sandbox.last_layout()?;
 
-    let workspace = dir
+    let workspace = project
         .path()
         .canonicalize()
-        .unwrap_or_else(|_| dir.path().to_path_buf())
+        .unwrap_or_else(|_| project.path().to_path_buf())
         .to_string_lossy()
         .into_owned();
     let target = target_override
@@ -516,87 +285,60 @@ fn strict_mode_auto_paths_allow_build() -> Result<(), Box<dyn std::error::Error>
         .into_owned();
 
     assert!(
-        snapshot
-            .fs
-            .iter()
-            .any(|rule| rule.path == workspace && rule.read && !rule.write),
+        snapshot.fs_contains(&workspace, true, false),
         "expected workspace read rule: {:?}",
         snapshot.fs
     );
+    let target_rule = snapshot
+        .fs_rule(&target)
+        .expect("target override rule present");
     assert!(
-        snapshot
-            .fs
-            .iter()
-            .any(|rule| rule.path == target && rule.write),
+        target_rule.write,
         "expected target write rule: {:?}",
         snapshot.fs
     );
+    let out_rule = snapshot
+        .fs_rule(&out_dir)
+        .expect("out dir override rule present");
     assert!(
-        snapshot
-            .fs
-            .iter()
-            .any(|rule| rule.path == out_dir && rule.write),
+        out_rule.write,
         "expected out dir write rule: {:?}",
         snapshot.fs
     );
 
-    assert!(
-        !cgroup_path.exists(),
-        "fake sandbox should remove cgroup directory"
-    );
+    sandbox.assert_cgroup_removed()?;
 
     Ok(())
 }
 
 #[test]
 fn workspace_policy_overrides_modify_layout() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = tempdir()?;
-    let workspace_root = dir.path();
-    let events_a = workspace_root.join("alpha-events.jsonl");
-    let layout_a = workspace_root.join("alpha-layout.jsonl");
-    let cgroup_a = workspace_root.join("alpha-cgroup");
-    let events_b = workspace_root.join("beta-events.jsonl");
-    let layout_b = workspace_root.join("beta-layout.jsonl");
-    let cgroup_b = workspace_root.join("beta-cgroup");
+    let project = TestProject::new()?;
+    let sandbox_alpha = project.fake_sandbox("alpha")?;
+    let sandbox_beta = project.fake_sandbox("beta")?;
 
-    fs::create_dir_all(workspace_root.join("members/alpha/src"))?;
-    fs::create_dir_all(workspace_root.join("members/beta/src"))?;
+    project.create_dir_all("members/alpha/src")?;
+    project.create_dir_all("members/beta/src")?;
 
-    fs::write(
-        workspace_root.join("Cargo.toml"),
-        r#"[workspace]
-members = ["members/alpha", "members/beta"]
-"#,
+    project.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"members/alpha\", \"members/beta\"]\n",
     )?;
 
-    fs::write(
-        workspace_root.join("members/alpha/Cargo.toml"),
-        r#"[package]
-name = "alpha"
-version = "0.1.0"
-edition = "2024"
-"#,
+    project.write(
+        "members/alpha/Cargo.toml",
+        "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )?;
-    fs::write(
-        workspace_root.join("members/alpha/src/lib.rs"),
-        "pub fn alpha() {}\n",
-    )?;
+    project.write("members/alpha/src/lib.rs", "pub fn alpha() {}\n")?;
 
-    fs::write(
-        workspace_root.join("members/beta/Cargo.toml"),
-        r#"[package]
-name = "beta"
-version = "0.1.0"
-edition = "2024"
-"#,
+    project.write(
+        "members/beta/Cargo.toml",
+        "[package]\nname = \"beta\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )?;
-    fs::write(
-        workspace_root.join("members/beta/src/lib.rs"),
-        "pub fn beta() {}\n",
-    )?;
+    project.write("members/beta/src/lib.rs", "pub fn beta() {}\n")?;
 
-    fs::write(
-        workspace_root.join("workspace.warden.toml"),
+    project.write(
+        "workspace.warden.toml",
         r#"[root]
 mode = "enforce"
 
@@ -630,72 +372,48 @@ hosts = ["10.0.0.1:1234"]
 "#,
     )?;
 
-    let alpha_dir = workspace_root.join("members/alpha");
+    sandbox_alpha.touch_event_log()?;
+    let alpha_dir = project.child("members/alpha");
     let mut cmd = Command::cargo_bin("cargo-warden")?;
-    cmd.arg("run")
-        .arg("--")
-        .arg("true")
-        .current_dir(&alpha_dir)
-        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
-        .env("QQRM_WARDEN_EVENTS_PATH", &events_a)
-        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_a)
-        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_a);
+    cmd.arg("run").arg("--").arg("true").current_dir(&alpha_dir);
+    sandbox_alpha.apply_assert(&mut cmd);
     cmd.assert().success();
 
-    let alpha_snapshots = read_snapshots(&layout_a)?;
-    let alpha_snapshot = alpha_snapshots.last().expect("alpha snapshot present");
+    let alpha_snapshot = sandbox_alpha.last_layout()?;
     assert!(
-        alpha_snapshot
-            .exec
-            .iter()
-            .any(|path| path == "/usr/bin/member-a"),
+        alpha_snapshot.exec_contains("/usr/bin/member-a"),
         "expected per-member exec allowance for alpha: {:?}",
         alpha_snapshot.exec
     );
     assert!(
-        alpha_snapshot
-            .net
-            .iter()
-            .all(|rule| !(rule.addr == "10.0.0.1" && rule.port == 1234)),
+        !alpha_snapshot.net_contains("10.0.0.1", 1234),
         "alpha overrides should not include beta network host: {:?}",
         alpha_snapshot.net
     );
+    sandbox_alpha.assert_cgroup_removed()?;
 
+    sandbox_beta.touch_event_log()?;
     let mut cmd = Command::cargo_bin("cargo-warden")?;
     cmd.arg("run")
         .arg("--")
         .arg("true")
-        .current_dir(workspace_root)
-        .env("CARGO_PRIMARY_PACKAGE", "beta")
-        .env("QQRM_WARDEN_FAKE_SANDBOX", "1")
-        .env("QQRM_WARDEN_EVENTS_PATH", &events_b)
-        .env("QQRM_WARDEN_FAKE_CGROUP_DIR", &cgroup_b)
-        .env("QQRM_WARDEN_FAKE_LAYOUT_PATH", &layout_b);
+        .current_dir(project.path())
+        .env("CARGO_PRIMARY_PACKAGE", "beta");
+    sandbox_beta.apply_assert(&mut cmd);
     cmd.assert().success();
 
-    let beta_snapshots = read_snapshots(&layout_b)?;
-    let beta_snapshot = beta_snapshots.last().expect("beta snapshot present");
+    let beta_snapshot = sandbox_beta.last_layout()?;
     assert!(
-        !beta_snapshot
-            .exec
-            .iter()
-            .any(|path| path == "/usr/bin/member-a"),
+        !beta_snapshot.exec_contains("/usr/bin/member-a"),
         "beta overrides should not inherit alpha exec allowlist: {:?}",
         beta_snapshot.exec
     );
     assert!(
-        beta_snapshot
-            .net
-            .iter()
-            .any(|rule| rule.addr == "10.0.0.1" && rule.port == 1234),
+        beta_snapshot.net_contains("10.0.0.1", 1234),
         "beta overrides should include network host 10.0.0.1:1234: {:?}",
         beta_snapshot.net
     );
-
-    assert!(
-        !cgroup_a.exists() && !cgroup_b.exists(),
-        "fake sandbox should remove cgroup directories"
-    );
+    sandbox_beta.assert_cgroup_removed()?;
 
     Ok(())
 }
