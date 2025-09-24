@@ -1,6 +1,8 @@
 use policy_core::{FsDefault, Mode, Policy, WorkspacePolicy};
 use qqrm_policy_compiler::{self, CompiledPolicy, MapsLayout};
+use semver::{Version, VersionReq};
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io;
@@ -20,12 +22,15 @@ pub(crate) fn setup_isolation(
     mode_override: Option<Mode>,
 ) -> io::Result<IsolationConfig> {
     let mut policy = load_default_policy()?;
+    let metadata = load_cargo_metadata()?;
+    apply_manifest_permissions(&mut policy, &metadata)?;
+    apply_trust_permissions(&mut policy, &metadata)?;
     for path in policy_paths {
         let extra = load_policy(Path::new(path))?;
         merge_policy(&mut policy, extra);
     }
     policy.extend_exec_allowed(allow.iter().cloned());
-    extend_fs_access(&mut policy)?;
+    extend_fs_access(&mut policy, &metadata)?;
     if let Some(mode) = mode_override {
         policy.mode = mode;
     }
@@ -178,13 +183,12 @@ fn load_cargo_metadata() -> io::Result<CargoMetadata> {
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
 }
 
-fn extend_fs_access(policy: &mut Policy) -> io::Result<()> {
+fn extend_fs_access(policy: &mut Policy, metadata: &CargoMetadata) -> io::Result<()> {
     if policy.fs_default() != FsDefault::Strict {
         return Ok(());
     }
 
-    let metadata = load_cargo_metadata()?;
-    let build_paths = detect_build_paths(&metadata);
+    let build_paths = detect_build_paths(metadata);
 
     maybe_extend_fs_read(policy, &build_paths.workspace_root);
     for target in build_paths.target_dirs {
@@ -249,6 +253,415 @@ fn contains_path<'a>(paths: impl Iterator<Item = &'a PathBuf>, candidate: &Path)
         }
     }
     false
+}
+
+fn apply_manifest_permissions(policy: &mut Policy, metadata: &CargoMetadata) -> io::Result<()> {
+    let member_ids: HashSet<&str> = metadata
+        .workspace_members
+        .iter()
+        .map(String::as_str)
+        .collect();
+
+    for package in &metadata.packages {
+        if !member_ids.contains(package.id.as_str()) {
+            continue;
+        }
+        let Some(manifest_dir) = package.manifest_path.parent() else {
+            continue;
+        };
+        let manifest_dir = normalize_path(manifest_dir);
+
+        let Value::Object(ref map) = package.metadata else {
+            continue;
+        };
+        let Some(warden) = map.get("cargo-warden") else {
+            continue;
+        };
+        if warden.is_null() {
+            continue;
+        }
+
+        let source = PermissionSource::Manifest {
+            package: package.name.as_str(),
+        };
+        let mut permissions = Vec::new();
+        collect_permission_strings(warden, &source, &mut permissions)?;
+        if permissions.is_empty() {
+            continue;
+        }
+        apply_permission_list(
+            policy,
+            permissions.iter().map(String::as_str),
+            manifest_dir.as_path(),
+            metadata,
+            &source,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn apply_trust_permissions(policy: &mut Policy, metadata: &CargoMetadata) -> io::Result<()> {
+    let Some(db) = load_trust_db()? else {
+        return Ok(());
+    };
+    if db.entries.is_empty() {
+        return Ok(());
+    }
+
+    let member_ids: HashSet<&str> = metadata
+        .workspace_members
+        .iter()
+        .map(String::as_str)
+        .collect();
+
+    for package in &metadata.packages {
+        if !member_ids.contains(package.id.as_str()) {
+            continue;
+        }
+        let Some(manifest_dir) = package.manifest_path.parent() else {
+            continue;
+        };
+        let manifest_dir = normalize_path(manifest_dir);
+        let version = Version::parse(&package.version).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "failed to parse version '{}' for package '{}': {err}",
+                    package.version, package.name
+                ),
+            )
+        })?;
+
+        for entry in &db.entries {
+            if entry.package != package.name {
+                continue;
+            }
+            if !entry.matches(&version)? {
+                continue;
+            }
+            if entry.permissions.is_empty() {
+                continue;
+            }
+            let source = PermissionSource::Trust {
+                package: package.name.as_str(),
+                version_range: entry
+                    .version_range
+                    .as_deref()
+                    .map(str::trim)
+                    .and_then(|s| if s.is_empty() { None } else { Some(s) }),
+            };
+            apply_permission_list(
+                policy,
+                entry.permissions.iter().map(String::as_str),
+                manifest_dir.as_path(),
+                metadata,
+                &source,
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+enum PermissionSource<'a> {
+    Manifest {
+        package: &'a str,
+    },
+    Trust {
+        package: &'a str,
+        version_range: Option<&'a str>,
+    },
+}
+
+impl<'a> PermissionSource<'a> {
+    fn describe(&self) -> String {
+        match self {
+            PermissionSource::Manifest { package } => {
+                format!("package metadata for '{package}'")
+            }
+            PermissionSource::Trust {
+                package,
+                version_range,
+            } => {
+                if let Some(range) = version_range {
+                    format!("trust database entry for '{package}' ({range})")
+                } else {
+                    format!("trust database entry for '{package}'")
+                }
+            }
+        }
+    }
+}
+
+fn metadata_error(source: &PermissionSource<'_>, detail: impl Into<String>) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("{}: {}", source.describe(), detail.into()),
+    )
+}
+
+fn permission_error(
+    source: &PermissionSource<'_>,
+    permission: &str,
+    detail: impl Into<String>,
+) -> io::Error {
+    metadata_error(
+        source,
+        format!("invalid permission '{permission}': {}", detail.into()),
+    )
+}
+
+fn collect_permission_strings(
+    value: &Value,
+    source: &PermissionSource<'_>,
+    output: &mut Vec<String>,
+) -> io::Result<()> {
+    match value {
+        Value::Null => Ok(()),
+        Value::Object(map) => {
+            if let Some(raw_permissions) = map.get("permissions") {
+                let permissions = raw_permissions.as_array().ok_or_else(|| {
+                    metadata_error(source, "'permissions' must be an array of strings")
+                })?;
+                for entry in permissions {
+                    let Some(text) = entry.as_str() else {
+                        return Err(metadata_error(
+                            source,
+                            "'permissions' entries must be strings",
+                        ));
+                    };
+                    output.push(text.to_string());
+                }
+            }
+            for (key, nested) in map {
+                if key == "permissions" {
+                    continue;
+                }
+                collect_permission_strings(nested, source, output)?;
+            }
+            Ok(())
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_permission_strings(item, source, output)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn apply_permission_list<'a, I>(
+    policy: &mut Policy,
+    permissions: I,
+    manifest_dir: &Path,
+    metadata: &CargoMetadata,
+    source: &PermissionSource<'_>,
+) -> io::Result<()>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut exec_paths = Vec::new();
+    let mut net_hosts = Vec::new();
+    let mut fs_reads = Vec::new();
+    let mut fs_writes = Vec::new();
+    let mut env_reads = Vec::new();
+    let mut syscall_denies = Vec::new();
+
+    for permission in permissions {
+        let trimmed = permission.trim();
+        if trimmed.is_empty() {
+            return Err(metadata_error(source, "encountered empty permission entry"));
+        }
+        let (kind, rest) = trimmed.split_once(':').ok_or_else(|| {
+            metadata_error(
+                source,
+                format!("permission '{trimmed}' is missing ':' separator"),
+            )
+        })?;
+        let value = rest.trim();
+        if value.is_empty() {
+            return Err(permission_error(source, trimmed, "missing value"));
+        }
+
+        match kind {
+            "exec" => {
+                exec_paths.push(value.to_string());
+            }
+            "net" => {
+                let host = value.strip_prefix("host:").unwrap_or(value).trim();
+                if host.is_empty() {
+                    return Err(permission_error(source, trimmed, "missing host value"));
+                }
+                net_hosts.push(host.to_string());
+            }
+            "fs" => {
+                let (mode, path_value) = value.split_once(':').ok_or_else(|| {
+                    permission_error(source, trimmed, "expected format 'fs:<mode>:<path>'")
+                })?;
+                let mode = mode.trim();
+                let path_value = path_value.trim();
+                if path_value.is_empty() {
+                    return Err(permission_error(source, trimmed, "missing filesystem path"));
+                }
+                let resolved = resolve_fs_path(path_value, manifest_dir, metadata);
+                match mode {
+                    "read" => fs_reads.push(resolved),
+                    "write" => fs_writes.push(resolved),
+                    _ => {
+                        return Err(permission_error(
+                            source,
+                            trimmed,
+                            format!("unsupported filesystem mode '{mode}'"),
+                        ));
+                    }
+                }
+            }
+            "env" => {
+                let (action, name) = value.split_once(':').ok_or_else(|| {
+                    permission_error(source, trimmed, "expected format 'env:read:<VAR>'")
+                })?;
+                let action = action.trim();
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err(permission_error(
+                        source,
+                        trimmed,
+                        "missing environment variable",
+                    ));
+                }
+                match action {
+                    "read" => env_reads.push(name.to_string()),
+                    _ => {
+                        return Err(permission_error(
+                            source,
+                            trimmed,
+                            format!("unsupported environment action '{action}'"),
+                        ));
+                    }
+                }
+            }
+            "syscall" => {
+                let (action, name) = value.split_once(':').ok_or_else(|| {
+                    permission_error(source, trimmed, "expected format 'syscall:deny:<name>'")
+                })?;
+                let action = action.trim();
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err(permission_error(source, trimmed, "missing syscall name"));
+                }
+                match action {
+                    "deny" => syscall_denies.push(name.to_string()),
+                    _ => {
+                        return Err(permission_error(
+                            source,
+                            trimmed,
+                            format!("unsupported syscall action '{action}'"),
+                        ));
+                    }
+                }
+            }
+            other => {
+                return Err(permission_error(
+                    source,
+                    trimmed,
+                    format!("unknown permission kind '{other}'"),
+                ));
+            }
+        }
+    }
+
+    if !exec_paths.is_empty() {
+        policy.extend_exec_allowed(exec_paths);
+    }
+    if !net_hosts.is_empty() {
+        policy.extend_net_hosts(net_hosts);
+    }
+    if !fs_reads.is_empty() {
+        policy.extend_fs_reads(fs_reads);
+    }
+    if !fs_writes.is_empty() {
+        policy.extend_fs_writes(fs_writes);
+    }
+    if !env_reads.is_empty() {
+        policy.extend_env_read_vars(env_reads);
+    }
+    if !syscall_denies.is_empty() {
+        policy.extend_syscall_deny(syscall_denies);
+    }
+
+    Ok(())
+}
+
+fn resolve_fs_path(value: &str, manifest_dir: &Path, metadata: &CargoMetadata) -> PathBuf {
+    match value {
+        "workspace" => normalize_path(metadata.workspace_root.as_path()),
+        "target" => normalize_path(metadata.target_directory.as_path()),
+        "manifest" | "package" => normalize_path(manifest_dir),
+        other => {
+            let path = PathBuf::from(other);
+            let absolute = if path.is_absolute() {
+                path
+            } else {
+                manifest_dir.join(path)
+            };
+            normalize_path(&absolute)
+        }
+    }
+}
+
+fn load_trust_db() -> io::Result<Option<TrustDb>> {
+    let Some(path) = find_workspace_file("trust-db.json")? else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(&path)?;
+    let db: TrustDb = serde_json::from_str(&text).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{}: {err}", path.display()),
+        )
+    })?;
+    Ok(Some(db))
+}
+
+#[derive(Deserialize)]
+struct TrustDb {
+    #[serde(default)]
+    entries: Vec<TrustEntry>,
+}
+
+#[derive(Deserialize)]
+struct TrustEntry {
+    package: String,
+    #[serde(default)]
+    version_range: Option<String>,
+    #[serde(default)]
+    permissions: Vec<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    granted_at: Option<String>,
+}
+
+impl TrustEntry {
+    fn matches(&self, version: &Version) -> io::Result<bool> {
+        let Some(range) = self.version_range.as_deref().map(str::trim) else {
+            return Ok(true);
+        };
+        if range.is_empty() {
+            return Ok(true);
+        }
+        let req = VersionReq::parse(range).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "invalid version range '{range}' for trust entry '{}': {err}",
+                    self.package
+                ),
+            )
+        })?;
+        Ok(req.matches(version))
+    }
 }
 
 fn workspace_member_from_dir(metadata: &CargoMetadata) -> io::Result<Option<String>> {
@@ -353,7 +766,10 @@ struct CargoMetadata {
 struct CargoPackage {
     id: String,
     name: String,
+    version: String,
     manifest_path: PathBuf,
+    #[serde(default)]
+    metadata: Value,
 }
 
 #[cfg(test)]
@@ -363,6 +779,7 @@ mod tests {
     use bpf_api::{FS_READ, FS_WRITE};
     use serial_test::serial;
     use std::fs::{self, write};
+    use std::net::{Ipv4Addr, Ipv6Addr};
     use std::path::Path;
 
     fn exec_paths(layout: &MapsLayout) -> Vec<String> {
@@ -393,6 +810,28 @@ mod tests {
                     .unwrap_or(entry.rule.path.len());
                 let path = String::from_utf8_lossy(&entry.rule.path[..len]).into_owned();
                 (path, entry.rule.access)
+            })
+            .collect()
+    }
+
+    fn net_hosts(layout: &MapsLayout) -> Vec<String> {
+        layout
+            .net_rules
+            .iter()
+            .map(|entry| {
+                let rule = &entry.rule;
+                match rule.prefix_len {
+                    32 => {
+                        let mut octets = [0u8; 4];
+                        octets.copy_from_slice(&rule.addr[..4]);
+                        format!("{}:{}", Ipv4Addr::from(octets), rule.port)
+                    }
+                    128 => {
+                        let addr = Ipv6Addr::from(rule.addr);
+                        format!("[{}]:{}", addr, rule.port)
+                    }
+                    _ => format!("{:?}:{}", rule.addr, rule.port),
+                }
             })
             .collect()
     }
@@ -671,5 +1110,111 @@ exec.default = "allow"
             path == &out_dir.to_string_lossy() && *access == (FS_READ | FS_WRITE)
         }));
         assert_eq!(fs_rules.len(), 3);
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_applies_manifest_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _guard = DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
+
+        let include_dir = dir.path().join("include");
+        fs::create_dir_all(&include_dir).unwrap();
+
+        write(
+            dir.path().join("Cargo.toml"),
+            r#"[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.cargo-warden]
+permissions = [
+  "exec:/usr/bin/protoc",
+  "fs:read:include",
+  "fs:write:target",
+  "net:127.0.0.1:8080",
+  "env:read:PROTO_INCLUDE",
+  "syscall:deny:clone"
+]
+
+[package.metadata.cargo-warden.proc-macro]
+permissions = ["env:read:PROTOC"]
+"#,
+        )
+        .unwrap();
+
+        let isolation = setup_isolation(&[], &[], None).unwrap();
+
+        assert!(isolation.syscall_deny.contains(&"clone".to_string()));
+
+        let exec = exec_paths(&isolation.maps_layout);
+        assert!(exec.contains(&"/usr/bin/protoc".to_string()));
+
+        let fs_rules = fs_entries(&isolation.maps_layout);
+        let include_path = super::normalize_path(&include_dir);
+        let workspace = super::normalize_path(dir.path());
+        let metadata = super::load_cargo_metadata().unwrap();
+        let target = super::normalize_path(&metadata.target_directory);
+
+        assert!(fs_rules.iter().any(|(path, access)| {
+            path == &include_path.to_string_lossy() && *access == FS_READ
+        }));
+        assert!(
+            fs_rules.iter().any(|(path, access)| {
+                path == &workspace.to_string_lossy() && *access == FS_READ
+            })
+        );
+        assert!(fs_rules.iter().any(|(path, access)| {
+            path == &target.to_string_lossy() && *access == (FS_READ | FS_WRITE)
+        }));
+
+        let net = net_hosts(&isolation.maps_layout);
+        assert!(net.contains(&"127.0.0.1:8080".to_string()));
+
+        assert!(
+            isolation
+                .allowed_env_vars
+                .contains(&"PROTO_INCLUDE".to_string())
+        );
+        assert!(isolation.allowed_env_vars.contains(&"PROTOC".to_string()));
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_applies_trust_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _guard = DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
+
+        write(
+            dir.path().join("trust-db.json"),
+            r#"{
+  "entries": [
+    {
+      "package": "fixture",
+      "version_range": "^0.1",
+      "permissions": ["exec:/usr/local/bin/custom", "fs:read:/opt/data"]
+    }
+  ]
+}
+"#,
+        )
+        .unwrap();
+
+        let isolation = setup_isolation(&[], &[], None).unwrap();
+
+        let exec = exec_paths(&isolation.maps_layout);
+        assert!(exec.contains(&"/usr/local/bin/custom".to_string()));
+
+        let fs_rules = fs_entries(&isolation.maps_layout);
+        assert!(
+            fs_rules
+                .iter()
+                .any(|(path, access)| { path == "/opt/data" && *access == FS_READ })
+        );
     }
 }
