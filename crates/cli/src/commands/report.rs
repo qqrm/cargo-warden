@@ -155,6 +155,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn report_defaults_sarif_output_path() {
         let dir = tempdir().unwrap();
         let _guard = crate::test_support::DirGuard::change_to(dir.path());
