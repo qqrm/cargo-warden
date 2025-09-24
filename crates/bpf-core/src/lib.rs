@@ -1181,9 +1181,36 @@ fn dentry_path_ptr(dentry: *mut c_void) -> Option<*const u8> {
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn fs_event(action: u8, path: &[u8; 256], allowed: bool) -> Event {
+fn copy_c_string(dst: &mut [u8], src: &[u8]) {
+    if dst.is_empty() {
+        return;
+    }
+    let mut len = src.iter().position(|&b| b == 0).unwrap_or(src.len());
+    if len >= dst.len() {
+        len = dst.len() - 1;
+    }
+    dst[..len].copy_from_slice(&src[..len]);
+    dst[len] = 0;
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn fs_needed_perm(access: u8) -> Option<&'static [u8]> {
+    if (access & bpf_api::FS_WRITE) != 0 {
+        Some(b"allow.fs.write_extra")
+    } else if (access & bpf_api::FS_READ) != 0 {
+        Some(b"allow.fs.read_extra")
+    } else {
+        None
+    }
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn fs_event(action: u8, path: &[u8; 256], access: u8, allowed: bool) -> Event {
+    let pid_tgid = unsafe { bpf_get_current_pid_tgid() };
     let mut event = Event {
-        pid: unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 },
+        pid: (pid_tgid >> 32) as u32,
+        tgid: pid_tgid as u32,
+        time_ns: unsafe { bpf_ktime_get_ns() },
         unit: {
             let unit = current_unit();
             if unit > u8::MAX as u32 {
@@ -1198,14 +1225,13 @@ fn fs_event(action: u8, path: &[u8; 256], allowed: bool) -> Event {
         container_id: 0,
         caps: 0,
         path_or_addr: [0; 256],
+        needed_perm: [0; 64],
     };
 
-    let mut len = path.iter().position(|&b| b == 0).unwrap_or(path.len());
-    if len >= event.path_or_addr.len() {
-        len = event.path_or_addr.len() - 1;
+    copy_c_string(&mut event.path_or_addr, path);
+    if !allowed && let Some(perm) = fs_needed_perm(access) {
+        copy_c_string(&mut event.needed_perm, perm);
     }
-    event.path_or_addr[..len].copy_from_slice(&path[..len]);
-    event.path_or_addr[len] = 0;
 
     event
 }
@@ -1280,6 +1306,7 @@ unsafe extern "C" {
     fn bpf_probe_read_user(dst: *mut c_void, size: u32, src: *const c_void) -> i32;
     fn bpf_ringbuf_output(ringbuf: *mut c_void, data: *const c_void, len: u64, flags: u64) -> i64;
     fn bpf_get_current_pid_tgid() -> u64;
+    fn bpf_ktime_get_ns() -> u64;
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -1347,7 +1374,7 @@ pub extern "C" fn file_open(file: *mut c_void, _cred: *mut c_void) -> i32 {
         .map(access_from_mode)
         .unwrap_or(bpf_api::FS_READ);
     let allowed = fs_allowed(&path, access);
-    let event = fs_event(ACTION_OPEN, &path, allowed);
+    let event = fs_event(ACTION_OPEN, &path, access, allowed);
     publish_event(&event);
     if allowed { 0 } else { deny_with_mode() }
 }
@@ -1370,7 +1397,7 @@ pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
     if fs_allowed(&path, access) {
         0
     } else {
-        let event = fs_event(ACTION_OPEN, &path, false);
+        let event = fs_event(ACTION_OPEN, &path, access, false);
         publish_event(&event);
         deny_with_mode()
     }
@@ -1404,13 +1431,13 @@ pub extern "C" fn inode_rename(
     let mut allowed = true;
 
     if !fs_allowed(&old_path, bpf_api::FS_WRITE) {
-        let event = fs_event(ACTION_RENAME, &old_path, false);
+        let event = fs_event(ACTION_RENAME, &old_path, bpf_api::FS_WRITE, false);
         publish_event(&event);
         allowed = false;
     }
 
     if !fs_allowed(&new_path, bpf_api::FS_WRITE) {
-        let event = fs_event(ACTION_RENAME, &new_path, false);
+        let event = fs_event(ACTION_RENAME, &new_path, bpf_api::FS_WRITE, false);
         publish_event(&event);
         allowed = false;
     }
@@ -1432,7 +1459,7 @@ pub extern "C" fn inode_unlink(_dir: *mut c_void, dentry: *mut c_void) -> i32 {
     if fs_allowed(&path, bpf_api::FS_WRITE) {
         0
     } else {
-        let event = fs_event(ACTION_UNLINK, &path, false);
+        let event = fs_event(ACTION_UNLINK, &path, bpf_api::FS_WRITE, false);
         publish_event(&event);
         deny_with_mode()
     }
@@ -1454,6 +1481,8 @@ mod tests {
     static LAST_EVENT: Mutex<Option<Event>> = Mutex::new(None);
     static TEST_LOCK: Mutex<()> = Mutex::new(());
     const TEST_PID: u32 = 1234;
+    const TEST_TGID: u32 = 4321;
+    const TEST_TIME_NS: u64 = 123_456_789;
 
     fn workspace_root_path() -> PathBuf {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1497,7 +1526,12 @@ mod tests {
 
     #[unsafe(no_mangle)]
     extern "C" fn bpf_get_current_pid_tgid() -> u64 {
-        (TEST_PID as u64) << 32
+        ((TEST_PID as u64) << 32) | (TEST_TGID as u64)
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn bpf_ktime_get_ns() -> u64 {
+        TEST_TIME_NS
     }
 
     fn assign_unit(unit: u32) {
@@ -1578,10 +1612,13 @@ mod tests {
         assert_eq!(result, 0);
         let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
         assert_eq!(event.pid, 1234);
+        assert_eq!(event.tgid, 4321);
+        assert_eq!(event.time_ns, 123_456_789);
         assert_eq!(event.unit, 0);
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 0);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        assert!(bytes_to_string(&event.needed_perm).is_empty());
         let count = EVENT_COUNTS.get(0).unwrap_or(0);
         assert_eq!(count, 1);
     }
@@ -1612,6 +1649,7 @@ mod tests {
         assert_eq!(allowed_event.action, ACTION_OPEN);
         assert_eq!(allowed_event.verdict, 0);
         assert_eq!(bytes_to_string(&allowed_event.path_or_addr), allowed_path);
+        assert!(bytes_to_string(&allowed_event.needed_perm).is_empty());
         let allowed_count = EVENT_COUNTS.get(0).unwrap_or(0);
         assert_eq!(allowed_count, 1);
         EVENT_COUNTS.clear();
@@ -1628,6 +1666,7 @@ mod tests {
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.read_extra");
     }
 
     #[test]
@@ -1651,6 +1690,7 @@ mod tests {
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.read_extra");
         let count = EVENT_COUNTS.get(0).unwrap_or(0);
         assert_eq!(count, 1);
     }
@@ -1899,6 +1939,7 @@ mod tests {
         assert_eq!(event.action, ACTION_RENAME);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), old_path);
+        assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.write_extra");
         let count = EVENT_COUNTS.get(0).unwrap_or(0);
         assert_eq!(count, 1);
     }
@@ -1933,6 +1974,7 @@ mod tests {
         assert_eq!(event.action, ACTION_RENAME);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), new_path);
+        assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.write_extra");
         let count = EVENT_COUNTS.get(0).unwrap_or(0);
         assert_eq!(count, 1);
     }
@@ -2077,6 +2119,7 @@ mod tests {
         assert_eq!(event.action, ACTION_UNLINK);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.write_extra");
 
         set_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
         LAST_EVENT.lock().unwrap().take();
@@ -2096,6 +2139,7 @@ mod tests {
         assert_eq!(event.action, ACTION_UNLINK);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.write_extra");
     }
 
     #[test]
@@ -2117,6 +2161,7 @@ mod tests {
         assert_eq!(event.action, ACTION_UNLINK);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
+        assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.write_extra");
     }
 
     #[test]
@@ -2336,7 +2381,7 @@ mod tests {
         bytes
     }
 
-    fn bytes_to_string(bytes: &[u8; 256]) -> String {
+    fn bytes_to_string(bytes: &[u8]) -> String {
         let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
         String::from_utf8(bytes[..len].to_vec()).unwrap()
     }
@@ -2515,6 +2560,11 @@ mod fuzzing_shims {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn bpf_get_current_pid_tgid() -> u64 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn bpf_ktime_get_ns() -> u64 {
         0
     }
 

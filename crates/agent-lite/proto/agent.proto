@@ -12,6 +12,9 @@ message EventRecord {
   uint64 container_id = 5;
   uint64 caps = 6;
   string path_or_addr = 7;
+  uint32 tgid = 8;
+  uint64 time_ns = 9;
+  string needed_perm = 10;
 }
 
 service Agent {

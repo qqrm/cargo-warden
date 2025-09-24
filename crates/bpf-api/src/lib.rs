@@ -84,15 +84,19 @@ pub struct FsRuleEntry {
 #[derive(Clone, Copy, Debug)]
 /// Event emitted by BPF programs.
 pub struct Event {
-    /// Process identifier.
+    /// Thread identifier (kernel PID).
     pub pid: u32,
+    /// Process identifier (thread group ID).
+    pub tgid: u32,
+    /// Monotonic timestamp captured at emission time (nanoseconds).
+    pub time_ns: u64,
     /// Workload category that produced the event.
     pub unit: u8,
     /// Operation being monitored.
     pub action: u8,
     /// Allow (0) or deny (1).
     pub verdict: u8,
-    /// Reserved for future use.
+    /// Reserved for future use and alignment.
     pub reserved: u8,
     /// Identifier of the container or sandbox.
     pub container_id: u64,
@@ -100,6 +104,8 @@ pub struct Event {
     pub caps: u64,
     /// Null-terminated path or network address.
     pub path_or_addr: [u8; 256],
+    /// Suggested policy entry required to permit the operation.
+    pub needed_perm: [u8; 64],
 }
 
 #[cfg(test)]
@@ -139,6 +145,6 @@ mod tests {
 
     #[test]
     fn event_size() {
-        assert_eq!(size_of::<Event>(), 280);
+        assert_eq!(size_of::<Event>(), 360);
     }
 }
