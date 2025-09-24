@@ -1,5 +1,5 @@
 use aya::maps::{MapData, ring_buf::RingBuf};
-use bpf_api::Event;
+use bpf_api::{Event, UNIT_BUILD_SCRIPT, UNIT_LINKER, UNIT_OTHER, UNIT_PROC_MACRO, UNIT_RUSTC};
 use cfg_if::cfg_if;
 use log::{info, warn};
 use prometheus::{Encoder, IntCounter, IntGaugeVec, Registry, TextEncoder};
@@ -114,13 +114,22 @@ static UNIT_LABELS: LazyLock<Mutex<HashMap<u32, &'static str>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn unit_label(unit: u32) -> &'static str {
-    let mut labels = UNIT_LABELS.lock().expect("unit label mutex poisoned");
-    if let Some(&label) = labels.get(&unit) {
-        return label;
+    match unit {
+        UNIT_OTHER => "other",
+        UNIT_BUILD_SCRIPT => "build_script",
+        UNIT_PROC_MACRO => "proc_macro",
+        UNIT_RUSTC => "rustc",
+        UNIT_LINKER => "linker",
+        _ => {
+            let mut labels = UNIT_LABELS.lock().expect("unit label mutex poisoned");
+            if let Some(&label) = labels.get(&unit) {
+                return label;
+            }
+            let leaked = Box::<str>::leak(unit.to_string().into_boxed_str());
+            labels.insert(unit, leaked);
+            leaked
+        }
     }
-    let leaked = Box::<str>::leak(unit.to_string().into_boxed_str());
-    labels.insert(unit, leaked);
-    leaked
 }
 
 fn saturating_i64(value: u64) -> i64 {
@@ -171,6 +180,10 @@ fn reset_all_metrics() {
     IO_WRITE_GAUGE.reset();
     CPU_TIME_GAUGE.reset();
     PAGE_FAULTS_GAUGE.reset();
+    UNIT_LABELS
+        .lock()
+        .expect("unit label mutex poisoned")
+        .clear();
 }
 
 #[cfg(feature = "grpc")]
@@ -707,6 +720,7 @@ mod tests {
         write_outputs(&allowed_record, tmp.as_file_mut(), &path, None, None).unwrap();
 
         update_unit_resource_metrics(1, 1024, 2048, 500, 7);
+        update_unit_resource_metrics(99, 1, 2, 3, 4);
 
         let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect metrics");
         stream
@@ -723,9 +737,10 @@ mod tests {
         assert!(body.contains("violations_total 1"));
         assert!(body.contains("blocked_total 1"));
         assert!(body.contains("allowed_total 1"));
-        assert!(body.contains("io_read_bytes_by_unit{unit=\"1\"} 1024"));
-        assert!(body.contains("io_write_bytes_by_unit{unit=\"1\"} 2048"));
-        assert!(body.contains("cpu_time_ms_by_unit{unit=\"1\"} 500"));
-        assert!(body.contains("page_faults_by_unit{unit=\"1\"} 7"));
+        assert!(body.contains("io_read_bytes_by_unit{unit=\"build_script\"} 1024"));
+        assert!(body.contains("io_write_bytes_by_unit{unit=\"build_script\"} 2048"));
+        assert!(body.contains("cpu_time_ms_by_unit{unit=\"build_script\"} 500"));
+        assert!(body.contains("page_faults_by_unit{unit=\"build_script\"} 7"));
+        assert!(body.contains("io_read_bytes_by_unit{unit=\"99\"} 1"));
     }
 }
