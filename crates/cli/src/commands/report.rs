@@ -126,12 +126,15 @@ mod tests {
     fn exports_sarif_file() {
         let record = event_reporting::EventRecord {
             pid: 2,
+            tgid: 4,
+            time_ns: 500,
             unit: 0,
             action: 3,
             verdict: 1,
             container_id: 0,
             caps: 0,
             path_or_addr: "/bin/bad".into(),
+            needed_perm: "allow.exec.allowed".into(),
         };
         let tmp = NamedTempFile::new().unwrap();
         export_sarif(std::slice::from_ref(&record), tmp.path()).unwrap();
@@ -167,30 +170,39 @@ mod tests {
         let events = vec![
             EventRecord {
                 pid: 1,
+                tgid: 10,
+                time_ns: 100,
                 unit: 0,
                 action: 2,
                 verdict: 0,
                 container_id: 3,
                 caps: 4,
                 path_or_addr: "/bin/allow".into(),
+                needed_perm: String::new(),
             },
             EventRecord {
                 pid: 2,
+                tgid: 20,
+                time_ns: 200,
                 unit: 0,
                 action: 5,
                 verdict: 1,
                 container_id: 7,
                 caps: 8,
                 path_or_addr: "/bin/deny".into(),
+                needed_perm: "allow.exec.allowed".into(),
             },
             EventRecord {
                 pid: 3,
+                tgid: 30,
+                time_ns: 300,
                 unit: 1,
                 action: 9,
                 verdict: 1,
                 container_id: 11,
                 caps: 12,
                 path_or_addr: "10.0.0.1:80".into(),
+                needed_perm: "allow.net.hosts".into(),
             },
         ];
         let stats = ReportStatistics::from_events(&events);
@@ -204,9 +216,9 @@ mod tests {
                 + "  unit 0: allowed=1, denied=1\n"
                 + "  unit 1: allowed=0, denied=1\n"
                 + "\n"
-                + "pid=1 unit=0 action=2 verdict=0 container_id=3 caps=4 path_or_addr=/bin/allow\n"
-                + "pid=2 unit=0 action=5 verdict=1 container_id=7 caps=8 path_or_addr=/bin/deny\n"
-                + "pid=3 unit=1 action=9 verdict=1 container_id=11 caps=12 path_or_addr=10.0.0.1:80\n",
+                + "pid=1 tgid=10 unit=0 action=2 verdict=0 time_ns=100 container_id=3 caps=4 needed_perm= path_or_addr=/bin/allow\n"
+                + "pid=2 tgid=20 unit=0 action=5 verdict=1 time_ns=200 container_id=7 caps=8 needed_perm=allow.exec.allowed path_or_addr=/bin/deny\n"
+                + "pid=3 tgid=30 unit=1 action=9 verdict=1 time_ns=300 container_id=11 caps=12 needed_perm=allow.net.hosts path_or_addr=10.0.0.1:80\n",
         );
     }
 
@@ -215,21 +227,27 @@ mod tests {
         let events = vec![
             EventRecord {
                 pid: 5,
+                tgid: 50,
+                time_ns: 500,
                 unit: 2,
                 action: 9,
                 verdict: 0,
                 container_id: 8,
                 caps: 16,
                 path_or_addr: "127.0.0.1:80".into(),
+                needed_perm: String::new(),
             },
             EventRecord {
                 pid: 6,
+                tgid: 60,
+                time_ns: 600,
                 unit: 2,
                 action: 10,
                 verdict: 1,
                 container_id: 9,
                 caps: 32,
                 path_or_addr: "192.168.0.1:53".into(),
+                needed_perm: "allow.net.hosts".into(),
             },
         ];
         let stats = ReportStatistics::from_events(&events);
@@ -250,6 +268,8 @@ mod tests {
 
         assert_eq!(json["events"].as_array().unwrap().len(), 2);
         assert_eq!(json["events"][0]["pid"], 5);
+        assert_eq!(json["events"][0]["tgid"], 50);
         assert_eq!(json["events"][1]["pid"], 6);
+        assert_eq!(json["events"][1]["needed_perm"], "allow.net.hosts");
     }
 }
