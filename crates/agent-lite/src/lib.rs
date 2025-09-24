@@ -2,14 +2,17 @@ use aya::maps::{MapData, ring_buf::RingBuf};
 use bpf_api::Event;
 use cfg_if::cfg_if;
 use log::{info, warn};
-use prometheus::{Encoder, IntCounter, Registry, TextEncoder};
+use prometheus::{Encoder, IntCounter, IntGaugeVec, Registry, TextEncoder};
+use std::convert::TryFrom;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
+
+use std::collections::HashMap;
 
 #[cfg(feature = "grpc")]
 use tokio::sync::broadcast;
@@ -35,6 +38,140 @@ static DENIED_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
     REGISTRY.register(Box::new(c.clone())).unwrap();
     c
 });
+static VIOLATIONS_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
+    let c = IntCounter::new(
+        "violations_total",
+        "Total number of policy violations observed",
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(c.clone())).unwrap();
+    c
+});
+static BLOCKED_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
+    let c = IntCounter::new(
+        "blocked_total",
+        "Total number of operations blocked by enforcement",
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(c.clone())).unwrap();
+    c
+});
+static ALLOWED_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
+    let c = IntCounter::new("allowed_total", "Total number of operations allowed").unwrap();
+    REGISTRY.register(Box::new(c.clone())).unwrap();
+    c
+});
+static IO_READ_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    let g = IntGaugeVec::new(
+        prometheus::Opts::new(
+            "io_read_bytes_by_unit",
+            "Cumulative read IO usage in bytes grouped by unit",
+        ),
+        &["unit"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(g.clone())).unwrap();
+    g
+});
+static IO_WRITE_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    let g = IntGaugeVec::new(
+        prometheus::Opts::new(
+            "io_write_bytes_by_unit",
+            "Cumulative write IO usage in bytes grouped by unit",
+        ),
+        &["unit"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(g.clone())).unwrap();
+    g
+});
+static CPU_TIME_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    let g = IntGaugeVec::new(
+        prometheus::Opts::new(
+            "cpu_time_ms_by_unit",
+            "CPU time spent in milliseconds grouped by unit",
+        ),
+        &["unit"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(g.clone())).unwrap();
+    g
+});
+static PAGE_FAULTS_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
+    let g = IntGaugeVec::new(
+        prometheus::Opts::new(
+            "page_faults_by_unit",
+            "Number of page faults grouped by unit",
+        ),
+        &["unit"],
+    )
+    .unwrap();
+    REGISTRY.register(Box::new(g.clone())).unwrap();
+    g
+});
+
+static UNIT_LABELS: LazyLock<Mutex<HashMap<u32, &'static str>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn unit_label(unit: u32) -> &'static str {
+    let mut labels = UNIT_LABELS.lock().expect("unit label mutex poisoned");
+    if let Some(&label) = labels.get(&unit) {
+        return label;
+    }
+    let leaked = Box::<str>::leak(unit.to_string().into_boxed_str());
+    labels.insert(unit, leaked);
+    leaked
+}
+
+fn saturating_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn record_event_metrics(record: &EventRecord) {
+    EVENT_COUNTER.inc();
+    if record.verdict == VERDICT_DENIED {
+        DENIED_COUNTER.inc();
+        VIOLATIONS_COUNTER.inc();
+        BLOCKED_COUNTER.inc();
+    } else {
+        ALLOWED_COUNTER.inc();
+    }
+}
+
+pub fn update_unit_resource_metrics(
+    unit: u32,
+    read_bytes: u64,
+    write_bytes: u64,
+    cpu_time_ms: u64,
+    page_faults: u64,
+) {
+    let unit_label = unit_label(unit);
+    IO_READ_GAUGE
+        .with_label_values(&[unit_label])
+        .set(saturating_i64(read_bytes));
+    IO_WRITE_GAUGE
+        .with_label_values(&[unit_label])
+        .set(saturating_i64(write_bytes));
+    CPU_TIME_GAUGE
+        .with_label_values(&[unit_label])
+        .set(saturating_i64(cpu_time_ms));
+    PAGE_FAULTS_GAUGE
+        .with_label_values(&[unit_label])
+        .set(saturating_i64(page_faults));
+}
+
+#[cfg(test)]
+fn reset_all_metrics() {
+    EVENT_COUNTER.reset();
+    DENIED_COUNTER.reset();
+    VIOLATIONS_COUNTER.reset();
+    BLOCKED_COUNTER.reset();
+    ALLOWED_COUNTER.reset();
+    IO_READ_GAUGE.reset();
+    IO_WRITE_GAUGE.reset();
+    CPU_TIME_GAUGE.reset();
+    PAGE_FAULTS_GAUGE.reset();
+}
 
 #[cfg(feature = "grpc")]
 pub mod proto {
@@ -220,10 +357,14 @@ pub fn run_with_shutdown(
 
 fn start_metrics_server(port: u16) {
     use std::io::Cursor;
-    use tiny_http::{Header, Response, Server, StatusCode};
+    use tiny_http::{Header, Method, Response, Server, StatusCode};
     std::thread::spawn(move || {
         let server = Server::http(("0.0.0.0", port)).expect("start server");
         for req in server.incoming_requests() {
+            if req.method() != &Method::Get || req.url() != "/metrics" {
+                let _ = req.respond(Response::new_empty(StatusCode(404)));
+                continue;
+            }
             let metric_families = REGISTRY.gather();
             let mut buffer = Vec::new();
             let encoder = TextEncoder::new();
@@ -231,7 +372,10 @@ fn start_metrics_server(port: u16) {
                 let len = buffer.len();
                 let response = Response::new(
                     StatusCode(200),
-                    vec![Header::from_bytes("Content-Type", "text/plain").unwrap()],
+                    vec![
+                        Header::from_bytes("Content-Type", "text/plain; version=0.0.4").unwrap(),
+                        Header::from_bytes("Cache-Control", "no-cache").unwrap(),
+                    ],
                     Cursor::new(buffer),
                     Some(len),
                     None,
@@ -256,10 +400,7 @@ fn write_outputs(
     let json = serde_json::to_string(record)?;
     writeln!(file, "{}", json)?;
     info!("{}", json);
-    EVENT_COUNTER.inc();
-    if record.verdict == VERDICT_DENIED {
-        DENIED_COUNTER.inc();
-    }
+    record_event_metrics(record);
     if let Some(cfg) = rotation {
         rotate_if_needed(file, path, cfg)?;
     }
@@ -373,7 +514,10 @@ mod tests {
     use serial_test::serial;
     use std::{
         fs::File,
-        io::{Read, Seek},
+        io::{Read, Seek, Write},
+        net::{Shutdown, TcpListener, TcpStream},
+        thread,
+        time::Duration,
     };
     use tempfile::NamedTempFile;
 
@@ -499,8 +643,7 @@ mod tests {
     #[test]
     #[serial]
     fn metrics_count_events() {
-        EVENT_COUNTER.reset();
-        DENIED_COUNTER.reset();
+        reset_all_metrics();
         let record = EventRecord {
             pid: 3,
             unit: 0,
@@ -523,5 +666,66 @@ mod tests {
         }
         assert_eq!(EVENT_COUNTER.get(), 1);
         assert_eq!(DENIED_COUNTER.get(), 1);
+        assert_eq!(VIOLATIONS_COUNTER.get(), 1);
+        assert_eq!(BLOCKED_COUNTER.get(), 1);
+        assert_eq!(ALLOWED_COUNTER.get(), 0);
+    }
+
+    #[test]
+    #[serial]
+    fn metrics_http_endpoint_exposes_series() {
+        reset_all_metrics();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind listener");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        start_metrics_server(port);
+        thread::sleep(Duration::from_millis(50));
+
+        let mut tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        let denied_record = EventRecord {
+            pid: 10,
+            unit: 1,
+            action: ACTION_EXEC,
+            verdict: VERDICT_DENIED,
+            container_id: 0,
+            caps: 0,
+            path_or_addr: "/bin/deny".into(),
+        };
+        write_outputs(&denied_record, tmp.as_file_mut(), &path, None, None).unwrap();
+
+        let allowed_record = EventRecord {
+            pid: 11,
+            unit: 1,
+            action: ACTION_EXEC,
+            verdict: 0,
+            container_id: 0,
+            caps: 0,
+            path_or_addr: "/bin/allow".into(),
+        };
+        write_outputs(&allowed_record, tmp.as_file_mut(), &path, None, None).unwrap();
+
+        update_unit_resource_metrics(1, 1024, 2048, 500, 7);
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect metrics");
+        stream
+            .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        stream.shutdown(Shutdown::Write).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+
+        let body = response
+            .split_once("\r\n\r\n")
+            .map(|(_, b)| b)
+            .unwrap_or(&response);
+        assert!(body.contains("violations_total 1"));
+        assert!(body.contains("blocked_total 1"));
+        assert!(body.contains("allowed_total 1"));
+        assert!(body.contains("io_read_bytes_by_unit{unit=\"1\"} 1024"));
+        assert!(body.contains("io_write_bytes_by_unit{unit=\"1\"} 2048"));
+        assert!(body.contains("cpu_time_ms_by_unit{unit=\"1\"} 500"));
+        assert!(body.contains("page_faults_by_unit{unit=\"1\"} 7"));
     }
 }
