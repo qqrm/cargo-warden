@@ -271,10 +271,10 @@ fn apply_manifest_permissions(policy: &mut Policy, metadata: &CargoMetadata) -> 
         };
         let manifest_dir = normalize_path(manifest_dir);
 
-        let Value::Object(ref map) = package.metadata else {
+        let Some(package_metadata) = package.metadata.as_ref() else {
             continue;
         };
-        let Some(warden) = map.get("cargo-warden") else {
+        let Some(warden) = package_metadata.cargo_warden.as_ref() else {
             continue;
         };
         if warden.is_null() {
@@ -796,6 +796,8 @@ struct CargoMetadata {
     workspace_members: Vec<String>,
     workspace_root: PathBuf,
     target_directory: PathBuf,
+    #[serde(default)]
+    _metadata: Value,
 }
 
 #[derive(Deserialize)]
@@ -805,7 +807,13 @@ struct CargoPackage {
     version: String,
     manifest_path: PathBuf,
     #[serde(default)]
-    metadata: Value,
+    metadata: Option<CargoPackageMetadata>,
+}
+
+#[derive(Default, Deserialize)]
+struct CargoPackageMetadata {
+    #[serde(rename = "cargo-warden")]
+    cargo_warden: Option<Value>,
 }
 
 #[cfg(test)]
@@ -1217,6 +1225,71 @@ permissions = ["env:read:PROTOC"]
                 .contains(&"PROTO_INCLUDE".to_string())
         );
         assert!(isolation.allowed_env_vars.contains(&"PROTOC".to_string()));
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_handles_metadata_table_arrays() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _guard = DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
+
+        let tool_path = dir.path().join("bin/tool.sh");
+        fs::create_dir_all(tool_path.parent().unwrap()).unwrap();
+        write(&tool_path, "#!/bin/sh\nexit 0\n").unwrap();
+
+        let assets_dir = dir.path().join("assets");
+        fs::create_dir_all(&assets_dir).unwrap();
+
+        write(
+            dir.path().join("Cargo.toml"),
+            format!(
+                r#"[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.cargo-warden]
+permissions = [
+  "env:read:ROOT",
+  "exec:{tool}",
+]
+
+[[package.metadata.cargo-warden.plugins]]
+permissions = ["env:read:PLUGIN_A"]
+
+[[package.metadata.cargo-warden.plugins]]
+permissions = ["fs:read:assets", "env:read:PLUGIN_B"]
+
+[package.metadata.cargo-warden.plugins.settings]
+permissions = ["env:read:PLUGIN_SETTINGS"]
+"#,
+                tool = tool_path.display()
+            ),
+        )
+        .unwrap();
+
+        let isolation = setup_isolation(&[], &[], None).unwrap();
+
+        let exec = exec_paths(&isolation.maps_layout);
+        let tool_string = tool_path.to_string_lossy().into_owned();
+        assert!(exec.contains(&tool_string));
+
+        let fs_rules = fs_entries(&isolation.maps_layout);
+        let assets_path = super::normalize_path(&assets_dir);
+        assert!(fs_rules.iter().any(|(path, access)| {
+            path == &assets_path.to_string_lossy() && *access == FS_READ
+        }));
+
+        assert!(isolation.allowed_env_vars.contains(&"ROOT".to_string()));
+        assert!(isolation.allowed_env_vars.contains(&"PLUGIN_A".to_string()));
+        assert!(isolation.allowed_env_vars.contains(&"PLUGIN_B".to_string()));
+        assert!(
+            isolation
+                .allowed_env_vars
+                .contains(&"PLUGIN_SETTINGS".to_string())
+        );
     }
 
     #[test]

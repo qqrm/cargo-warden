@@ -151,6 +151,60 @@ fn fake_sandbox_observe_denial_allows_child() -> Result<(), Box<dyn std::error::
 }
 
 #[test]
+fn fake_sandbox_manifest_metadata_extends_policy() -> Result<(), Box<dyn std::error::Error>> {
+    let project = TestProject::new()?;
+    project.init_cargo_package("fixture")?;
+    project.create_dir_all("bin")?;
+    project.create_dir_all("include")?;
+
+    let tool_path = project.child("bin/tool.sh");
+    project.write(&tool_path, "#!/bin/sh\nexit 0\n")?;
+
+    project.write(
+        "Cargo.toml",
+        format!(
+            r#"[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.cargo-warden]
+permissions = [
+  "exec:{tool}",
+]
+
+[[package.metadata.cargo-warden.plugins]]
+permissions = ["fs:read:include"]
+"#,
+            tool = tool_path.display(),
+        ),
+    )?;
+
+    let sandbox = project.fake_sandbox("metadata-permissions")?;
+    sandbox.touch_event_log()?;
+
+    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    cmd.arg("run")
+        .arg("--")
+        .arg("true")
+        .current_dir(project.path());
+    sandbox.apply_assert(&mut cmd);
+    cmd.assert().success();
+
+    let snapshot = sandbox.last_layout()?;
+    let tool_string = tool_path.to_string_lossy().into_owned();
+    assert!(snapshot.exec_contains(&tool_string));
+
+    let include_path = std::fs::canonicalize(project.child("include"))?;
+    let include_string = include_path.to_string_lossy().into_owned();
+    assert!(snapshot.fs_contains(&include_string, true, false));
+
+    sandbox.assert_cgroup_removed()?;
+
+    Ok(())
+}
+
+#[test]
 fn run_fake_sandbox_records_layout() -> Result<(), Box<dyn std::error::Error>> {
     let project = TestProject::new()?;
     project.init_cargo_package("fixture")?;
