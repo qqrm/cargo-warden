@@ -612,10 +612,16 @@ fn resolve_fs_path(value: &str, manifest_dir: &Path, metadata: &CargoMetadata) -
 }
 
 fn load_trust_db() -> io::Result<Option<TrustDb>> {
-    let Some(path) = find_workspace_file("trust-db.json")? else {
+    let Some(path) = trust_db_path() else {
         return Ok(None);
     };
-    let text = std::fs::read_to_string(&path)?;
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(err) => return Err(err),
+    };
     let db: TrustDb = serde_json::from_str(&text).map_err(|err| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -623,6 +629,36 @@ fn load_trust_db() -> io::Result<Option<TrustDb>> {
         )
     })?;
     Ok(Some(db))
+}
+
+fn trust_db_path() -> Option<PathBuf> {
+    if let Some(explicit) = std::env::var_os("CARGO_WARDEN_TRUST_PATH") {
+        if explicit.is_empty() {
+            return None;
+        }
+        return Some(PathBuf::from(explicit));
+    }
+
+    let base = if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME") {
+        if dir.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(dir))
+        }
+    } else if let Some(home) = std::env::var_os("HOME") {
+        if home.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(home).join(".config"))
+        }
+    } else {
+        None
+    }?;
+
+    let mut path = base;
+    path.push("cargo-warden");
+    path.push("trust.json");
+    Some(path)
 }
 
 #[derive(Deserialize)]
@@ -778,6 +814,7 @@ mod tests {
     use crate::test_support::{DirGuard, EnvVarGuard};
     use bpf_api::{FS_READ, FS_WRITE};
     use serial_test::serial;
+    use std::ffi::OsString;
     use std::fs::{self, write};
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::path::Path;
@@ -1190,8 +1227,14 @@ permissions = ["env:read:PROTOC"]
         let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
+        let config_dir = dir.path().join("config");
+        let trust_path = config_dir.join("cargo-warden").join("trust.json");
+        fs::create_dir_all(trust_path.parent().unwrap()).unwrap();
+        let _config_guard =
+            EnvVarGuard::set("XDG_CONFIG_HOME", OsString::from(config_dir.as_os_str()));
+
         write(
-            dir.path().join("trust-db.json"),
+            &trust_path,
             r#"{
   "entries": [
     {
@@ -1216,5 +1259,16 @@ permissions = ["env:read:PROTOC"]
                 .iter()
                 .any(|(path, access)| { path == "/opt/data" && *access == FS_READ })
         );
+    }
+
+    #[test]
+    #[serial]
+    fn load_trust_db_ignores_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_dir = dir.path().join("cfg");
+        let _config_guard =
+            EnvVarGuard::set("XDG_CONFIG_HOME", OsString::from(config_dir.as_os_str()));
+
+        assert!(super::load_trust_db().unwrap().is_none());
     }
 }

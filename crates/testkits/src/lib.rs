@@ -181,12 +181,15 @@ impl TestProject {
         let script_path = self.child(format!("{stem}.sh"));
         let deny_event = serde_json::json!({
             "pid": 7777u32,
+            "tgid": 8888u32,
+            "time_ns": 1_234_567_890u64,
             "unit": unit,
             "action": action,
             "verdict": 1,
             "container_id": 0,
             "caps": 0,
             "path_or_addr": path_or_addr,
+            "needed_perm": "allow.net.hosts",
         })
         .to_string();
 
