@@ -272,14 +272,23 @@ fn event_record_from_event(e: Event) -> EventRecord {
         .position(|&b| b == 0)
         .unwrap_or(e.path_or_addr.len());
     let path_or_addr = String::from_utf8_lossy(&e.path_or_addr[..end]).to_string();
+    let perm_end = e
+        .needed_perm
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(e.needed_perm.len());
+    let needed_perm = String::from_utf8_lossy(&e.needed_perm[..perm_end]).to_string();
     EventRecord {
         pid: e.pid,
+        tgid: e.tgid,
+        time_ns: e.time_ns,
         unit: e.unit,
         action: e.action,
         verdict: e.verdict,
         container_id: e.container_id,
         caps: e.caps,
         path_or_addr,
+        needed_perm,
     }
 }
 
@@ -495,12 +504,15 @@ mod grpc {
                             .map(|r| {
                                 Ok(proto::EventRecord {
                                     pid: r.pid,
+                                    tgid: r.tgid,
+                                    time_ns: r.time_ns,
                                     unit: r.unit as u32,
                                     action: r.action as u32,
                                     verdict: r.verdict as u32,
                                     container_id: r.container_id,
                                     caps: r.caps,
                                     path_or_addr: r.path_or_addr,
+                                    needed_perm: r.needed_perm,
                                 })
                             });
                         Ok(Response::new(Box::pin(stream)))
@@ -538,8 +550,13 @@ mod tests {
     fn event_record_formats() {
         let mut path = [0u8; 256];
         path[..4].copy_from_slice(b"/bin");
+        let mut needed = [0u8; 64];
+        let suggestion = b"allow.fs.read_extra";
+        needed[..suggestion.len()].copy_from_slice(suggestion);
         let event = Event {
             pid: 42,
+            tgid: 24,
+            time_ns: 123,
             unit: 1,
             action: 2,
             verdict: 0,
@@ -547,31 +564,40 @@ mod tests {
             container_id: 7,
             caps: 1,
             path_or_addr: path,
+            needed_perm: needed,
         };
         let record = event_record_from_event(event);
         assert_eq!(record.pid, 42);
+        assert_eq!(record.tgid, 24);
+        assert_eq!(record.time_ns, 123);
         assert_eq!(record.unit, 1);
         assert_eq!(record.action, 2);
         assert_eq!(record.verdict, 0);
         assert_eq!(record.container_id, 7);
         assert_eq!(record.caps, 1);
         assert_eq!(record.path_or_addr, "/bin");
+        assert_eq!(record.needed_perm, "allow.fs.read_extra");
         let text = format!("{}", record);
         assert!(text.contains("pid=42"));
+        assert!(text.contains("tgid=24"));
         let json = serde_json::to_string(&record).unwrap();
         assert!(json.contains("\"pid\":42"));
+        assert!(json.contains("\"tgid\":24"));
     }
 
     #[test]
     fn diagnostics_for_denied_actions() {
         let exec = EventRecord {
             pid: 1,
+            tgid: 11,
+            time_ns: 1,
             unit: 0,
             action: ACTION_EXEC,
             verdict: VERDICT_DENIED,
             container_id: 0,
             caps: 0,
             path_or_addr: "/bin/bash".into(),
+            needed_perm: "allow.exec.allowed".into(),
         };
         assert_eq!(
             diagnostic(&exec),
@@ -579,12 +605,15 @@ mod tests {
         );
         let net = EventRecord {
             pid: 1,
+            tgid: 12,
+            time_ns: 2,
             unit: 0,
             action: ACTION_CONNECT,
             verdict: VERDICT_DENIED,
             container_id: 0,
             caps: 0,
             path_or_addr: "1.2.3.4:80".into(),
+            needed_perm: "allow.net.hosts".into(),
         };
         assert_eq!(
             diagnostic(&net),
@@ -592,12 +621,15 @@ mod tests {
         );
         let allow = EventRecord {
             pid: 1,
+            tgid: 13,
+            time_ns: 3,
             unit: 0,
             action: ACTION_EXEC,
             verdict: 0,
             container_id: 0,
             caps: 0,
             path_or_addr: "/bin/bash".into(),
+            needed_perm: String::new(),
         };
         assert!(diagnostic(&allow).is_none());
     }
@@ -607,12 +639,15 @@ mod tests {
     fn writes_jsonl_line() {
         let record = EventRecord {
             pid: 1,
+            tgid: 21,
+            time_ns: 10,
             unit: 0,
             action: ACTION_EXEC,
             verdict: 0,
             container_id: 0,
             caps: 0,
             path_or_addr: "/bin/echo".into(),
+            needed_perm: String::new(),
         };
         let mut tmp = NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
@@ -635,12 +670,15 @@ mod tests {
     fn exports_sarif_file() {
         let record = EventRecord {
             pid: 2,
+            tgid: 22,
+            time_ns: 20,
             unit: 0,
             action: ACTION_EXEC,
             verdict: VERDICT_DENIED,
             container_id: 0,
             caps: 0,
             path_or_addr: "/bin/bad".into(),
+            needed_perm: "allow.exec.allowed".into(),
         };
         let tmp = NamedTempFile::new().unwrap();
         export_sarif(std::slice::from_ref(&record), tmp.path()).unwrap();
@@ -659,12 +697,15 @@ mod tests {
         reset_all_metrics();
         let record = EventRecord {
             pid: 3,
+            tgid: 23,
+            time_ns: 30,
             unit: 0,
             action: ACTION_EXEC,
             verdict: VERDICT_DENIED,
             container_id: 0,
             caps: 0,
             path_or_addr: "/bin/deny".into(),
+            needed_perm: "allow.exec.allowed".into(),
         };
         let mut tmp = NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
@@ -699,23 +740,29 @@ mod tests {
 
         let denied_record = EventRecord {
             pid: 10,
+            tgid: 110,
+            time_ns: 40,
             unit: 1,
             action: ACTION_EXEC,
             verdict: VERDICT_DENIED,
             container_id: 0,
             caps: 0,
             path_or_addr: "/bin/deny".into(),
+            needed_perm: "allow.exec.allowed".into(),
         };
         write_outputs(&denied_record, tmp.as_file_mut(), &path, None, None).unwrap();
 
         let allowed_record = EventRecord {
             pid: 11,
+            tgid: 111,
+            time_ns: 41,
             unit: 1,
             action: ACTION_EXEC,
             verdict: 0,
             container_id: 0,
             caps: 0,
             path_or_addr: "/bin/allow".into(),
+            needed_perm: String::new(),
         };
         write_outputs(&allowed_record, tmp.as_file_mut(), &path, None, None).unwrap();
 

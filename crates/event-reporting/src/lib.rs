@@ -8,25 +8,31 @@ use std::path::Path;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventRecord {
     pub pid: u32,
+    pub tgid: u32,
+    pub time_ns: u64,
     pub unit: u8,
     pub action: u8,
     pub verdict: u8,
     pub container_id: u64,
     pub caps: u64,
     pub path_or_addr: String,
+    pub needed_perm: String,
 }
 
 impl fmt::Display for EventRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "pid={} unit={} action={} verdict={} container_id={} caps={} path_or_addr={}",
+            "pid={} tgid={} unit={} action={} verdict={} time_ns={} container_id={} caps={} needed_perm={} path_or_addr={}",
             self.pid,
+            self.tgid,
             self.unit,
             self.action,
             self.verdict,
+            self.time_ns,
             self.container_id,
             self.caps,
+            self.needed_perm,
             self.path_or_addr
         )
     }
@@ -76,12 +82,15 @@ mod tests {
     fn sarif_contains_events() {
         let records = vec![EventRecord {
             pid: 42,
+            tgid: 24,
+            time_ns: 123,
             unit: 1,
             action: 3,
             verdict: 1,
             container_id: 99,
             caps: 0,
             path_or_addr: "/bin/deny".into(),
+            needed_perm: "allow.fs.read_extra".into(),
         }];
         let sarif = sarif_from_events(&records);
         assert_eq!(sarif["version"], "2.1.0");
@@ -92,12 +101,15 @@ mod tests {
     fn export_writes_file() {
         let record = EventRecord {
             pid: 7,
+            tgid: 70,
+            time_ns: 456,
             unit: 1,
             action: 3,
             verdict: 1,
             container_id: 5,
             caps: 0,
             path_or_addr: "/bin/bad".into(),
+            needed_perm: "allow.exec.allowed".into(),
         };
         let tmp = NamedTempFile::new().unwrap();
         export_sarif(std::slice::from_ref(&record), tmp.path()).unwrap();
