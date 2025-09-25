@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::Path;
 
-use event_reporting::EventRecord;
-use event_reporting::export_sarif;
+use event_reporting::{EventRecord, METRICS_SNAPSHOT_FILE, MetricsSnapshot, export_sarif};
 use serde::Serialize;
 
 use crate::commands::read_recent_events;
@@ -28,7 +27,9 @@ struct UnitStatistics {
 struct ReportStatistics {
     allowed: usize,
     denied: usize,
-    per_unit: BTreeMap<u8, UnitStatistics>,
+    per_unit: BTreeMap<u32, UnitStatistics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics: Option<MetricsSnapshot>,
 }
 
 impl ReportStatistics {
@@ -38,11 +39,19 @@ impl ReportStatistics {
             match event.verdict {
                 0 => {
                     stats.allowed += 1;
-                    stats.per_unit.entry(event.unit).or_default().allowed += 1;
+                    stats
+                        .per_unit
+                        .entry(u32::from(event.unit))
+                        .or_default()
+                        .allowed += 1;
                 }
                 1 => {
                     stats.denied += 1;
-                    stats.per_unit.entry(event.unit).or_default().denied += 1;
+                    stats
+                        .per_unit
+                        .entry(u32::from(event.unit))
+                        .or_default()
+                        .denied += 1;
                 }
                 _ => {}
             }
@@ -51,11 +60,28 @@ impl ReportStatistics {
     }
 }
 
+fn read_metrics_snapshot(path: &Path) -> io::Result<Option<MetricsSnapshot>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let data = std::fs::read(path)?;
+    if data.is_empty() {
+        return Ok(None);
+    }
+    let snapshot = serde_json::from_slice(&data).map_err(io::Error::other)?;
+    Ok(Some(snapshot))
+}
+
 pub(crate) fn exec(format: ReportFormat, output: Option<&str>) -> io::Result<()> {
     let events = read_recent_events(Path::new(EVENTS_LOG), usize::MAX)?;
+    let metrics = read_metrics_snapshot(Path::new(METRICS_SNAPSHOT_FILE))?;
     let stats = match format {
         ReportFormat::Sarif => None,
-        _ => Some(ReportStatistics::from_events(&events)),
+        _ => {
+            let mut stats = ReportStatistics::from_events(&events);
+            stats.metrics = metrics.clone();
+            Some(stats)
+        }
     };
 
     match format {
@@ -90,6 +116,36 @@ fn export_text<W: Write>(
             "  unit {}: allowed={}, denied={}",
             unit, unit_stats.allowed, unit_stats.denied
         )?;
+    }
+    match &stats.metrics {
+        Some(metrics) => {
+            writeln!(writer, "Metrics snapshot:")?;
+            writeln!(writer, "  allowed_total: {}", metrics.allowed_total)?;
+            writeln!(writer, "  denied_total: {}", metrics.denied_total)?;
+            writeln!(writer, "  violations_total: {}", metrics.violations_total)?;
+            writeln!(writer, "  blocked_total: {}", metrics.blocked_total)?;
+            writeln!(writer, "  Per-unit metrics:")?;
+            for (unit, unit_metrics) in &metrics.per_unit {
+                writeln!(writer, "    unit {}:", unit)?;
+                writeln!(writer, "      allowed: {}", unit_metrics.allowed)?;
+                writeln!(writer, "      denied: {}", unit_metrics.denied)?;
+                writeln!(
+                    writer,
+                    "      io_read_bytes: {}",
+                    unit_metrics.io_read_bytes
+                )?;
+                writeln!(
+                    writer,
+                    "      io_write_bytes: {}",
+                    unit_metrics.io_write_bytes
+                )?;
+                writeln!(writer, "      cpu_time_ms: {}", unit_metrics.cpu_time_ms)?;
+                writeln!(writer, "      page_faults: {}", unit_metrics.page_faults)?;
+            }
+        }
+        None => {
+            writeln!(writer, "Metrics snapshot unavailable.")?;
+        }
     }
     writeln!(writer)?;
     for event in events {
@@ -205,7 +261,37 @@ mod tests {
                 needed_perm: "allow.net.hosts".into(),
             },
         ];
-        let stats = ReportStatistics::from_events(&events);
+        let mut stats = ReportStatistics::from_events(&events);
+        let mut snapshot = MetricsSnapshot {
+            allowed_total: 1,
+            denied_total: 2,
+            violations_total: 2,
+            blocked_total: 2,
+            ..Default::default()
+        };
+        snapshot.per_unit.insert(
+            0,
+            event_reporting::UnitMetricsSnapshot {
+                allowed: 1,
+                denied: 1,
+                io_read_bytes: 64,
+                io_write_bytes: 32,
+                cpu_time_ms: 10,
+                page_faults: 2,
+            },
+        );
+        snapshot.per_unit.insert(
+            1,
+            event_reporting::UnitMetricsSnapshot {
+                allowed: 0,
+                denied: 1,
+                io_read_bytes: 128,
+                io_write_bytes: 256,
+                cpu_time_ms: 20,
+                page_faults: 3,
+            },
+        );
+        stats.metrics = Some(snapshot);
         let mut buffer = Vec::new();
         export_text(&events, &stats, &mut buffer).unwrap();
         assert_eq!(
@@ -215,6 +301,26 @@ mod tests {
                 + "Per-unit breakdown:\n"
                 + "  unit 0: allowed=1, denied=1\n"
                 + "  unit 1: allowed=0, denied=1\n"
+                + "Metrics snapshot:\n"
+                + "  allowed_total: 1\n"
+                + "  denied_total: 2\n"
+                + "  violations_total: 2\n"
+                + "  blocked_total: 2\n"
+                + "  Per-unit metrics:\n"
+                + "    unit 0:\n"
+                + "      allowed: 1\n"
+                + "      denied: 1\n"
+                + "      io_read_bytes: 64\n"
+                + "      io_write_bytes: 32\n"
+                + "      cpu_time_ms: 10\n"
+                + "      page_faults: 2\n"
+                + "    unit 1:\n"
+                + "      allowed: 0\n"
+                + "      denied: 1\n"
+                + "      io_read_bytes: 128\n"
+                + "      io_write_bytes: 256\n"
+                + "      cpu_time_ms: 20\n"
+                + "      page_faults: 3\n"
                 + "\n"
                 + "pid=1 tgid=10 unit=0 action=2 verdict=0 time_ns=100 container_id=3 caps=4 needed_perm= path_or_addr=/bin/allow\n"
                 + "pid=2 tgid=20 unit=0 action=5 verdict=1 time_ns=200 container_id=7 caps=8 needed_perm=allow.exec.allowed path_or_addr=/bin/deny\n"
@@ -250,7 +356,26 @@ mod tests {
                 needed_perm: "allow.net.hosts".into(),
             },
         ];
-        let stats = ReportStatistics::from_events(&events);
+        let mut stats = ReportStatistics::from_events(&events);
+        let mut snapshot = MetricsSnapshot {
+            allowed_total: 1,
+            denied_total: 1,
+            violations_total: 1,
+            blocked_total: 1,
+            ..Default::default()
+        };
+        snapshot.per_unit.insert(
+            2,
+            event_reporting::UnitMetricsSnapshot {
+                allowed: 1,
+                denied: 1,
+                io_read_bytes: 512,
+                io_write_bytes: 1024,
+                cpu_time_ms: 30,
+                page_faults: 5,
+            },
+        );
+        stats.metrics = Some(snapshot);
         let mut buffer = Vec::new();
         export_json(&events, &stats, &mut buffer).unwrap();
         let json: serde_json::Value = serde_json::from_slice(&buffer).unwrap();
@@ -271,5 +396,11 @@ mod tests {
         assert_eq!(json["events"][0]["tgid"], 50);
         assert_eq!(json["events"][1]["pid"], 6);
         assert_eq!(json["events"][1]["needed_perm"], "allow.net.hosts");
+        assert_eq!(json["stats"]["metrics"]["allowed_total"], 1);
+        assert_eq!(json["stats"]["metrics"]["denied_total"], 1);
+        assert_eq!(
+            json["stats"]["metrics"]["per_unit"]["2"]["io_write_bytes"],
+            1024
+        );
     }
 }
