@@ -2,6 +2,19 @@
 
 Version: 0.1
 Status: Draft for public OSS release
+
+## 0. Implementation Status
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Kernel enforcement pipeline (bpf-api, bpf-core, sandbox runtime) | ✅ Complete | Implemented across `crates/bpf-api`, `crates/bpf-core`, `crates/bpf-host`, and `crates/sandbox-runtime` with unit coverage. |
+| Policy engine and compiler | ✅ Complete | Policy parsing, validation, and map compilation live in `crates/policy-core` and `crates/policy-compiler`, including property-based tests. |
+| CLI workflow (`build`, `run`, `init`, `status`, `report`) | ✅ Complete | `crates/cli` wires policy loading, sandbox orchestration, and reporting, supporting text, JSON, and SARIF outputs. |
+| Agent, metrics, and event export | ✅ Complete | `crates/agent-lite` and `crates/event-reporting` process ring-buffer events, publish Prometheus metrics, and generate SARIF logs. |
+| Test harness and fake sandbox | ✅ Complete | `crates/testkits` and the fake sandbox runtime back CLI integration tests and layout assertions. |
+| Example workspaces | 🟡 In Progress | `examples/network-build` and `examples/spawn-bash` exist; scenarios for filesystem misuse, proc-macro load, and git clone remain to be added. |
+| Documentation set | 🟡 In Progress | README and security model drafts exist; `CONTRIBUTING`, `SECURITY`, `CODEOWNERS`, and PR templates are still outstanding. |
+
 Author: Alex + contributors
 Core project license: MIT or Apache-2.0
 Target platform: Linux kernel >= 5.13 with BPF LSM and cgroup v2 enabled
@@ -99,14 +112,14 @@ Boundaries:
 
 Workspace crates:
 
-* `crates/qqrm-bpf-api`
-* `crates/qqrm-bpf-core`
-* `crates/qqrm-policy-core`
-* `crates/qqrm-policy-compiler`
-* `crates/qqrm-agent-lite`
-* `crates/cli`
-* `crates/qqrm-testkits`
-* `crates/examples/*`
+* ✅ `crates/bpf-api` (spec: `qqrm-bpf-api`)
+* ✅ `crates/bpf-core` (spec: `qqrm-bpf-core`)
+* ✅ `crates/policy-core` (spec: `qqrm-policy-core`)
+* ✅ `crates/policy-compiler` (spec: `qqrm-policy-compiler`)
+* ✅ `crates/agent-lite` (spec: `qqrm-agent-lite`)
+* ✅ `crates/cli`
+* ✅ `crates/testkits` (spec: `qqrm-testkits`)
+* 🟡 `examples/*` – currently `network-build` and `spawn-bash`; additional cases (`ex_fs_outside_workspace`, `ex_proc_macro_hog`, `ex_git_clone_https`) remain TODO
 
 Feature flags:
 
@@ -333,11 +346,11 @@ Basic metrics:
 
 Levels:
 
-* Unit tests in each crate.
-* Integration tests in `cli` with examples.
-* Negative tests expect `EPERM` and precise hints.
-* Property-based tests in `qqrm-policy-compiler` for paths and rules.
-* Fuzzing in config parsers and event handling.
+* ✅ Unit tests in each crate.
+* ✅ Integration tests in `cli` with fake sandbox harness.
+* ✅ Negative tests expect `EPERM` and precise hints (enforced in CLI and sandbox tests).
+* ✅ Property-based tests in `policy-core` cover rule deduplication and validation.
+* 🟡 Fuzzing in config parsers and event handling (harnesses exist under `fuzz/`, additional targets welcome).
 
 Examples:
 
@@ -354,10 +367,10 @@ CI:
 
 ## 17. Documentation and Contribution
 
-* `README` with quick start and gif.
-* `CONTRIBUTING` with development rules, lints, and style.
-* `SECURITY` with vulnerability reporting procedure.
-* `CODEOWNERS` and PR templates.
+* ✅ `README` with quick start instructions (gif pending).
+* ⬜ `CONTRIBUTING` with development rules, lints, and style.
+* ⬜ `SECURITY` with vulnerability reporting procedure (current `SECURITY_MODEL.md` is internal design only).
+* ⬜ `CODEOWNERS` and PR templates.
 
 ## 18. Risks and Mitigations
 
