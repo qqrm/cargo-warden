@@ -64,6 +64,12 @@ gh run list --limit 5
 
 Escalate flakes or infrastructure issues with logs so maintainers can triage quickly.
 
+## Repository Hygiene
+
+- Audit remote feature branches with `scripts/prune_branches.sh`. The script skips protected branches, tolerates `null`
+  timestamps in the API payload, and deletes candidates when you pass `--prune`.
+- Adjust the inactivity threshold by exporting `CARGO_WARDEN_PRUNE_AGE` (in seconds).
+
 ## Reviewing and Merging
 
 1. Open draft pull requests early if you need feedback, but keep automated checks green before requesting review.

@@ -22,6 +22,12 @@ Cargo-warden is currently in active development. We respond to vulnerability rep
 3. Prepare a security advisory with mitigation steps and patch availability.
 4. Release patched versions and notify reporters before public disclosure.
 
+## Response Targets
+
+- **Acknowledgement**: within three business days.
+- **Initial assessment**: within five business days for high-severity reports.
+- **Patch availability**: as soon as a verified fix is ready; critical fixes take priority over feature work.
+
 ## Safe Disclosure Guidelines
 
 - Limit distribution of exploit details until a fix is available.
