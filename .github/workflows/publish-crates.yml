@@ -7,6 +7,10 @@ on:
         description: "Dry run without publishing"
         required: false
         default: "true"
+      publish_interval:
+        description: "Seconds to wait between crate publishes (0 disables the wait)"
+        required: false
+        default: "60"
 
 concurrency:
   group: publish-crates
@@ -24,6 +28,7 @@ jobs:
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
       DRY_RUN: ${{ inputs.dry_run || 'true' }}
+      PUBLISH_INTERVAL: ${{ inputs.publish_interval || '60' }}
 
     steps:
       - name: Checkout
@@ -61,19 +66,17 @@ jobs:
           fi
 
       - name: Resolve and show publish plan
+        id: publish_plan
         shell: bash
-        run: |
-          echo "Planned publish order:"
-          cargo workspaces publish --all --skip-published --no-verify --allow-dirty --dry-run || true
+        run: bash scripts/ci/resolve_publish_plan.sh
 
       - name: Publish
         if: ${{ env.DRY_RUN == 'false' }}
         shell: bash
-        run: |
-          cargo workspaces publish --all --skip-published --no-verify -y
+        timeout-minutes: 45
+        run: bash scripts/ci/run_publish.sh
 
       - name: Post-publish summary
         if: ${{ success() }}
         shell: bash
-        run: |
-          echo "Publish step finished."
+        run: bash scripts/ci/post_publish_summary.sh
