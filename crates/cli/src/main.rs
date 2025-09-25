@@ -123,7 +123,7 @@ fn main() {
             }
         }
         Commands::Status => {
-            if let Err(e) = commands::status::exec() {
+            if let Err(e) = commands::status::exec(&cli.policy, cli.mode.map(Mode::from)) {
                 eprintln!("status failed: {e}");
                 exit(1);
             }

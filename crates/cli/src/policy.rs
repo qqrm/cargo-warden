@@ -16,6 +16,34 @@ pub(crate) struct IsolationConfig {
     pub(crate) allowed_env_vars: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PolicyStatus {
+    pub(crate) sources: Vec<PolicySource>,
+    pub(crate) effective_mode: Mode,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PolicySource {
+    pub(crate) kind: PolicySourceKind,
+    pub(crate) mode: Mode,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum PolicySourceKind {
+    Workspace {
+        path: PathBuf,
+        member: Option<String>,
+    },
+    LocalFile {
+        path: PathBuf,
+    },
+    CliFile {
+        path: PathBuf,
+    },
+    DefaultEmpty,
+    ModeOverride,
+}
+
 pub(crate) fn setup_isolation(
     allow: &[String],
     policy_paths: &[String],
@@ -65,18 +93,17 @@ pub(crate) fn setup_isolation(
 }
 
 fn load_default_policy() -> io::Result<Policy> {
-    if let Some(policy) = load_workspace_policy()? {
-        return Ok(policy);
-    }
-    let path = Path::new("warden.toml");
-    match std::fs::read_to_string(path) {
-        Ok(text) => parse_policy_from_str(path, &text),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(empty_policy()),
-        Err(err) => Err(err),
-    }
+    load_default_policy_layer().map(|layer| layer.policy)
 }
 
-fn load_workspace_policy() -> io::Result<Option<Policy>> {
+fn load_default_policy_layer() -> io::Result<PolicyLayer> {
+    if let Some(layer) = load_workspace_policy_layer()? {
+        return Ok(layer);
+    }
+    load_local_policy_layer()
+}
+
+fn load_workspace_policy_layer() -> io::Result<Option<PolicyLayer>> {
     let Some(path) = find_workspace_file("workspace.warden.toml")? else {
         return Ok(None);
     };
@@ -89,10 +116,13 @@ fn load_workspace_policy() -> io::Result<Option<Policy>> {
     })?;
     let member = determine_active_workspace_member()?;
     let policy = match member {
-        Some(member) => workspace.policy_for(&member),
+        Some(ref member) => workspace.policy_for(member),
         None => workspace.root.clone(),
     };
-    Ok(Some(policy))
+    Ok(Some(PolicyLayer {
+        policy,
+        source: PolicySourceKind::Workspace { path, member },
+    }))
 }
 
 fn find_workspace_file(name: &str) -> io::Result<Option<PathBuf>> {
@@ -118,6 +148,21 @@ fn find_workspace_file(name: &str) -> io::Result<Option<PathBuf>> {
 fn load_policy(path: &Path) -> io::Result<Policy> {
     let text = std::fs::read_to_string(path)?;
     parse_policy_from_str(path, &text)
+}
+
+fn load_local_policy_layer() -> io::Result<PolicyLayer> {
+    let path = PathBuf::from("warden.toml");
+    match std::fs::read_to_string(&path) {
+        Ok(text) => parse_policy_from_str(&path, &text).map(|policy| PolicyLayer {
+            policy,
+            source: PolicySourceKind::LocalFile { path },
+        }),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(PolicyLayer {
+            policy: empty_policy(),
+            source: PolicySourceKind::DefaultEmpty,
+        }),
+        Err(err) => Err(err),
+    }
 }
 
 fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
@@ -745,6 +790,52 @@ fn empty_policy() -> Policy {
     Policy::new(Mode::Enforce)
 }
 
+#[derive(Debug)]
+struct PolicyLayer {
+    policy: Policy,
+    source: PolicySourceKind,
+}
+
+pub(crate) fn collect_policy_status(
+    policy_paths: &[String],
+    mode_override: Option<Mode>,
+) -> io::Result<PolicyStatus> {
+    let PolicyLayer {
+        policy: default_policy,
+        source: default_source,
+    } = load_default_policy_layer()?;
+    let mut sources = Vec::new();
+    sources.push(PolicySource {
+        kind: default_source,
+        mode: default_policy.mode,
+    });
+
+    let mut effective_mode = default_policy.mode;
+
+    for path in policy_paths {
+        let path_buf = PathBuf::from(path);
+        let extra = load_policy(path_buf.as_path())?;
+        effective_mode = extra.mode;
+        sources.push(PolicySource {
+            kind: PolicySourceKind::CliFile { path: path_buf },
+            mode: extra.mode,
+        });
+    }
+
+    if let Some(mode) = mode_override {
+        effective_mode = mode;
+        sources.push(PolicySource {
+            kind: PolicySourceKind::ModeOverride,
+            mode,
+        });
+    }
+
+    Ok(PolicyStatus {
+        sources,
+        effective_mode,
+    })
+}
+
 struct BuildPaths {
     workspace_root: PathBuf,
     target_dirs: Vec<PathBuf>,
@@ -897,6 +988,99 @@ mod tests {
             EnvVarGuard::unset("CARGO_TARGET_DIR"),
             EnvVarGuard::unset("CARGO_TARGET_TMPDIR"),
         )
+    }
+
+    #[test]
+    #[serial]
+    fn collect_policy_status_reports_workspace_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace_dir = dir.path();
+        write(
+            workspace_dir.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"member\"]\n",
+        )
+        .unwrap();
+        let member_dir = workspace_dir.join("member");
+        fs::create_dir_all(&member_dir).unwrap();
+        init_cargo_package(&member_dir);
+        write(
+            workspace_dir.join("workspace.warden.toml"),
+            "[root]\nmode = \"observe\"\n",
+        )
+        .unwrap();
+
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _dir_guard = DirGuard::change_to(member_dir.as_path());
+
+        let status = collect_policy_status(&[], None).unwrap();
+        assert_eq!(status.effective_mode, Mode::Observe);
+        assert_eq!(status.sources.len(), 1);
+        match &status.sources[0].kind {
+            PolicySourceKind::Workspace { path, member } => {
+                assert_eq!(
+                    path.file_name().unwrap().to_str().unwrap(),
+                    "workspace.warden.toml"
+                );
+                assert_eq!(member.as_deref(), Some("fixture"));
+            }
+            other => panic!("expected workspace policy, found {other:?}"),
+        }
+        assert_eq!(status.sources[0].mode, Mode::Observe);
+    }
+
+    #[test]
+    #[serial]
+    fn collect_policy_status_includes_cli_policy_and_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _dir_guard = DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
+
+        write(dir.path().join("warden.toml"), "mode = \"enforce\"\n").unwrap();
+
+        let cli_policy = dir.path().join("cli.toml");
+        write(&cli_policy, "mode = \"observe\"\n").unwrap();
+
+        let cli_arg = cli_policy.to_str().unwrap().to_string();
+        let status = collect_policy_status(&[cli_arg], Some(Mode::Enforce)).unwrap();
+
+        assert_eq!(status.effective_mode, Mode::Enforce);
+        assert_eq!(status.sources.len(), 3);
+        assert!(matches!(
+            status.sources[0].kind,
+            PolicySourceKind::LocalFile { .. }
+        ));
+        assert_eq!(status.sources[0].mode, Mode::Enforce);
+        match &status.sources[1].kind {
+            PolicySourceKind::CliFile { path } => {
+                assert_eq!(path.file_name().unwrap().to_str().unwrap(), "cli.toml");
+            }
+            other => panic!("expected CLI policy, found {other:?}"),
+        }
+        assert_eq!(status.sources[1].mode, Mode::Observe);
+        assert!(matches!(
+            status.sources[2].kind,
+            PolicySourceKind::ModeOverride
+        ));
+        assert_eq!(status.sources[2].mode, Mode::Enforce);
+    }
+
+    #[test]
+    #[serial]
+    fn collect_policy_status_reports_empty_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _dir_guard = DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
+
+        let status = collect_policy_status(&[], None).unwrap();
+        assert_eq!(status.effective_mode, Mode::Enforce);
+        assert_eq!(status.sources.len(), 1);
+        assert!(matches!(
+            status.sources[0].kind,
+            PolicySourceKind::DefaultEmpty
+        ));
+        assert_eq!(status.sources[0].mode, Mode::Enforce);
     }
 
     #[test]
