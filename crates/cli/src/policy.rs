@@ -21,8 +21,8 @@ pub(crate) fn setup_isolation(
     policy_paths: &[String],
     mode_override: Option<Mode>,
 ) -> io::Result<IsolationConfig> {
-    let mut policy = load_default_policy()?;
     let metadata = load_cargo_metadata()?;
+    let mut policy = load_default_policy(&metadata)?;
     apply_manifest_permissions(&mut policy, &metadata)?;
     apply_trust_permissions(&mut policy, &metadata)?;
     for path in policy_paths {
@@ -64,8 +64,8 @@ pub(crate) fn setup_isolation(
     })
 }
 
-fn load_default_policy() -> io::Result<Policy> {
-    if let Some(policy) = load_workspace_policy()? {
+fn load_default_policy(metadata: &CargoMetadata) -> io::Result<Policy> {
+    if let Some(policy) = load_workspace_policy(metadata)? {
         return Ok(policy);
     }
     let path = Path::new("warden.toml");
@@ -76,7 +76,7 @@ fn load_default_policy() -> io::Result<Policy> {
     }
 }
 
-fn load_workspace_policy() -> io::Result<Option<Policy>> {
+fn load_workspace_policy(metadata: &CargoMetadata) -> io::Result<Option<Policy>> {
     let Some(path) = find_workspace_file("workspace.warden.toml")? else {
         return Ok(None);
     };
@@ -87,7 +87,7 @@ fn load_workspace_policy() -> io::Result<Option<Policy>> {
             format!("{}: {err}", path.display()),
         )
     })?;
-    let member = determine_active_workspace_member()?;
+    let member = determine_active_workspace_member(metadata)?;
     let policy = match member {
         Some(member) => workspace.policy_for(&member),
         None => workspace.root.clone(),
@@ -129,12 +129,11 @@ fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
     })
 }
 
-fn determine_active_workspace_member() -> io::Result<Option<String>> {
+fn determine_active_workspace_member(metadata: &CargoMetadata) -> io::Result<Option<String>> {
     if let Some(from_env) = workspace_member_from_env() {
         return Ok(Some(from_env));
     }
-    let metadata = load_cargo_metadata()?;
-    workspace_member_from_dir(&metadata)
+    workspace_member_from_dir(metadata)
 }
 
 fn workspace_member_from_env() -> Option<String> {

@@ -68,17 +68,38 @@ fn read_metrics_snapshot(path: &Path) -> io::Result<Option<MetricsSnapshot>> {
     if data.is_empty() {
         return Ok(None);
     }
-    let snapshot = serde_json::from_slice(&data).map_err(io::Error::other)?;
-    Ok(Some(snapshot))
+    match serde_json::from_slice(&data) {
+        Ok(snapshot) => Ok(Some(snapshot)),
+        Err(err) => {
+            eprintln!(
+                "warning: failed to parse metrics snapshot {}: {err}",
+                path.display()
+            );
+            Ok(None)
+        }
+    }
 }
 
 pub(crate) fn exec(format: ReportFormat, output: Option<&str>) -> io::Result<()> {
     let events = read_recent_events(Path::new(EVENTS_LOG), usize::MAX)?;
+    if events.skipped_lines > 0 {
+        if let Some(err) = events.last_error.as_deref() {
+            eprintln!(
+                "warning: skipped {} malformed event log line(s): {err}",
+                events.skipped_lines
+            );
+        } else {
+            eprintln!(
+                "warning: skipped {} malformed event log line(s)",
+                events.skipped_lines
+            );
+        }
+    }
     let metrics = read_metrics_snapshot(Path::new(METRICS_SNAPSHOT_FILE))?;
     let stats = match format {
         ReportFormat::Sarif => None,
         _ => {
-            let mut stats = ReportStatistics::from_events(&events);
+            let mut stats = ReportStatistics::from_events(&events.events);
             stats.metrics = metrics.clone();
             Some(stats)
         }
@@ -88,16 +109,16 @@ pub(crate) fn exec(format: ReportFormat, output: Option<&str>) -> io::Result<()>
         ReportFormat::Text => {
             let stdout = io::stdout();
             let mut handle = stdout.lock();
-            export_text(&events, stats.as_ref().unwrap(), &mut handle)
+            export_text(&events.events, stats.as_ref().unwrap(), &mut handle)
         }
         ReportFormat::Json => {
             let stdout = io::stdout();
             let mut handle = stdout.lock();
-            export_json(&events, stats.as_ref().unwrap(), &mut handle)
+            export_json(&events.events, stats.as_ref().unwrap(), &mut handle)
         }
         ReportFormat::Sarif => {
             let path = Path::new(output.unwrap_or(DEFAULT_SARIF_OUTPUT));
-            export_sarif(&events, path)
+            export_sarif(&events.events, path)
         }
     }
 }
@@ -175,6 +196,7 @@ fn export_json<W: Write>(
 mod tests {
     use super::*;
     use std::fs::File;
+    use std::io::Write;
 
     use tempfile::{NamedTempFile, tempdir};
 
@@ -219,6 +241,35 @@ mod tests {
         File::create("warden-events.jsonl").unwrap();
         exec(ReportFormat::Sarif, None).unwrap();
         assert!(dir.path().join("warden.sarif").exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn report_ignores_corrupt_metrics_snapshot() {
+        let dir = tempdir().unwrap();
+        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+
+        let mut events = File::create("warden-events.jsonl").unwrap();
+        writeln!(
+            events,
+            "{}",
+            serde_json::json!({
+                "pid": 1,
+                "tgid": 1,
+                "time_ns": 1,
+                "unit": 0,
+                "action": 1,
+                "verdict": 0,
+                "container_id": 0,
+                "caps": 0,
+                "path_or_addr": "/bin/echo",
+                "needed_perm": ""
+            })
+        )
+        .unwrap();
+        std::fs::write(METRICS_SNAPSHOT_FILE, b"{not json}").unwrap();
+
+        exec(ReportFormat::Json, None).unwrap();
     }
 
     #[test]
