@@ -44,20 +44,38 @@ pub struct MetricsSnapshot {
 
 impl fmt::Display for EventRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "pid={} tgid={} unit={} action={} verdict={} time_ns={} container_id={} caps={} needed_perm={} path_or_addr={}",
-            self.pid,
-            self.tgid,
-            self.unit,
-            self.action,
-            self.verdict,
-            self.time_ns,
-            self.container_id,
-            self.caps,
-            self.needed_perm,
-            self.path_or_addr
-        )
+        if self.needed_perm.is_empty() {
+            write!(
+                f,
+                "pid={} tgid={} unit={} action={} verdict={} time_ns={} container_id={} caps={} needed_perm={} path_or_addr={}",
+                self.pid,
+                self.tgid,
+                self.unit,
+                self.action,
+                self.verdict,
+                self.time_ns,
+                self.container_id,
+                self.caps,
+                self.needed_perm,
+                self.path_or_addr
+            )
+        } else {
+            write!(
+                f,
+                "pid={} tgid={} unit={} action={} verdict={} time_ns={} container_id={} caps={} needed_perm={} path_or_addr={} hint={}",
+                self.pid,
+                self.tgid,
+                self.unit,
+                self.action,
+                self.verdict,
+                self.time_ns,
+                self.container_id,
+                self.caps,
+                self.needed_perm,
+                self.path_or_addr,
+                self.needed_perm
+            )
+        }
     }
 }
 

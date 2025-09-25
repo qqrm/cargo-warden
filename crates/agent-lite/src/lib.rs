@@ -414,9 +414,14 @@ fn diagnostic(record: &EventRecord) -> Option<String> {
     if record.verdict != VERDICT_DENIED {
         return None;
     }
+    let hint = if record.needed_perm.is_empty() {
+        String::new()
+    } else {
+        format!(" (hint: {})", record.needed_perm)
+    };
     match record.action {
-        ACTION_EXEC => Some(format!("Execution denied: {}", record.path_or_addr)),
-        ACTION_CONNECT => Some(format!("Network denied: {}", record.path_or_addr)),
+        ACTION_EXEC => Some(format!("Execution denied: {}{}", record.path_or_addr, hint)),
+        ACTION_CONNECT => Some(format!("Network denied: {}{}", record.path_or_addr, hint)),
         _ => None,
     }
 }
@@ -699,6 +704,7 @@ mod tests {
         let text = format!("{}", record);
         assert!(text.contains("pid=42"));
         assert!(text.contains("tgid=24"));
+        assert!(text.contains("hint=allow.fs.read_extra"));
         let json = serde_json::to_string(&record).unwrap();
         assert!(json.contains("\"pid\":42"));
         assert!(json.contains("\"tgid\":24"));
@@ -720,7 +726,7 @@ mod tests {
         };
         assert_eq!(
             diagnostic(&exec),
-            Some("Execution denied: /bin/bash".to_string())
+            Some("Execution denied: /bin/bash (hint: allow.exec.allowed)".to_string())
         );
         let net = EventRecord {
             pid: 1,
@@ -736,7 +742,7 @@ mod tests {
         };
         assert_eq!(
             diagnostic(&net),
-            Some("Network denied: 1.2.3.4:80".to_string())
+            Some("Network denied: 1.2.3.4:80 (hint: allow.net.hosts)".to_string())
         );
         let allow = EventRecord {
             pid: 1,

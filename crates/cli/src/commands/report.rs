@@ -323,8 +323,8 @@ mod tests {
                 + "      page_faults: 3\n"
                 + "\n"
                 + "pid=1 tgid=10 unit=0 action=2 verdict=0 time_ns=100 container_id=3 caps=4 needed_perm= path_or_addr=/bin/allow\n"
-                + "pid=2 tgid=20 unit=0 action=5 verdict=1 time_ns=200 container_id=7 caps=8 needed_perm=allow.exec.allowed path_or_addr=/bin/deny\n"
-                + "pid=3 tgid=30 unit=1 action=9 verdict=1 time_ns=300 container_id=11 caps=12 needed_perm=allow.net.hosts path_or_addr=10.0.0.1:80\n",
+                + "pid=2 tgid=20 unit=0 action=5 verdict=1 time_ns=200 container_id=7 caps=8 needed_perm=allow.exec.allowed path_or_addr=/bin/deny hint=allow.exec.allowed\n"
+                + "pid=3 tgid=30 unit=1 action=9 verdict=1 time_ns=300 container_id=11 caps=12 needed_perm=allow.net.hosts path_or_addr=10.0.0.1:80 hint=allow.net.hosts\n",
         );
     }
 
