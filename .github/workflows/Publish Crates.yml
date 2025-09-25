@@ -20,8 +20,18 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Configure git remote
-        run: ./repo_setup.sh
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libseccomp-dev \
+            pkg-config \
+            protobuf-compiler \
+            jq \
+            xxhash
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-workspaces
         run: cargo install cargo-workspaces --locked
