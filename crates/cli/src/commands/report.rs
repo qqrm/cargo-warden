@@ -5,7 +5,7 @@ use std::path::Path;
 use event_reporting::{EventRecord, METRICS_SNAPSHOT_FILE, MetricsSnapshot, export_sarif};
 use serde::Serialize;
 
-use crate::commands::read_recent_events;
+use crate::commands::{ReadEventsResult, read_recent_events};
 
 const DEFAULT_SARIF_OUTPUT: &str = "warden.sarif";
 const EVENTS_LOG: &str = "warden-events.jsonl";
@@ -30,6 +30,8 @@ struct ReportStatistics {
     per_unit: BTreeMap<u32, UnitStatistics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     metrics: Option<MetricsSnapshot>,
+    #[serde(default)]
+    skipped_events: usize,
 }
 
 impl ReportStatistics {
@@ -68,18 +70,34 @@ fn read_metrics_snapshot(path: &Path) -> io::Result<Option<MetricsSnapshot>> {
     if data.is_empty() {
         return Ok(None);
     }
-    let snapshot = serde_json::from_slice(&data).map_err(io::Error::other)?;
-    Ok(Some(snapshot))
+    match serde_json::from_slice(&data) {
+        Ok(snapshot) => Ok(Some(snapshot)),
+        Err(err) => {
+            eprintln!(
+                "warning: failed to parse metrics snapshot {}: {err}",
+                path.display()
+            );
+            if let Err(remove_err) = std::fs::remove_file(path) {
+                eprintln!(
+                    "warning: could not remove corrupted metrics snapshot {}: {remove_err}",
+                    path.display()
+                );
+            }
+            Ok(None)
+        }
+    }
 }
 
 pub(crate) fn exec(format: ReportFormat, output: Option<&str>) -> io::Result<()> {
-    let events = read_recent_events(Path::new(EVENTS_LOG), usize::MAX)?;
+    let ReadEventsResult { events, skipped } =
+        read_recent_events(Path::new(EVENTS_LOG), usize::MAX)?;
     let metrics = read_metrics_snapshot(Path::new(METRICS_SNAPSHOT_FILE))?;
     let stats = match format {
         ReportFormat::Sarif => None,
         _ => {
             let mut stats = ReportStatistics::from_events(&events);
             stats.metrics = metrics.clone();
+            stats.skipped_events = skipped;
             Some(stats)
         }
     };
@@ -109,6 +127,7 @@ fn export_text<W: Write>(
 ) -> io::Result<()> {
     writeln!(writer, "Allowed events: {}", stats.allowed)?;
     writeln!(writer, "Denied events: {}", stats.denied)?;
+    writeln!(writer, "Malformed events skipped: {}", stats.skipped_events)?;
     writeln!(writer, "Per-unit breakdown:")?;
     for (unit, unit_stats) in &stats.per_unit {
         writeln!(
@@ -222,6 +241,18 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn read_metrics_snapshot_handles_corruption() {
+        let dir = tempdir().unwrap();
+        let _guard = crate::test_support::DirGuard::change_to(dir.path());
+
+        std::fs::write(METRICS_SNAPSHOT_FILE, b"{ not json }").unwrap();
+        let snapshot = read_metrics_snapshot(Path::new(METRICS_SNAPSHOT_FILE)).unwrap();
+        assert!(snapshot.is_none());
+        assert!(!dir.path().join(METRICS_SNAPSHOT_FILE).exists());
+    }
+
+    #[test]
     fn text_exporter_includes_statistics() {
         let events = vec![
             EventRecord {
@@ -298,6 +329,7 @@ mod tests {
             String::from_utf8(buffer).unwrap(),
             "Allowed events: 1\n".to_string()
                 + "Denied events: 2\n"
+                + "Malformed events skipped: 0\n"
                 + "Per-unit breakdown:\n"
                 + "  unit 0: allowed=1, denied=1\n"
                 + "  unit 1: allowed=0, denied=1\n"
@@ -382,6 +414,7 @@ mod tests {
 
         assert_eq!(json["stats"]["allowed"], 1);
         assert_eq!(json["stats"]["denied"], 1);
+        assert_eq!(json["stats"]["skipped_events"], 0);
         assert_eq!(
             json["stats"]["per_unit"]["2"]["allowed"],
             serde_json::Value::from(1)
