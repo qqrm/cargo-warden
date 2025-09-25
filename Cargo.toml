@@ -12,6 +12,8 @@ members = [
     "examples/network-build",
     "examples/spawn-bash",
     "examples/fs-outside-workspace",
+    "examples/proc-macro-hog",
+    "examples/proc-macro-hog/proc-macro-hog-macro",
     "crates/event-reporting",
 ]
 resolver = "2"
