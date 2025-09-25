@@ -13,13 +13,19 @@ pub(crate) fn exec(policy_paths: &[String], mode_override: Option<Mode>) -> io::
         mode_to_str(policy_status.effective_mode)
     );
     let events = read_recent_events(Path::new("warden-events.jsonl"), 10)?;
-    if events.is_empty() {
+    if events.events.is_empty() {
         println!("recent events: none");
     } else {
         println!("recent events:");
-        for e in events {
+        for e in events.events {
             println!("{}", e);
         }
+    }
+    if events.skipped > 0 {
+        println!(
+            "warning: ignored {} malformed event entries while reading the log",
+            events.skipped
+        );
     }
     Ok(())
 }

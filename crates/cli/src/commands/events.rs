@@ -5,14 +5,21 @@ use std::path::Path;
 
 use event_reporting::EventRecord;
 
-pub(crate) fn read_recent_events(path: &Path, limit: usize) -> io::Result<Vec<EventRecord>> {
+#[derive(Debug, Default)]
+pub(crate) struct ReadEventsResult {
+    pub(crate) events: Vec<EventRecord>,
+    pub(crate) skipped: usize,
+}
+
+pub(crate) fn read_recent_events(path: &Path, limit: usize) -> io::Result<ReadEventsResult> {
     if limit == 0 || !path.exists() {
-        return Ok(vec![]);
+        return Ok(ReadEventsResult::default());
     }
 
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut events = VecDeque::new();
+    let mut skipped = 0usize;
 
     for line in reader.lines() {
         let line = line?;
@@ -21,10 +28,22 @@ pub(crate) fn read_recent_events(path: &Path, limit: usize) -> io::Result<Vec<Ev
                 events.pop_front();
             }
             events.push_back(event);
+        } else {
+            skipped += 1;
         }
     }
 
-    Ok(events.into_iter().collect())
+    if skipped > 0 {
+        eprintln!(
+            "warning: skipped {skipped} malformed events from {}",
+            path.display()
+        );
+    }
+
+    Ok(ReadEventsResult {
+        events: events.into_iter().collect(),
+        skipped,
+    })
 }
 
 #[cfg(test)]
@@ -74,9 +93,10 @@ mod tests {
         )
         .unwrap();
         let events = read_recent_events(&path, 10).unwrap();
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].pid, 1);
-        assert_eq!(events[1].verdict, 1);
+        assert_eq!(events.events.len(), 2);
+        assert_eq!(events.events[0].pid, 1);
+        assert_eq!(events.events[1].verdict, 1);
+        assert_eq!(events.skipped, 0);
     }
 
     #[test]
@@ -106,9 +126,10 @@ mod tests {
         }
 
         let events = read_recent_events(&path, 2).unwrap();
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].pid, 3);
-        assert_eq!(events[1].pid, 4);
+        assert_eq!(events.events.len(), 2);
+        assert_eq!(events.events[0].pid, 3);
+        assert_eq!(events.events[1].pid, 4);
+        assert_eq!(events.skipped, 0);
     }
 
     #[test]
@@ -136,6 +157,37 @@ mod tests {
         .unwrap();
 
         let events = read_recent_events(&path, 0).unwrap();
-        assert!(events.is_empty());
+        assert!(events.events.is_empty());
+        assert_eq!(events.skipped, 0);
+    }
+
+    #[test]
+    fn read_recent_events_counts_failures() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let mut file = File::create(&path).unwrap();
+
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({
+                "pid": 1,
+                "tgid": 10,
+                "time_ns": 1000,
+                "unit": 0,
+                "action": 3,
+                "verdict": 0,
+                "container_id": 0,
+                "caps": 0,
+                "path_or_addr": "/bin/echo",
+                "needed_perm": ""
+            })
+        )
+        .unwrap();
+        writeln!(file, "{{ not-json }}").unwrap();
+
+        let events = read_recent_events(&path, 10).unwrap();
+        assert_eq!(events.events.len(), 1);
+        assert_eq!(events.skipped, 1);
     }
 }
