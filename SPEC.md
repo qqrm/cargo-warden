@@ -12,7 +12,7 @@ Status: Draft for public OSS release
 | CLI workflow (`build`, `run`, `init`, `status`, `report`) | ✅ Complete | `crates/cli` wires policy loading, sandbox orchestration, and reporting, supporting text, JSON, and SARIF outputs. |
 | Agent, metrics, and event export | ✅ Complete | `crates/agent-lite` and `crates/event-reporting` process ring-buffer events, publish Prometheus metrics, and generate SARIF logs. |
 | Test harness and fake sandbox | ✅ Complete | `crates/testkits` and the fake sandbox runtime back CLI integration tests and layout assertions. |
-| Example workspaces | 🟡 In Progress | `examples/network-build` and `examples/spawn-bash` exist; scenarios for filesystem misuse, proc-macro load, and git clone remain to be added. |
+| Example workspaces | 🟡 In Progress | `examples/network-build`, `examples/spawn-bash`, and `examples/fs-outside-workspace` exist; scenarios for proc-macro load and git clone remain to be added. |
 | Documentation set | 🟡 In Progress | README and security model drafts exist; `CONTRIBUTING`, `SECURITY`, `CODEOWNERS`, and PR templates are still outstanding. |
 
 Author: Alex + contributors
@@ -119,7 +119,7 @@ Workspace crates:
 * ✅ `crates/agent-lite` (spec: `qqrm-agent-lite`)
 * ✅ `crates/cli`
 * ✅ `crates/testkits` (spec: `qqrm-testkits`)
-* 🟡 `examples/*` – currently `network-build` and `spawn-bash`; additional cases (`ex_fs_outside_workspace`, `ex_proc_macro_hog`, `ex_git_clone_https`) remain TODO
+* 🟡 `examples/*` – currently `network-build`, `spawn-bash`, and `fs-outside-workspace`; additional cases (`ex_proc_macro_hog`, `ex_git_clone_https`) remain TODO
 
 Feature flags:
 
