@@ -18,6 +18,9 @@ spawn blocked: Permission denied (os error 1)
 == fs-outside-workspace ==
 warning: write outside workspace blocked as expected: Operation not permitted (os error 1)
 
+== ex_proc_macro_hog ==
+warning: cargo-warden detected a simulated proc-macro resource hog
+
 == ex_git_clone_https ==
 warning: git clone blocked as expected: fatal: unable to access 'https://127.0.0.1:9/cargo-warden-denied/': Failed to connect to 127.0.0.1 port 9: Connection refused
 ```
