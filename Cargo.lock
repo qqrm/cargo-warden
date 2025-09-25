@@ -1238,6 +1238,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "qqrm-proc-macro-hog"
+version = "0.1.0"
+dependencies = [
+ "qqrm-proc-macro-hog-macro",
+]
+
+[[package]]
+name = "qqrm-proc-macro-hog-macro"
+version = "0.1.0"
+
+[[package]]
 name = "qqrm-sandbox-runtime"
 version = "0.1.0"
 dependencies = [
