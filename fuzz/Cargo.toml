@@ -12,10 +12,17 @@ libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 bpf-core = { package = "qqrm-bpf-core", version = "0.1.0", path = "../crates/bpf-core", features = ["fuzzing"] }
 bpf-host = { package = "qqrm-bpf-host", version = "0.1.0", path = "../crates/bpf-host" }
+policy-core = { package = "qqrm-policy-core", version = "0.1.0", path = "../crates/policy-core" }
 
 [[bin]]
 name = "net"
 path = "fuzz_targets/net.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "policy"
+path = "fuzz_targets/policy.rs"
 test = false
 doc = false
 
