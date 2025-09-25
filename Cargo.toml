@@ -12,6 +12,7 @@ members = [
     "examples/network-build",
     "examples/spawn-bash",
     "examples/fs-outside-workspace",
+    "examples/git-clone-https",
     "crates/event-reporting",
 ]
 resolver = "2"

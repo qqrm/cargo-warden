@@ -1211,6 +1211,10 @@ name = "qqrm-fs-outside-workspace"
 version = "0.1.0"
 
 [[package]]
+name = "qqrm-git-clone-https"
+version = "0.1.0"
+
+[[package]]
 name = "qqrm-network-build"
 version = "0.1.0"
 
