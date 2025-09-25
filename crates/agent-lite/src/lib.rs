@@ -4,7 +4,8 @@ use cfg_if::cfg_if;
 use log::{info, warn};
 use prometheus::{Encoder, IntCounter, IntGaugeVec, Registry, TextEncoder};
 use std::convert::TryFrom;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
+use std::io;
 use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -17,7 +18,10 @@ use std::collections::HashMap;
 #[cfg(feature = "grpc")]
 use tokio::sync::broadcast;
 
-pub use event_reporting::{EventRecord, export_sarif, sarif_from_events};
+pub use event_reporting::{
+    EventRecord, METRICS_SNAPSHOT_FILE, MetricsSnapshot, UnitMetricsSnapshot, export_sarif,
+    sarif_from_events,
+};
 
 const ACTION_EXEC: u8 = 3;
 const ACTION_CONNECT: u8 = 4;
@@ -113,6 +117,103 @@ static PAGE_FAULTS_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 static UNIT_LABELS: LazyLock<Mutex<HashMap<u32, &'static str>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+static METRICS_RECORDER: LazyLock<Mutex<MetricsRecorder>> =
+    LazyLock::new(|| Mutex::new(MetricsRecorder::default()));
+
+#[derive(Default)]
+struct MetricsRecorder {
+    snapshot: MetricsSnapshot,
+    path: Option<PathBuf>,
+}
+
+impl MetricsRecorder {
+    fn configure_path(&mut self, events_path: &Path) -> io::Result<()> {
+        let metrics_path = events_path.with_file_name(METRICS_SNAPSHOT_FILE);
+        self.path = Some(metrics_path.clone());
+        if metrics_path.exists() {
+            let data = fs::read(&metrics_path)?;
+            if !data.is_empty() {
+                if let Ok(snapshot) = serde_json::from_slice::<MetricsSnapshot>(&data) {
+                    self.snapshot = snapshot;
+                } else {
+                    self.snapshot = MetricsSnapshot::default();
+                }
+            } else {
+                self.snapshot = MetricsSnapshot::default();
+            }
+        } else {
+            self.snapshot = MetricsSnapshot::default();
+            self.persist()?;
+        }
+        Ok(())
+    }
+
+    fn update_from_event(&mut self, record: &EventRecord) -> io::Result<()> {
+        match record.verdict {
+            VERDICT_DENIED => {
+                self.snapshot.denied_total += 1;
+                self.snapshot.violations_total += 1;
+                self.snapshot.blocked_total += 1;
+            }
+            _ => {
+                self.snapshot.allowed_total += 1;
+            }
+        }
+        let unit_metrics = self
+            .snapshot
+            .per_unit
+            .entry(u32::from(record.unit))
+            .or_default();
+        match record.verdict {
+            VERDICT_DENIED => {
+                unit_metrics.denied += 1;
+            }
+            _ => {
+                unit_metrics.allowed += 1;
+            }
+        }
+        self.persist()
+    }
+
+    fn update_resources(
+        &mut self,
+        unit: u32,
+        read_bytes: u64,
+        write_bytes: u64,
+        cpu_time_ms: u64,
+        page_faults: u64,
+    ) -> io::Result<()> {
+        let metrics = self.snapshot.per_unit.entry(unit).or_default();
+        metrics.io_read_bytes = read_bytes;
+        metrics.io_write_bytes = write_bytes;
+        metrics.cpu_time_ms = cpu_time_ms;
+        metrics.page_faults = page_faults;
+        self.persist()
+    }
+
+    fn persist(&self) -> io::Result<()> {
+        if let Some(path) = &self.path {
+            let data = serde_json::to_vec_pretty(&self.snapshot).map_err(io::Error::other)?;
+            fs::write(path, data)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn reset(&mut self) {
+        self.snapshot = MetricsSnapshot::default();
+        self.path = None;
+    }
+}
+
+fn configure_metrics_storage(path: &Path) -> Result<(), anyhow::Error> {
+    METRICS_RECORDER
+        .lock()
+        .expect("metrics recorder mutex poisoned")
+        .configure_path(path)
+        .map_err(anyhow::Error::from)
+}
+
 fn unit_label(unit: u32) -> &'static str {
     match unit {
         UNIT_OTHER => "other",
@@ -136,7 +237,7 @@ fn saturating_i64(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
 
-fn record_event_metrics(record: &EventRecord) {
+fn record_event_metrics(record: &EventRecord) -> Result<(), anyhow::Error> {
     EVENT_COUNTER.inc();
     if record.verdict == VERDICT_DENIED {
         DENIED_COUNTER.inc();
@@ -145,6 +246,12 @@ fn record_event_metrics(record: &EventRecord) {
     } else {
         ALLOWED_COUNTER.inc();
     }
+    let mut recorder = METRICS_RECORDER
+        .lock()
+        .expect("metrics recorder mutex poisoned");
+    recorder
+        .update_from_event(record)
+        .map_err(anyhow::Error::from)
 }
 
 pub fn update_unit_resource_metrics(
@@ -167,6 +274,13 @@ pub fn update_unit_resource_metrics(
     PAGE_FAULTS_GAUGE
         .with_label_values(&[unit_label])
         .set(saturating_i64(page_faults));
+    if let Err(err) = METRICS_RECORDER
+        .lock()
+        .expect("metrics recorder mutex poisoned")
+        .update_resources(unit, read_bytes, write_bytes, cpu_time_ms, page_faults)
+    {
+        warn!("failed to persist metrics snapshot: {err}");
+    }
 }
 
 #[cfg(test)]
@@ -184,6 +298,10 @@ fn reset_all_metrics() {
         .lock()
         .expect("unit label mutex poisoned")
         .clear();
+    METRICS_RECORDER
+        .lock()
+        .expect("metrics recorder mutex poisoned")
+        .reset();
 }
 
 #[cfg(feature = "grpc")]
@@ -320,6 +438,7 @@ pub fn run_with_shutdown(
     }
     let path = jsonl.to_path_buf();
     let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    configure_metrics_storage(&path)?;
     if let Some(port) = cfg.metrics_port {
         start_metrics_server(port);
     }
@@ -422,7 +541,7 @@ fn write_outputs(
     let json = serde_json::to_string(record)?;
     writeln!(file, "{}", json)?;
     info!("{}", json);
-    record_event_metrics(record);
+    record_event_metrics(record)?;
     if let Some(cfg) = rotation {
         rotate_if_needed(file, path, cfg)?;
     }
@@ -538,13 +657,13 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use std::{
-        fs::File,
+        fs::{self, File},
         io::{Read, Seek, Write},
         net::{Shutdown, TcpListener, TcpStream},
         thread,
         time::Duration,
     };
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, tempdir};
 
     #[test]
     fn event_record_formats() {
@@ -789,5 +908,41 @@ mod tests {
         assert!(body.contains("cpu_time_ms_by_unit{unit=\"build_script\"} 500"));
         assert!(body.contains("page_faults_by_unit{unit=\"build_script\"} 7"));
         assert!(body.contains("io_read_bytes_by_unit{unit=\"99\"} 1"));
+    }
+
+    #[test]
+    #[serial]
+    fn metrics_snapshot_persisted() {
+        reset_all_metrics();
+        let dir = tempdir().unwrap();
+        let events_path = dir.path().join("warden-events.jsonl");
+        File::create(&events_path).unwrap();
+        configure_metrics_storage(&events_path).unwrap();
+
+        let record = EventRecord {
+            pid: 20,
+            tgid: 200,
+            time_ns: 123,
+            unit: 0,
+            action: ACTION_EXEC,
+            verdict: VERDICT_DENIED,
+            container_id: 0,
+            caps: 0,
+            path_or_addr: "/bin/deny".into(),
+            needed_perm: "allow.exec.allowed".into(),
+        };
+        record_event_metrics(&record).unwrap();
+        update_unit_resource_metrics(0, 4096, 2048, 100, 6);
+
+        let metrics_path = events_path.with_file_name(METRICS_SNAPSHOT_FILE);
+        let contents = fs::read_to_string(metrics_path).unwrap();
+        let snapshot: MetricsSnapshot = serde_json::from_str(&contents).unwrap();
+        let unit_metrics = snapshot.per_unit.get(&0).unwrap();
+        assert_eq!(snapshot.denied_total, 1);
+        assert_eq!(snapshot.blocked_total, 1);
+        assert_eq!(unit_metrics.denied, 1);
+        assert_eq!(unit_metrics.io_write_bytes, 2048);
+        assert_eq!(unit_metrics.page_faults, 6);
+        reset_all_metrics();
     }
 }

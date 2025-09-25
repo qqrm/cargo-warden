@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
 use std::path::Path;
+
+pub const METRICS_SNAPSHOT_FILE: &str = "warden-metrics.json";
 
 /// User-facing representation of an event emitted by the sandbox.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,6 +20,26 @@ pub struct EventRecord {
     pub caps: u64,
     pub path_or_addr: String,
     pub needed_perm: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnitMetricsSnapshot {
+    pub allowed: u64,
+    pub denied: u64,
+    pub io_read_bytes: u64,
+    pub io_write_bytes: u64,
+    pub cpu_time_ms: u64,
+    pub page_faults: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetricsSnapshot {
+    pub allowed_total: u64,
+    pub denied_total: u64,
+    pub violations_total: u64,
+    pub blocked_total: u64,
+    #[serde(default)]
+    pub per_unit: BTreeMap<u32, UnitMetricsSnapshot>,
 }
 
 impl fmt::Display for EventRecord {
@@ -121,5 +144,30 @@ mod tests {
             .unwrap();
         assert!(content.contains("\"version\": \"2.1.0\""));
         assert!(content.contains(&record.path_or_addr));
+    }
+
+    #[test]
+    fn metrics_snapshot_serializes() {
+        let mut snapshot = MetricsSnapshot {
+            allowed_total: 3,
+            denied_total: 1,
+            violations_total: 1,
+            blocked_total: 1,
+            ..Default::default()
+        };
+        snapshot.per_unit.insert(
+            42,
+            UnitMetricsSnapshot {
+                allowed: 2,
+                denied: 1,
+                io_read_bytes: 100,
+                io_write_bytes: 200,
+                cpu_time_ms: 50,
+                page_faults: 4,
+            },
+        );
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert!(json.contains("\"allowed_total\":3"));
+        assert!(json.contains("\"42\""));
     }
 }
