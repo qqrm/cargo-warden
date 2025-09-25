@@ -1,5 +1,13 @@
 # cargo-warden
 
+## Quickstart Overview
+
+The quickstart covers environment setup, policy enforcement, and log inspection steps at a glance.
+
+1. Run `./repo-setup.sh` to install toolchains and dependencies.
+2. Apply a policy such as `warden.toml` and execute builds with `cargo warden --policy warden.toml build`.
+3. Inspect audit events via `cargo warden --observe test` or your preferred logging pipeline.
+
 ## Setup Requirements
 
 The project requires a Linux system with the following features:
@@ -41,6 +49,13 @@ The script installs the nightly toolchain, required components and the `bpf-link
 Generated artifacts are excluded from version control; rerun the script to refresh them.
 
 
+## Sandbox Hardening
+
+cargo-warden layers eBPF enforcement with a seccomp deny-list sourced from the active policy. When the policy runs in `enforce`
+mode, the runtime programs the kernel with explicit syscall filters (for example, `clone`, `execve`, or any additional entries
+declared under `[syscall] deny`). Observability remains available in `observe` mode, allowing you to iterate on syscall rules
+before promoting them to enforcement.
+
 ## Local CI parity
 
 Use `scripts/run_ci_checks.sh` to reproduce the pull request GitHub Actions checks locally. The script:
@@ -62,3 +77,9 @@ For a byte-for-byte reproduction of the GitHub Actions workflow, run it through 
 wrkflw validate
 wrkflw run .github/workflows/CI.yml
 ```
+
+## Repository Maintenance
+
+Use `scripts/prune_branches.sh` to list feature branches that have been inactive for more than 48 hours. Pass `--prune` to
+delete the remote branches once you have reviewed the list. Export `CARGO_WARDEN_PRUNE_AGE` (in seconds) to customise the age
+threshold.

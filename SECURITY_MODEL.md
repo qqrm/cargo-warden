@@ -14,4 +14,5 @@ Cargo-warden isolates the Cargo build process by using Linux security features s
 - **Denial of Service**: Policies should avoid overly broad restrictions that could disrupt legitimate builds.
 
 ## Future Work
-Future iterations may integrate seccomp and additional kernel features to tighten the sandbox and expose metrics for audit trails.
+The runtime already loads seccomp filters that deny syscalls declared in the active policy. Future work focuses on additional
+kernel integrations (for example, fanotify for filesystem auditing) and richer telemetry pipelines for policy tuning.

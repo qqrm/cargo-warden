@@ -350,7 +350,8 @@ Levels:
 * ✅ Integration tests in `cli` with fake sandbox harness.
 * ✅ Negative tests expect `EPERM` and precise hints (enforced in CLI and sandbox tests).
 * ✅ Property-based tests in `policy-core` cover rule deduplication and validation.
-* 🟡 Fuzzing in config parsers and event handling (harnesses exist under `fuzz/`, additional targets welcome).
+* 🟡 Fuzzing in config parsers and event handling (harnesses exist under `fuzz/`, including policy parsing; additional targets
+  remain welcome).
 
 Examples:
 
@@ -367,7 +368,7 @@ CI:
 
 ## 17. Documentation and Contribution
 
-* ✅ `README` with quick start instructions (gif pending).
+* ✅ `README` with quick start instructions and a documented quickstart flow.
 * ⬜ `CONTRIBUTING` with development rules, lints, and style.
 * ⬜ `SECURITY` with vulnerability reporting procedure (current `SECURITY_MODEL.md` is internal design only).
 * ⬜ `CODEOWNERS` and PR templates.
