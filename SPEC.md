@@ -12,7 +12,7 @@ Status: Draft for public OSS release
 | CLI workflow (`build`, `run`, `init`, `status`, `report`) | ✅ Complete | `crates/cli` wires policy loading, sandbox orchestration, and reporting, supporting text, JSON, and SARIF outputs. |
 | Agent, metrics, and event export | ✅ Complete | `crates/agent-lite` and `crates/event-reporting` process ring-buffer events, publish Prometheus metrics, and generate SARIF logs. |
 | Test harness and fake sandbox | ✅ Complete | `crates/testkits` and the fake sandbox runtime back CLI integration tests and layout assertions. |
-| Example workspaces | 🟡 In Progress | `examples/network-build`, `examples/spawn-bash`, and `examples/fs-outside-workspace` exist; scenarios for proc-macro load and git clone remain to be added. |
+| Example workspaces | ✅ Complete | Example crates cover network, process launch, filesystem, proc-macro resource abuse, and git clone scenarios. |
 | Documentation set | 🟡 In Progress | README and security model drafts exist; `CONTRIBUTING`, `SECURITY`, `CODEOWNERS`, and PR templates are still outstanding. |
 
 Author: Alex + contributors
@@ -119,7 +119,7 @@ Workspace crates:
 * ✅ `crates/agent-lite` (spec: `qqrm-agent-lite`)
 * ✅ `crates/cli`
 * ✅ `crates/testkits` (spec: `qqrm-testkits`)
-* 🟡 `examples/*` – currently `network-build`, `spawn-bash`, and `fs-outside-workspace`; additional cases (`ex_proc_macro_hog`, `ex_git_clone_https`) remain TODO
+* ✅ `examples/*` – `network-build`, `spawn-bash`, `fs-outside-workspace`, `proc-macro-hog`, and `git-clone-https`
 
 Feature flags:
 
@@ -354,11 +354,11 @@ Levels:
 
 Examples:
 
-* `ex_net_curl_buildrs` – network call in `build.rs`.
-* `ex_exec_bash_buildrs` – attempt to run `bash`.
-* `ex_fs_outside_workspace` – write to `$HOME` and `/tmp`.
-* `ex_proc_macro_hog` – heavy proc macro.
-* `ex_git_clone_https` – `git clone` in `build.rs`.
+* `qqrm-network-build` (`examples/network-build`) – network call in `build.rs`.
+* `qqrm-spawn-bash` (`examples/spawn-bash`) – attempt to run `bash`.
+* `qqrm-fs-outside-workspace` (`examples/fs-outside-workspace`) – write to `$HOME` and `/tmp`.
+* `qqrm-proc-macro-hog` (`examples/proc-macro-hog`) – heavy proc macro stress test.
+* `qqrm-git-clone-https` (`examples/git-clone-https`) – `git clone` in `build.rs`.
 
 CI:
 
