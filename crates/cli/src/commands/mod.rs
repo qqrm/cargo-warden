@@ -5,4 +5,4 @@ pub mod report;
 pub mod run;
 pub mod status;
 
-pub(crate) use events::read_recent_events;
+pub(crate) use events::{ReadEventsResult, read_recent_events};

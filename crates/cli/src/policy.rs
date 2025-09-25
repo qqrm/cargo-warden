@@ -16,6 +16,20 @@ pub(crate) struct IsolationConfig {
     pub(crate) allowed_env_vars: Vec<String>,
 }
 
+#[derive(Default)]
+struct PolicyContext {
+    metadata: Option<CargoMetadata>,
+}
+
+impl PolicyContext {
+    fn metadata(&mut self) -> io::Result<&CargoMetadata> {
+        if self.metadata.is_none() {
+            self.metadata = Some(fetch_cargo_metadata()?);
+        }
+        Ok(self.metadata.as_ref().unwrap())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct PolicyStatus {
     pub(crate) sources: Vec<PolicySource>,
@@ -49,16 +63,17 @@ pub(crate) fn setup_isolation(
     policy_paths: &[String],
     mode_override: Option<Mode>,
 ) -> io::Result<IsolationConfig> {
-    let mut policy = load_default_policy()?;
-    let metadata = load_cargo_metadata()?;
-    apply_manifest_permissions(&mut policy, &metadata)?;
-    apply_trust_permissions(&mut policy, &metadata)?;
+    let mut ctx = PolicyContext::default();
+    let mut policy = load_default_policy(&mut ctx)?;
+    let metadata = ctx.metadata()?;
+    apply_manifest_permissions(&mut policy, metadata)?;
+    apply_trust_permissions(&mut policy, metadata)?;
     for path in policy_paths {
         let extra = load_policy(Path::new(path))?;
         merge_policy(&mut policy, extra);
     }
     policy.extend_exec_allowed(allow.iter().cloned());
-    extend_fs_access(&mut policy, &metadata)?;
+    extend_fs_access(&mut policy, metadata)?;
     if let Some(mode) = mode_override {
         policy.mode = mode;
     }
@@ -92,18 +107,18 @@ pub(crate) fn setup_isolation(
     })
 }
 
-fn load_default_policy() -> io::Result<Policy> {
-    load_default_policy_layer().map(|layer| layer.policy)
+fn load_default_policy(ctx: &mut PolicyContext) -> io::Result<Policy> {
+    load_default_policy_layer(ctx).map(|layer| layer.policy)
 }
 
-fn load_default_policy_layer() -> io::Result<PolicyLayer> {
-    if let Some(layer) = load_workspace_policy_layer()? {
+fn load_default_policy_layer(ctx: &mut PolicyContext) -> io::Result<PolicyLayer> {
+    if let Some(layer) = load_workspace_policy_layer(ctx)? {
         return Ok(layer);
     }
     load_local_policy_layer()
 }
 
-fn load_workspace_policy_layer() -> io::Result<Option<PolicyLayer>> {
+fn load_workspace_policy_layer(ctx: &mut PolicyContext) -> io::Result<Option<PolicyLayer>> {
     let Some(path) = find_workspace_file("workspace.warden.toml")? else {
         return Ok(None);
     };
@@ -114,7 +129,7 @@ fn load_workspace_policy_layer() -> io::Result<Option<PolicyLayer>> {
             format!("{}: {err}", path.display()),
         )
     })?;
-    let member = determine_active_workspace_member()?;
+    let member = determine_active_workspace_member(ctx)?;
     let policy = match member {
         Some(ref member) => workspace.policy_for(member),
         None => workspace.root.clone(),
@@ -174,12 +189,12 @@ fn parse_policy_from_str(path: &Path, text: &str) -> io::Result<Policy> {
     })
 }
 
-fn determine_active_workspace_member() -> io::Result<Option<String>> {
+fn determine_active_workspace_member(ctx: &mut PolicyContext) -> io::Result<Option<String>> {
     if let Some(from_env) = workspace_member_from_env() {
         return Ok(Some(from_env));
     }
-    let metadata = load_cargo_metadata()?;
-    workspace_member_from_dir(&metadata)
+    let metadata = ctx.metadata()?;
+    workspace_member_from_dir(metadata)
 }
 
 fn workspace_member_from_env() -> Option<String> {
@@ -213,7 +228,7 @@ fn parse_workspace_member_value(value: &str) -> Option<String> {
     Some(candidate.to_string())
 }
 
-fn load_cargo_metadata() -> io::Result<CargoMetadata> {
+fn fetch_cargo_metadata() -> io::Result<CargoMetadata> {
     let cargo: OsString = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
     let output = Command::new(cargo)
         .arg("metadata")
@@ -800,10 +815,11 @@ pub(crate) fn collect_policy_status(
     policy_paths: &[String],
     mode_override: Option<Mode>,
 ) -> io::Result<PolicyStatus> {
+    let mut ctx = PolicyContext::default();
     let PolicyLayer {
         policy: default_policy,
         source: default_source,
-    } = load_default_policy_layer()?;
+    } = load_default_policy_layer(&mut ctx)?;
     let mut sources = Vec::new();
     sources.push(PolicySource {
         kind: default_source,
@@ -1150,7 +1166,7 @@ deny = ["execve"]
         assert!(exec.contains(&"/usr/bin/git".to_string()));
         assert_eq!(exec.len(), 3);
 
-        let metadata = super::load_cargo_metadata().unwrap();
+        let metadata = super::fetch_cargo_metadata().unwrap();
         let workspace = super::normalize_path(&metadata.workspace_root);
         let target = super::normalize_path(&metadata.target_directory);
         let fs_rules = fs_entries(&isolation.maps_layout);
@@ -1180,7 +1196,7 @@ deny = ["execve"]
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
         assert!(isolation.maps_layout.net_rules.is_empty());
 
-        let metadata = super::load_cargo_metadata().unwrap();
+        let metadata = super::fetch_cargo_metadata().unwrap();
         let workspace = super::normalize_path(&metadata.workspace_root);
         let target = super::normalize_path(&metadata.target_directory);
         let fs_rules = fs_entries(&isolation.maps_layout);
@@ -1210,7 +1226,7 @@ deny = ["execve"]
         let exec = exec_paths(&isolation.maps_layout);
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
 
-        let metadata = super::load_cargo_metadata().unwrap();
+        let metadata = super::fetch_cargo_metadata().unwrap();
         let workspace = super::normalize_path(&metadata.workspace_root);
         let target = super::normalize_path(&metadata.target_directory);
         let fs_rules = fs_entries(&isolation.maps_layout);
@@ -1278,7 +1294,7 @@ exec.default = "allow"
         let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
-        let metadata = super::load_cargo_metadata().unwrap();
+        let metadata = super::fetch_cargo_metadata().unwrap();
         let workspace = metadata.workspace_root.to_string_lossy().into_owned();
         let target = metadata.target_directory.to_string_lossy().into_owned();
 
@@ -1321,7 +1337,7 @@ exec.default = "allow"
         let isolation = setup_isolation(&[], &[], None).unwrap();
         drop(out_guard);
 
-        let metadata = super::load_cargo_metadata().unwrap();
+        let metadata = super::fetch_cargo_metadata().unwrap();
         let workspace = super::normalize_path(&metadata.workspace_root);
         let target = super::normalize_path(&metadata.target_directory);
         let out_dir = super::normalize_path(&out_dir_path);
@@ -1385,7 +1401,7 @@ permissions = ["env:read:PROTOC"]
         let fs_rules = fs_entries(&isolation.maps_layout);
         let include_path = super::normalize_path(&include_dir);
         let workspace = super::normalize_path(dir.path());
-        let metadata = super::load_cargo_metadata().unwrap();
+        let metadata = super::fetch_cargo_metadata().unwrap();
         let target = super::normalize_path(&metadata.target_directory);
 
         assert!(fs_rules.iter().any(|(path, access)| {
