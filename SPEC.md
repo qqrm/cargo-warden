@@ -13,7 +13,7 @@ Status: Draft for public OSS release
 | Agent, metrics, and event export | ✅ Complete | `crates/agent-lite` and `crates/event-reporting` process ring-buffer events, publish Prometheus metrics, and generate SARIF logs. |
 | Test harness and fake sandbox | ✅ Complete | `crates/testkits` and the fake sandbox runtime back CLI integration tests and layout assertions. |
 | Example workspaces | ✅ Complete | Example crates cover network, process launch, filesystem, proc-macro resource abuse, and git clone scenarios. |
-| Documentation set | 🟡 In Progress | README and security model drafts exist; `CONTRIBUTING`, `SECURITY`, `CODEOWNERS`, and PR templates are still outstanding. |
+| Documentation set | ✅ Complete | README, security model, contributing guide, security policy, CODEOWNERS, and PR templates are available. |
 
 Author: Alex + contributors
 Core project license: MIT or Apache-2.0

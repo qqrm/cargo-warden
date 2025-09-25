@@ -1,0 +1,8 @@
+# Default owners for the cargo-warden repository
+* @qqrm
+
+# Core crates
+crates/ @qqrm
+examples/ @qqrm
+fuzz/ @qqrm
+scripts/ @qqrm
