@@ -14,6 +14,7 @@ members = [
     "examples/fs-outside-workspace",
     "examples/proc-macro-hog",
     "examples/proc-macro-hog/proc-macro-hog-macro",
+    "examples/git-clone-https",
     "crates/event-reporting",
 ]
 resolver = "2"
