@@ -53,32 +53,20 @@ impl From<RawPolicy> for Policy {
         } = allow;
 
         let mut fs_rules = FsRules::with_default(fs.default);
-        for path in read_extra {
-            fs_rules.insert_read_raw(path);
-        }
-        for path in write_extra {
-            fs_rules.insert_write_raw(path);
-        }
+        fs_rules.extend_reads(read_extra.into_iter().chain(std::iter::empty()));
+        fs_rules.extend_writes(write_extra.into_iter().chain(std::iter::empty()));
 
         let mut net_rules = NetRules::with_default(net.default);
-        for host in hosts {
-            net_rules.insert_raw(host);
-        }
+        net_rules.extend(hosts.into_iter().chain(std::iter::empty()));
 
         let mut exec_rules = ExecRules::with_default(exec.default);
-        for bin in exec_allowed {
-            exec_rules.insert_raw(bin);
-        }
+        exec_rules.extend(exec_allowed.into_iter().chain(std::iter::empty()));
 
         let mut syscall_rules = SyscallRules::default();
-        for name in syscall.deny {
-            syscall_rules.insert_raw(name);
-        }
+        syscall_rules.extend(syscall.deny.into_iter().chain(std::iter::empty()));
 
         let mut env_rules = EnvRules::default();
-        for var in env_read {
-            env_rules.insert_raw(var);
-        }
+        env_rules.extend(env_read.into_iter().chain(std::iter::empty()));
 
         Policy {
             mode,
