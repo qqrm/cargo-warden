@@ -1,16 +1,13 @@
 //! Host-only shims for exercising qqrm-bpf-core programs outside the kernel.
 
 pub mod maps {
-    use core::cell::{Ref, RefCell, RefMut};
+    use heapless::{LinearMap, Vec};
+    use spin::Mutex;
 
-    use heapless::LinearMap;
-
-    /// Simplified fixed-capacity array map used by tests and fuzzers.
+    /// Simplified fixed-size array map used by tests and fuzzers.
     pub struct TestArray<T: Copy, const N: usize> {
-        data: RefCell<LinearMap<usize, T, N>>,
+        slots: Mutex<Vec<Option<T>, N>>,
     }
-
-    unsafe impl<T: Copy, const N: usize> Sync for TestArray<T, N> {}
 
     impl<T: Copy, const N: usize> Default for TestArray<T, N> {
         fn default() -> Self {
@@ -22,42 +19,18 @@ pub mod maps {
         /// Creates an empty map instance.
         pub const fn new() -> Self {
             Self {
-                data: RefCell::new(LinearMap::new()),
+                slots: Mutex::new(Vec::new()),
             }
         }
 
-        /// Retrieves a shared reference to an entry when the index is valid.
-        pub fn get(&self, index: u32) -> Option<Ref<'_, T>> {
+        /// Retrieves an entry if the index is in range and populated.
+        pub fn get(&self, index: u32) -> Option<T> {
             let idx = index as usize;
             if idx >= N {
                 return None;
             }
-            let borrow = self.data.borrow();
-            if borrow.iter().any(|(key, _)| *key == idx) {
-                Some(Ref::map(borrow, move |map| {
-                    map.get(&idx)
-                        .expect("entry presence validated before mapping")
-                }))
-            } else {
-                None
-            }
-        }
-
-        /// Retrieves a mutable reference to an entry when the index is valid.
-        pub fn get_mut(&self, index: u32) -> Option<RefMut<'_, T>> {
-            let idx = index as usize;
-            if idx >= N {
-                return None;
-            }
-            let borrow = self.data.borrow_mut();
-            if borrow.iter().any(|(key, _)| *key == idx) {
-                Some(RefMut::map(borrow, move |map| {
-                    map.get_mut(&idx)
-                        .expect("entry presence validated before mapping")
-                }))
-            } else {
-                None
-            }
+            let guard = self.slots.lock();
+            guard.get(idx).and_then(|slot| *slot)
         }
 
         /// Writes an entry if the index is in range.
@@ -66,21 +39,19 @@ pub mod maps {
             if idx >= N {
                 return;
             }
-            let mut map = self.data.borrow_mut();
-            match map.insert(idx, value) {
-                Ok(_) => {}
-                Err((pending_idx, pending_value)) => {
-                    if let Some(first_key) = map.iter().next().map(|(key, _)| *key) {
-                        let _ = map.remove(&first_key);
-                    }
-                    let _ = map.insert(pending_idx, pending_value);
-                }
+            let mut guard = self.slots.lock();
+            while guard.len() <= idx {
+                // Extending within bounds cannot fail because the index is capped by `N`.
+                let _ = guard.push(None);
+            }
+            if let Some(slot) = guard.get_mut(idx) {
+                *slot = Some(value);
             }
         }
 
         /// Clears all entries in place.
         pub fn clear(&self) {
-            self.data.borrow_mut().clear();
+            self.slots.lock().clear();
         }
     }
 
@@ -99,14 +70,16 @@ pub mod maps {
         pub const fn new() -> Self {
             Self
         }
+
+        /// Clears the dummy ring buffer.
+        #[allow(clippy::unused_self)]
+        pub fn clear(&self) {}
     }
 
     /// Simplified hash map implementation for host-based tests.
     pub struct TestHashMap<K: Copy + Eq, V: Copy, const N: usize> {
-        data: RefCell<LinearMap<K, V, N>>,
+        data: Mutex<LinearMap<K, V, N>>,
     }
-
-    unsafe impl<K: Copy + Eq, V: Copy, const N: usize> Sync for TestHashMap<K, V, N> {}
 
     impl<K: Copy + Eq, V: Copy, const N: usize> Default for TestHashMap<K, V, N> {
         fn default() -> Self {
@@ -118,58 +91,39 @@ pub mod maps {
         /// Creates an empty hash map instance.
         pub const fn new() -> Self {
             Self {
-                data: RefCell::new(LinearMap::new()),
+                data: Mutex::new(LinearMap::new()),
             }
         }
 
-        /// Retrieves a shared reference to the value associated with the provided key.
-        pub fn get(&self, key: &K) -> Option<Ref<'_, V>> {
-            let borrow = self.data.borrow();
-            if borrow.iter().any(|(stored, _)| stored == key) {
-                Some(Ref::map(borrow, |map| {
-                    map.get(key)
-                        .expect("entry presence validated before mapping")
-                }))
-            } else {
-                None
-            }
-        }
-
-        /// Retrieves a mutable reference to the value associated with the provided key.
-        pub fn get_mut(&self, key: &K) -> Option<RefMut<'_, V>> {
-            let borrow = self.data.borrow_mut();
-            if borrow.iter().any(|(stored, _)| stored == key) {
-                Some(RefMut::map(borrow, |map| {
-                    map.get_mut(key)
-                        .expect("entry presence validated before mapping")
-                }))
-            } else {
-                None
-            }
+        /// Retrieves a value for the provided key when it exists.
+        pub fn get(&self, key: K) -> Option<V> {
+            let guard = self.data.lock();
+            guard.get(&key).copied()
         }
 
         /// Inserts or updates the value for the provided key.
         pub fn insert(&self, key: K, value: V) {
-            let mut map = self.data.borrow_mut();
-            match map.insert(key, value) {
+            let mut guard = self.data.lock();
+            match guard.insert(key, value) {
                 Ok(_) => {}
-                Err((pending_key, pending_value)) => {
-                    if let Some(first_key) = map.iter().next().map(|(key, _)| *key) {
-                        let _ = map.remove(&first_key);
+                Err((key, value)) => {
+                    if let Some((&evict_key, _)) = guard.iter().next() {
+                        guard.remove(&evict_key);
+                        let _ = guard.insert(key, value);
                     }
-                    let _ = map.insert(pending_key, pending_value);
                 }
             }
         }
 
         /// Removes the value associated with the provided key.
-        pub fn remove(&self, key: &K) {
-            let _ = self.data.borrow_mut().remove(key);
+        pub fn remove(&self, key: K) {
+            let mut guard = self.data.lock();
+            guard.remove(&key);
         }
 
         /// Clears all entries from the hash map.
         pub fn clear(&self) {
-            self.data.borrow_mut().clear();
+            self.data.lock().clear();
         }
     }
 }
