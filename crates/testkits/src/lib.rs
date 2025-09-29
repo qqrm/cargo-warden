@@ -70,7 +70,7 @@ const MAX_ATTEMPTS: usize = 50;
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Error returned by the integration testing helpers.
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum TestkitError {
     /// Wrapper around [`io::Error`].
     #[error("io error: {0}")]
@@ -79,7 +79,7 @@ pub enum TestkitError {
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
     /// The fake sandbox did not produce the expected output in time.
-    #[error("timeout waiting for {path}: {message}", path = .path.display())]
+    #[error("timeout waiting for {path}: {message}")]
     Timeout { path: PathBuf, message: String },
     /// Assertion helper triggered an error.
     #[error("assertion failure: {message}")]
