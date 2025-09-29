@@ -49,7 +49,6 @@ use event_reporting::EventRecord;
 use policy_core::Mode;
 use sandbox_runtime::{FsRuleSnapshot, LayoutSnapshot};
 use serde::de::DeserializeOwned;
-use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -57,6 +56,7 @@ use std::process;
 use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
+use thiserror::Error;
 
 /// Convenient alias for results produced by the testkits helpers.
 pub type Result<T> = std::result::Result<T, TestkitError>;
@@ -70,51 +70,20 @@ const MAX_ATTEMPTS: usize = 50;
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Error returned by the integration testing helpers.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum TestkitError {
     /// Wrapper around [`io::Error`].
-    Io(io::Error),
+    #[error("io error: {0}")]
+    Io(#[from] io::Error),
     /// Wrapper around [`serde_json::Error`].
-    Json(serde_json::Error),
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
     /// The fake sandbox did not produce the expected output in time.
+    #[error("timeout waiting for {path}: {message}")]
     Timeout { path: PathBuf, message: String },
     /// Assertion helper triggered an error.
+    #[error("assertion failure: {message}")]
     Assertion { message: String },
-}
-
-impl fmt::Display for TestkitError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io(err) => write!(f, "io error: {err}"),
-            Self::Json(err) => write!(f, "json error: {err}"),
-            Self::Timeout { path, message } => {
-                write!(f, "timeout waiting for {}: {message}", path.display())
-            }
-            Self::Assertion { message } => write!(f, "assertion failure: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for TestkitError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Io(err) => Some(err),
-            Self::Json(err) => Some(err),
-            _ => None,
-        }
-    }
-}
-
-impl From<io::Error> for TestkitError {
-    fn from(err: io::Error) -> Self {
-        Self::Io(err)
-    }
-}
-
-impl From<serde_json::Error> for TestkitError {
-    fn from(err: serde_json::Error) -> Self {
-        Self::Json(err)
-    }
 }
 
 /// Temporary cargo workspace for integration tests.
