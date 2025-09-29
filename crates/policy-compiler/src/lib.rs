@@ -8,7 +8,7 @@ use bpf_api::{
     ExecAllowEntry, FS_READ, FS_WRITE, FsRule, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE,
     NetParentEntry, NetRule, NetRuleEntry,
 };
-use bytemuck::{Pod, TransparentWrapper, Zeroable, cast_slice};
+use bytemuck::{Pod, TransparentWrapper, Zeroable};
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
 use thiserror::Error;
 
@@ -51,11 +51,11 @@ impl MapsLayout {
     /// Convert the layout into raw byte buffers for each map.
     pub fn to_binary(&self) -> MapsBinary {
         MapsBinary {
-            mode_flags: slice_to_bytes::<_, ModeFlag>(&self.mode_flags),
-            exec_allowlist: slice_to_bytes::<_, ExecAllowEntryPod>(&self.exec_allowlist),
-            net_rules: slice_to_bytes::<_, NetRuleEntryPod>(&self.net_rules),
-            net_parents: slice_to_bytes::<_, NetParentEntryPod>(&self.net_parents),
-            fs_rules: slice_to_bytes::<_, FsRuleEntryPod>(&self.fs_rules),
+            mode_flags: slice_to_bytes(&self.mode_flags),
+            exec_allowlist: slice_to_bytes(&self.exec_allowlist),
+            net_rules: slice_to_bytes(&self.net_rules),
+            net_parents: slice_to_bytes(&self.net_parents),
+            fs_rules: slice_to_bytes(&self.fs_rules),
         }
     }
 }
@@ -213,52 +213,78 @@ fn into_padded_array(buf: ArrayVec<u8, 256>) -> [u8; 256] {
     array
 }
 
-fn slice_to_bytes<T, P>(slice: &[T]) -> Vec<u8>
+fn slice_to_bytes<T>(slice: &[T]) -> Vec<u8>
 where
-    P: TransparentWrapper<T> + Pod,
+    T: MapEntryPod,
 {
-    cast_slice(P::wrap_slice(slice)).to_vec()
+    T::as_bytes(slice).to_vec()
+}
+
+trait MapEntryPod: Copy {
+    fn as_bytes(slice: &[Self]) -> &[u8];
+}
+
+impl MapEntryPod for u32 {
+    fn as_bytes(slice: &[Self]) -> &[u8] {
+        bytemuck::cast_slice(slice)
+    }
 }
 
 #[repr(transparent)]
-#[derive(Clone, Copy)]
-struct ModeFlag(u32);
-
-unsafe impl Zeroable for ModeFlag {}
-unsafe impl Pod for ModeFlag {}
-unsafe impl TransparentWrapper<u32> for ModeFlag {}
-
-#[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 struct ExecAllowEntryPod(ExecAllowEntry);
 
 unsafe impl Zeroable for ExecAllowEntryPod {}
 unsafe impl Pod for ExecAllowEntryPod {}
 unsafe impl TransparentWrapper<ExecAllowEntry> for ExecAllowEntryPod {}
 
+impl MapEntryPod for ExecAllowEntry {
+    fn as_bytes(slice: &[Self]) -> &[u8] {
+        bytemuck::cast_slice(ExecAllowEntryPod::wrap_slice(slice))
+    }
+}
+
 #[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 struct NetRuleEntryPod(NetRuleEntry);
 
 unsafe impl Zeroable for NetRuleEntryPod {}
 unsafe impl Pod for NetRuleEntryPod {}
 unsafe impl TransparentWrapper<NetRuleEntry> for NetRuleEntryPod {}
 
+impl MapEntryPod for NetRuleEntry {
+    fn as_bytes(slice: &[Self]) -> &[u8] {
+        bytemuck::cast_slice(NetRuleEntryPod::wrap_slice(slice))
+    }
+}
+
 #[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 struct NetParentEntryPod(NetParentEntry);
 
 unsafe impl Zeroable for NetParentEntryPod {}
 unsafe impl Pod for NetParentEntryPod {}
 unsafe impl TransparentWrapper<NetParentEntry> for NetParentEntryPod {}
 
+impl MapEntryPod for NetParentEntry {
+    fn as_bytes(slice: &[Self]) -> &[u8] {
+        bytemuck::cast_slice(NetParentEntryPod::wrap_slice(slice))
+    }
+}
+
 #[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 struct FsRuleEntryPod(FsRuleEntry);
 
 unsafe impl Zeroable for FsRuleEntryPod {}
 unsafe impl Pod for FsRuleEntryPod {}
 unsafe impl TransparentWrapper<FsRuleEntry> for FsRuleEntryPod {}
+
+impl MapEntryPod for FsRuleEntry {
+    fn as_bytes(slice: &[Self]) -> &[u8] {
+        bytemuck::cast_slice(FsRuleEntryPod::wrap_slice(slice))
+    }
+}
 
 #[cfg(test)]
 mod tests {
