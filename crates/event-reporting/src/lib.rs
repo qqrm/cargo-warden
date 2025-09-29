@@ -1,9 +1,13 @@
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
 use std::path::Path;
+
+use sarif::sarif::{
+    ArtifactLocation, Location, Message, PhysicalLocation, Result as SarifResult, ResultLevel, Run,
+    SCHEMA_URL, Sarif, Tool, ToolComponent, Version,
+};
 
 pub const METRICS_SNAPSHOT_FILE: &str = "warden-metrics.json";
 
@@ -81,28 +85,52 @@ impl fmt::Display for EventRecord {
 
 /// Builds a SARIF log from a slice of events.
 pub fn sarif_from_events(events: &[EventRecord]) -> serde_json::Value {
-    let results: Vec<_> = events
+    let driver = ToolComponent::builder().name("cargo-warden").build();
+
+    let tool = Tool::builder().driver(driver).build();
+
+    let results: Vec<SarifResult> = events
         .iter()
-        .map(|e| {
-            json!({
-                "ruleId": e.action.to_string(),
-                "level": if e.verdict == 1 { "error" } else { "note" },
-                "message": { "text": format!("{}", e) },
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": { "uri": e.path_or_addr }
-                    }
-                }]
-            })
+        .map(|event| {
+            let artifact_location = ArtifactLocation::builder()
+                .uri(event.path_or_addr.clone())
+                .build();
+
+            let physical_location = PhysicalLocation::builder()
+                .artifact_location(artifact_location)
+                .build();
+
+            let location = Location::builder()
+                .physical_location(physical_location)
+                .build();
+
+            let level = if event.verdict == 1 {
+                ResultLevel::Error
+            } else {
+                ResultLevel::Note
+            };
+
+            SarifResult::builder()
+                .message(Message::builder().text(event.to_string()).build())
+                .rule_id(event.action.to_string())
+                .level(level)
+                .locations(vec![location])
+                .build()
         })
         .collect();
-    json!({
-        "version": "2.1.0",
-        "runs": [{
-            "tool": { "driver": { "name": "cargo-warden" } },
-            "results": results
-        }]
-    })
+
+    let run = Run::builder().tool(tool).results(results).build();
+
+    let sarif = Sarif::builder()
+        .schema(SCHEMA_URL.to_string())
+        .version(
+            serde_json::to_value(Version::V2_1_0)
+                .expect("serializing SARIF version should succeed"),
+        )
+        .runs(vec![run])
+        .build();
+
+    serde_json::to_value(sarif).expect("serializing SARIF log should succeed")
 }
 
 /// Writes a SARIF log to the given path.
@@ -133,9 +161,38 @@ mod tests {
             path_or_addr: "/bin/deny".into(),
             needed_perm: "allow.fs.read_extra".into(),
         }];
-        let sarif = sarif_from_events(&records);
-        assert_eq!(sarif["version"], "2.1.0");
-        assert_eq!(sarif["runs"][0]["results"].as_array().unwrap().len(), 1);
+        let sarif_value = sarif_from_events(&records);
+        let sarif: Sarif = serde_json::from_value(sarif_value).unwrap();
+
+        assert_eq!(
+            sarif.version,
+            serde_json::to_value(Version::V2_1_0).unwrap()
+        );
+        assert_eq!(sarif.runs.len(), 1);
+
+        let run = &sarif.runs[0];
+        let results = run.results.as_ref().unwrap();
+        assert_eq!(results.len(), 1);
+
+        let result = &results[0];
+        assert_eq!(result.rule_id.as_deref(), Some("3"));
+        assert_eq!(result.level, Some(ResultLevel::Error));
+        let expected_message = records[0].to_string();
+        assert_eq!(
+            result.message.text.as_deref(),
+            Some(expected_message.as_str())
+        );
+
+        let uri = result.locations.as_ref().unwrap()[0]
+            .physical_location
+            .as_ref()
+            .unwrap()
+            .artifact_location
+            .as_ref()
+            .unwrap()
+            .uri
+            .as_deref();
+        assert_eq!(uri, Some("/bin/deny"));
     }
 
     #[test]
@@ -160,8 +217,25 @@ mod tests {
             .unwrap()
             .read_to_string(&mut content)
             .unwrap();
-        assert!(content.contains("\"version\": \"2.1.0\""));
-        assert!(content.contains(&record.path_or_addr));
+        let sarif: Sarif = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            sarif.version,
+            serde_json::to_value(Version::V2_1_0).unwrap()
+        );
+
+        let result = sarif.runs[0].results.as_ref().unwrap().first().unwrap();
+
+        let location_uri = result.locations.as_ref().unwrap()[0]
+            .physical_location
+            .as_ref()
+            .unwrap()
+            .artifact_location
+            .as_ref()
+            .unwrap()
+            .uri
+            .as_deref();
+
+        assert_eq!(location_uri, Some(record.path_or_addr.as_str()));
     }
 
     #[test]
