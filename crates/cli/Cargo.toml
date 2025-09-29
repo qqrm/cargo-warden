@@ -11,6 +11,7 @@ readme = "../../README.md"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+cargo_metadata = { workspace = true }
 policy-core = { package = "qqrm-policy-core", version = "0.1.0", path = "../policy-core" }
 qqrm-policy-compiler = { version = "0.1.0", path = "../policy-compiler" }
 sandbox-runtime = { package = "qqrm-sandbox-runtime", version = "0.1.0", path = "../sandbox-runtime" }

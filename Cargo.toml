@@ -19,6 +19,9 @@ members = [
 ]
 resolver = "2"
 
+[workspace.dependencies]
+cargo_metadata = "0.18"
+
 [patch.crates-io]
 aya = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf" }
 aya-obj = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf" }
