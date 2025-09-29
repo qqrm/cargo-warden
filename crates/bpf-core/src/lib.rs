@@ -18,6 +18,7 @@ use bpf_host::{
     maps::{DummyRingBuf, TestArray, TestHashMap},
 };
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+use core::marker::PhantomData;
 use core::{
     ffi::{CStr, c_void},
     marker::PhantomData,
