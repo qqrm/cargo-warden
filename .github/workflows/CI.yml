@@ -66,11 +66,7 @@ jobs:
         continue-on-error: true
       - name: cargo deny check --disable-fetch
         id: cargo_deny
-        run: |
-          set -eu
-          cargo deny fetch
-          cargo deny check --disable-fetch
-        shell: bash
+        run: ./scripts/ci/run_cargo_deny.sh
         continue-on-error: true
       - uses: dtolnay/rust-toolchain@nightly
       - name: cargo +nightly udeps --all-targets --all-features
@@ -79,42 +75,16 @@ jobs:
         continue-on-error: true
       - name: Aggregate cargo-checks results
         if: always()
-        run: |
-          set -eu
-          failures_file="$(mktemp)"
-          trap 'rm -f "$failures_file"' EXIT
-
-          record_outcome() {
-            outcome="$1"
-            label="$2"
-            if [ "$outcome" = "failure" ] || [ "$outcome" = "cancelled" ]; then
-              printf '%s (%s)\n' "$label" "$outcome" >>"$failures_file"
-            fi
-          }
-
-          record_outcome "${{ steps.cargo_fmt.outcome }}" "cargo fmt --all -- --check"
-          record_outcome "${{ steps.cargo_check.outcome }}" "cargo check --tests --benches"
-          record_outcome "${{ steps.cargo_clippy.outcome }}" "cargo clippy --all-targets --all-features -- -D warnings"
-          record_outcome "${{ steps.cargo_nextest.outcome }}" "cargo nextest run"
-          record_outcome "${{ steps.cargo_machete.outcome }}" "cargo machete"
-          record_outcome "${{ steps.cargo_audit.outcome }}" "cargo audit"
-          record_outcome "${{ steps.cargo_deny.outcome }}" "cargo deny check --disable-fetch"
-          record_outcome "${{ steps.cargo_udeps.outcome }}" "cargo +nightly udeps --all-targets --all-features"
-
-          if [ -s "$failures_file" ]; then
-            {
-              echo "## Failed checks"
-              while IFS= read -r line; do
-                echo "- $line"
-              done <"$failures_file"
-            } >>"$GITHUB_STEP_SUMMARY"
-
-            echo "The following checks failed:"
-            while IFS= read -r line; do
-              echo "  - $line"
-            done <"$failures_file"
-            exit 1
-          fi
+        env:
+          CARGO_FMT_OUTCOME: ${{ steps.cargo_fmt.outcome }}
+          CARGO_CHECK_OUTCOME: ${{ steps.cargo_check.outcome }}
+          CARGO_CLIPPY_OUTCOME: ${{ steps.cargo_clippy.outcome }}
+          CARGO_NEXTEST_OUTCOME: ${{ steps.cargo_nextest.outcome }}
+          CARGO_MACHETE_OUTCOME: ${{ steps.cargo_machete.outcome }}
+          CARGO_AUDIT_OUTCOME: ${{ steps.cargo_audit.outcome }}
+          CARGO_DENY_OUTCOME: ${{ steps.cargo_deny.outcome }}
+          CARGO_UDEPS_OUTCOME: ${{ steps.cargo_udeps.outcome }}
+        run: ./scripts/ci/aggregate_cargo_checks.sh
 
   examples:
     strategy:
