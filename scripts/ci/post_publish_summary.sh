@@ -3,6 +3,7 @@ set -euo pipefail
 
 dry_run="${DRY_RUN:-true}"
 interval="${PUBLISH_INTERVAL:-60}"
+release_tag="${RELEASE_TAG:-}"
 
 if [[ -f publish-plan.log && -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   mkdir -p "$(dirname "${GITHUB_STEP_SUMMARY}")"
@@ -15,6 +16,9 @@ if [[ -f publish-plan.log && -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     else
       echo "- Crates published successfully at $(date -u '+%Y-%m-%dT%H:%M:%SZ')."
       echo "- Publish interval: ${interval}s."
+      if [[ -n "${release_tag}" ]]; then
+        echo "- Release tag: ${release_tag}."
+      fi
     fi
   } >> "${GITHUB_STEP_SUMMARY}"
 fi
@@ -22,5 +26,9 @@ fi
 if [[ "${dry_run}" == "true" ]]; then
   echo "::notice::Dry run completed; no crates were published."
 else
-  echo "::notice::Crates published successfully."
+  if [[ -n "${release_tag}" ]]; then
+    echo "::notice::Crates published successfully under tag ${release_tag}."
+  else
+    echo "::notice::Crates published successfully."
+  fi
 fi
