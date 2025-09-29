@@ -3,10 +3,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use arrayvec::ArrayVec;
 use bpf_api::{
     ExecAllowEntry, FS_READ, FS_WRITE, FsRule, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE,
     NetParentEntry, NetRule, NetRuleEntry,
 };
+use bytemuck::{Pod, TransparentWrapper, Zeroable, cast_slice};
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
 use thiserror::Error;
 
@@ -49,11 +51,11 @@ impl MapsLayout {
     /// Convert the layout into raw byte buffers for each map.
     pub fn to_binary(&self) -> MapsBinary {
         MapsBinary {
-            mode_flags: slice_to_bytes(&self.mode_flags),
-            exec_allowlist: slice_to_bytes(&self.exec_allowlist),
-            net_rules: slice_to_bytes(&self.net_rules),
-            net_parents: slice_to_bytes(&self.net_parents),
-            fs_rules: slice_to_bytes(&self.fs_rules),
+            mode_flags: slice_to_bytes::<_, ModeFlag>(&self.mode_flags),
+            exec_allowlist: slice_to_bytes::<_, ExecAllowEntryPod>(&self.exec_allowlist),
+            net_rules: slice_to_bytes::<_, NetRuleEntryPod>(&self.net_rules),
+            net_parents: slice_to_bytes::<_, NetParentEntryPod>(&self.net_parents),
+            fs_rules: slice_to_bytes::<_, FsRuleEntryPod>(&self.fs_rules),
         }
     }
 }
@@ -128,14 +130,15 @@ fn compile_fs_rules(policy: &Policy) -> Result<Vec<FsRuleEntry>, CompileError> {
     if policy.fs_default() != FsDefault::Strict {
         return Ok(Vec::new());
     }
-    let mut entries = Vec::new();
-    for path in policy.fs_write_paths() {
-        entries.push(fs_rule_entry(path.as_path(), FS_READ | FS_WRITE)?);
-    }
-    for path in policy.fs_read_paths() {
-        entries.push(fs_rule_entry(path.as_path(), FS_READ)?);
-    }
-    Ok(entries)
+    policy
+        .fs_write_paths()
+        .map(|path| fs_rule_entry(path.as_path(), FS_READ | FS_WRITE))
+        .chain(
+            policy
+                .fs_read_paths()
+                .map(|path| fs_rule_entry(path.as_path(), FS_READ)),
+        )
+        .collect()
 }
 
 fn fs_rule_entry(path: &Path, access: u8) -> Result<FsRuleEntry, CompileError> {
@@ -182,27 +185,80 @@ fn parse_host_entry(host: &str) -> Result<NetRuleEntry, CompileError> {
 }
 
 fn encode_exec_path(path: &str) -> Result<[u8; 256], CompileError> {
-    fill_path_bytes(path).ok_or_else(|| CompileError::ExecPathTooLong { path: path.into() })
+    build_path_vec(path)
+        .map(into_padded_array)
+        .ok_or_else(|| CompileError::ExecPathTooLong { path: path.into() })
 }
 
 fn encode_fs_path(path: &str) -> Result<[u8; 256], CompileError> {
-    fill_path_bytes(path).ok_or_else(|| CompileError::FsPathTooLong { path: path.into() })
+    build_path_vec(path)
+        .map(into_padded_array)
+        .ok_or_else(|| CompileError::FsPathTooLong { path: path.into() })
 }
 
-fn fill_path_bytes(path: &str) -> Option<[u8; 256]> {
+fn build_path_vec(path: &str) -> Option<ArrayVec<u8, 256>> {
     let bytes = path.as_bytes();
     if bytes.len() > MAX_PATH_BYTES {
         return None;
     }
-    let mut buf = [0u8; 256];
-    buf[..bytes.len()].copy_from_slice(bytes);
+    let mut buf = ArrayVec::<u8, 256>::new();
+    buf.try_extend_from_slice(bytes).expect("capacity checked");
     Some(buf)
 }
 
-fn slice_to_bytes<T: Copy>(slice: &[T]) -> Vec<u8> {
-    let len = core::mem::size_of_val(slice);
-    unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const u8, len).to_vec() }
+fn into_padded_array(buf: ArrayVec<u8, 256>) -> [u8; 256] {
+    let mut array = [0u8; 256];
+    let len = buf.len();
+    array[..len].copy_from_slice(buf.as_slice());
+    array
 }
+
+fn slice_to_bytes<T, P>(slice: &[T]) -> Vec<u8>
+where
+    P: TransparentWrapper<T> + Pod,
+{
+    cast_slice(P::wrap_slice(slice)).to_vec()
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct ModeFlag(u32);
+
+unsafe impl Zeroable for ModeFlag {}
+unsafe impl Pod for ModeFlag {}
+unsafe impl TransparentWrapper<u32> for ModeFlag {}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct ExecAllowEntryPod(ExecAllowEntry);
+
+unsafe impl Zeroable for ExecAllowEntryPod {}
+unsafe impl Pod for ExecAllowEntryPod {}
+unsafe impl TransparentWrapper<ExecAllowEntry> for ExecAllowEntryPod {}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct NetRuleEntryPod(NetRuleEntry);
+
+unsafe impl Zeroable for NetRuleEntryPod {}
+unsafe impl Pod for NetRuleEntryPod {}
+unsafe impl TransparentWrapper<NetRuleEntry> for NetRuleEntryPod {}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct NetParentEntryPod(NetParentEntry);
+
+unsafe impl Zeroable for NetParentEntryPod {}
+unsafe impl Pod for NetParentEntryPod {}
+unsafe impl TransparentWrapper<NetParentEntry> for NetParentEntryPod {}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct FsRuleEntryPod(FsRuleEntry);
+
+unsafe impl Zeroable for FsRuleEntryPod {}
+unsafe impl Pod for FsRuleEntryPod {}
+unsafe impl TransparentWrapper<FsRuleEntry> for FsRuleEntryPod {}
 
 #[cfg(test)]
 mod tests {
