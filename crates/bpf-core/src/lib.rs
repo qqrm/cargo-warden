@@ -18,6 +18,7 @@ use bpf_host::{
     maps::{DummyRingBuf, TestArray, TestHashMap},
 };
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+use core::marker::PhantomData;
 use core::{
     ffi::{CStr, c_void},
     mem::size_of,
@@ -60,333 +61,221 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-macro_rules! map_type_alias {
-    (@define EXEC_ALLOWLIST, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        type ExecAllowlistMap = Array<$value>;
-        #[cfg(any(test, feature = "fuzzing"))]
-        type ExecAllowlistMap = TestArray<$value, { ($capacity) as usize }>;
-    };
-    (@define EXEC_ALLOWLIST_LENGTH, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        type LengthMap = Array<$value>;
-        #[cfg(any(test, feature = "fuzzing"))]
-        type LengthMap = TestArray<$value, { ($capacity) as usize }>;
-    };
-    (@define NET_RULES, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        type NetRulesMap = Array<$value>;
-        #[cfg(any(test, feature = "fuzzing"))]
-        type NetRulesMap = TestArray<$value, { ($capacity) as usize }>;
-    };
-    (@define NET_PARENTS, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        type NetParentsMap = Array<$value>;
-        #[cfg(any(test, feature = "fuzzing"))]
-        type NetParentsMap = TestArray<$value, { ($capacity) as usize }>;
-    };
-    (@define FS_RULES, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        type FsRulesMap = Array<$value>;
-        #[cfg(any(test, feature = "fuzzing"))]
-        type FsRulesMap = TestArray<$value, { ($capacity) as usize }>;
-    };
-    (@define EVENT_COUNTS, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        type EventCountsMap = Array<$value>;
-        #[cfg(any(test, feature = "fuzzing"))]
-        type EventCountsMap = TestArray<$value, { ($capacity) as usize }>;
-    };
-    (@define MODE_FLAGS, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        type ModeFlagsMap = Array<$value>;
-        #[cfg(any(test, feature = "fuzzing"))]
-        type ModeFlagsMap = TestArray<$value, { ($capacity) as usize }>;
-    };
-    (@define $other:ident, $value:ty, $capacity:expr) => {
-        compile_error!(concat!(
-            "Missing type alias mapping for ",
-            stringify!($other)
-        ));
-    };
-    (@name EXEC_ALLOWLIST) => {
-        ExecAllowlistMap
-    };
-    (@name EXEC_ALLOWLIST_LENGTH) => {
-        LengthMap
-    };
-    (@name NET_RULES) => {
-        NetRulesMap
-    };
-    (@name NET_RULES_LENGTH) => {
-        LengthMap
-    };
-    (@name NET_PARENTS) => {
-        NetParentsMap
-    };
-    (@name NET_PARENTS_LENGTH) => {
-        LengthMap
-    };
-    (@name FS_RULES) => {
-        FsRulesMap
-    };
-    (@name FS_RULES_LENGTH) => {
-        LengthMap
-    };
-    (@name EVENT_COUNTS) => {
-        EventCountsMap
-    };
-    (@name MODE_FLAGS) => {
-        ModeFlagsMap
-    };
-    (@name $other:ident) => {
-        compile_error!(concat!(
-            "Missing type alias mapping for ",
-            stringify!($other)
-        ));
-    };
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+struct ArrayDescriptor<T, const CAPACITY: usize> {
+    name: &'static str,
+    _marker: PhantomData<T>,
 }
 
-macro_rules! map_ctor_fn {
-    (@define EXEC_ALLOWLIST, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        const fn exec_allowlist_map() -> ExecAllowlistMap {
-            Array::with_max_entries($capacity, 0)
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+impl<T: Copy, const CAPACITY: usize> ArrayDescriptor<T, CAPACITY> {
+    const fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            _marker: PhantomData,
         }
+    }
 
-        #[cfg(any(test, feature = "fuzzing"))]
-        const fn exec_allowlist_map() -> ExecAllowlistMap {
-            TestArray::new()
-        }
-    };
-    (@define EXEC_ALLOWLIST_LENGTH, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        const fn length_map() -> LengthMap {
-            Array::with_max_entries($capacity, 0)
-        }
+    #[cfg(target_arch = "bpf")]
+    const fn bpf_map(&self) -> Array<T> {
+        Array::with_max_entries(CAPACITY as u32, 0)
+    }
 
-        #[cfg(any(test, feature = "fuzzing"))]
-        const fn length_map() -> LengthMap {
-            TestArray::new()
-        }
-    };
-    (@define NET_RULES, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        const fn net_rules_map() -> NetRulesMap {
-            Array::with_max_entries($capacity, 0)
-        }
+    #[cfg(any(test, feature = "fuzzing"))]
+    const fn host_map(&self) -> TestArray<T, CAPACITY> {
+        TestArray::<T, CAPACITY>::new()
+    }
 
-        #[cfg(any(test, feature = "fuzzing"))]
-        const fn net_rules_map() -> NetRulesMap {
-            TestArray::new()
+    #[cfg(any(test, feature = "fuzzing"))]
+    const fn map_descriptor(&self, clear: fn()) -> MapDescriptor {
+        MapDescriptor {
+            name: self.name,
+            kind: MapKind::Array {
+                value_size: size_of::<T>() as u32,
+            },
+            capacity: CAPACITY as u32,
+            clear,
         }
-    };
-    (@define NET_PARENTS, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        const fn net_parents_map() -> NetParentsMap {
-            Array::with_max_entries($capacity, 0)
-        }
-
-        #[cfg(any(test, feature = "fuzzing"))]
-        const fn net_parents_map() -> NetParentsMap {
-            TestArray::new()
-        }
-    };
-    (@define FS_RULES, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        const fn fs_rules_map() -> FsRulesMap {
-            Array::with_max_entries($capacity, 0)
-        }
-
-        #[cfg(any(test, feature = "fuzzing"))]
-        const fn fs_rules_map() -> FsRulesMap {
-            TestArray::new()
-        }
-    };
-    (@define EVENT_COUNTS, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        const fn event_counts_map() -> EventCountsMap {
-            Array::with_max_entries($capacity, 0)
-        }
-
-        #[cfg(any(test, feature = "fuzzing"))]
-        const fn event_counts_map() -> EventCountsMap {
-            TestArray::new()
-        }
-    };
-    (@define MODE_FLAGS, $value:ty, $capacity:expr) => {
-        #[cfg(target_arch = "bpf")]
-        const fn mode_flags_map() -> ModeFlagsMap {
-            Array::with_max_entries($capacity, 0)
-        }
-
-        #[cfg(any(test, feature = "fuzzing"))]
-        const fn mode_flags_map() -> ModeFlagsMap {
-            TestArray::new()
-        }
-    };
-    (@define $other:ident, $value:ty, $capacity:expr) => {
-        compile_error!(concat!(
-            "Missing constructor mapping for ",
-            stringify!($other)
-        ));
-    };
-    (@name EXEC_ALLOWLIST) => {
-        exec_allowlist_map
-    };
-    (@name EXEC_ALLOWLIST_LENGTH) => {
-        length_map
-    };
-    (@name NET_RULES) => {
-        net_rules_map
-    };
-    (@name NET_RULES_LENGTH) => {
-        length_map
-    };
-    (@name NET_PARENTS) => {
-        net_parents_map
-    };
-    (@name NET_PARENTS_LENGTH) => {
-        length_map
-    };
-    (@name FS_RULES) => {
-        fs_rules_map
-    };
-    (@name FS_RULES_LENGTH) => {
-        length_map
-    };
-    (@name EVENT_COUNTS) => {
-        event_counts_map
-    };
-    (@name MODE_FLAGS) => {
-        mode_flags_map
-    };
-    (@name $other:ident) => {
-        compile_error!(concat!(
-            "Missing constructor mapping for ",
-            stringify!($other)
-        ));
-    };
+    }
 }
 
-macro_rules! map_define_alias {
-    (EXEC_ALLOWLIST, $define:ident, $skip:ident, $($rest:tt)*) => {
-        $define!(EXEC_ALLOWLIST, $($rest)*);
-    };
-    (EXEC_ALLOWLIST_LENGTH, $define:ident, $skip:ident, $($rest:tt)*) => {
-        $define!(EXEC_ALLOWLIST_LENGTH, $($rest)*);
-    };
-    (NET_RULES, $define:ident, $skip:ident, $($rest:tt)*) => {
-        $define!(NET_RULES, $($rest)*);
-    };
-    (NET_RULES_LENGTH, $define:ident, $skip:ident, $($rest:tt)*) => {
-        $skip!(NET_RULES_LENGTH, $($rest)*);
-    };
-    (NET_PARENTS, $define:ident, $skip:ident, $($rest:tt)*) => {
-        $define!(NET_PARENTS, $($rest)*);
-    };
-    (NET_PARENTS_LENGTH, $define:ident, $skip:ident, $($rest:tt)*) => {
-        $skip!(NET_PARENTS_LENGTH, $($rest)*);
-    };
-    (FS_RULES, $define:ident, $skip:ident, $($rest:tt)*) => {
-        $define!(FS_RULES, $($rest)*);
-    };
-    (FS_RULES_LENGTH, $define:ident, $skip:ident, $($rest:tt)*) => {
-        $skip!(FS_RULES_LENGTH, $($rest)*);
-    };
-    (EVENT_COUNTS, $define:ident, $skip:ident, $($rest:tt)*) => {
-        $define!(EVENT_COUNTS, $($rest)*);
-    };
-    (MODE_FLAGS, $define:ident, $skip:ident, $($rest:tt)*) => {
-        $define!(MODE_FLAGS, $($rest)*);
-    };
-    ($other:ident, $define:ident, $skip:ident, $($rest:tt)*) => {
-        compile_error!(concat!("Missing alias flag for ", stringify!($other)));
-    };
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+struct HashMapDescriptor<K, V, const CAPACITY: usize> {
+    name: &'static str,
+    _marker: PhantomData<(K, V)>,
 }
 
-macro_rules! define_map {
-    ($ident:ident, $aya_name:literal, $value:ty, $capacity:expr $(,)?) => {
-        map_define_alias!(
-            $ident,
-            define_map_define,
-            define_map_skip,
-            $aya_name,
-            $value,
-            $capacity
-        );
-    };
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+impl<K: Copy + PartialEq, V: Copy, const CAPACITY: usize> HashMapDescriptor<K, V, CAPACITY> {
+    const fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            _marker: PhantomData,
+        }
+    }
+
+    #[cfg(target_arch = "bpf")]
+    const fn bpf_map(&self) -> HashMap<K, V> {
+        HashMap::with_max_entries(CAPACITY as u32, 0)
+    }
+
+    #[cfg(any(test, feature = "fuzzing"))]
+    const fn host_map(&self) -> TestHashMap<K, V, CAPACITY> {
+        TestHashMap::<K, V, CAPACITY>::new()
+    }
+
+    #[cfg(any(test, feature = "fuzzing"))]
+    const fn map_descriptor(&self, clear: fn()) -> MapDescriptor {
+        MapDescriptor {
+            name: self.name,
+            kind: MapKind::HashMap {
+                key_size: size_of::<K>() as u32,
+                value_size: size_of::<V>() as u32,
+            },
+            capacity: CAPACITY as u32,
+            clear,
+        }
+    }
 }
 
-macro_rules! define_map_define {
-    ($ident:ident, $aya_name:literal, $value:ty, $capacity:expr) => {
-        map_type_alias!(@define $ident, $value, $capacity);
-        map_ctor_fn!(@define $ident, $value, $capacity);
-        define_map_static!($ident, $aya_name);
-    };
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+struct RingBufDescriptor<const BYTE_SIZE: usize> {
+    name: &'static str,
 }
 
-macro_rules! define_map_skip {
-    ($ident:ident, $aya_name:literal, $value:ty, $capacity:expr) => {
-        define_map_static!($ident, $aya_name);
-    };
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+impl<const BYTE_SIZE: usize> RingBufDescriptor<BYTE_SIZE> {
+    const fn new(name: &'static str) -> Self {
+        Self { name }
+    }
+
+    #[cfg(target_arch = "bpf")]
+    const fn bpf_map(&self) -> RingBuf {
+        RingBuf::with_byte_size(BYTE_SIZE as u32, 0)
+    }
+
+    #[cfg(any(test, feature = "fuzzing"))]
+    const fn host_map(&self) -> DummyRingBuf {
+        DummyRingBuf::new()
+    }
+
+    #[cfg(any(test, feature = "fuzzing"))]
+    const fn map_descriptor(&self, clear: fn()) -> MapDescriptor {
+        MapDescriptor {
+            name: self.name,
+            kind: MapKind::RingBuf {
+                byte_size: BYTE_SIZE as u32,
+            },
+            capacity: BYTE_SIZE as u32,
+            clear,
+        }
+    }
 }
-
-macro_rules! define_map_static {
-    ($ident:ident, $aya_name:literal) => {
-        #[cfg(target_arch = "bpf")]
-        #[map(name = $aya_name)]
-static mut $ident: map_type_alias!(@name $ident) = map_ctor_fn!(@name $ident)();
-
-        #[cfg(any(test, feature = "fuzzing"))]
-static $ident: map_type_alias!(@name $ident) = map_ctor_fn!(@name $ident)();
-    };
-}
-
-define_map!(
-    EXEC_ALLOWLIST,
-    "EXEC_ALLOWLIST",
-    bpf_api::ExecAllowEntry,
-    bpf_api::EXEC_ALLOWLIST_CAPACITY,
-);
-define_map!(EXEC_ALLOWLIST_LENGTH, "EXEC_ALLOWLIST_LENGTH", u32, 1);
-define_map!(
-    NET_RULES,
-    "NET_RULES",
-    bpf_api::NetRuleEntry,
-    bpf_api::NET_RULES_CAPACITY,
-);
-define_map!(NET_RULES_LENGTH, "NET_RULES_LENGTH", u32, 1);
-define_map!(
-    NET_PARENTS,
-    "NET_PARENTS",
-    bpf_api::NetParentEntry,
-    bpf_api::NET_PARENTS_CAPACITY,
-);
-define_map!(NET_PARENTS_LENGTH, "NET_PARENTS_LENGTH", u32, 1);
-define_map!(
-    FS_RULES,
-    "FS_RULES",
-    bpf_api::FsRuleEntry,
-    bpf_api::FS_RULES_CAPACITY,
-);
-define_map!(FS_RULES_LENGTH, "FS_RULES_LENGTH", u32, 1);
-define_map!(
-    EVENT_COUNTS,
-    "EVENT_COUNTS",
-    u64,
-    bpf_api::EVENT_COUNT_SLOTS,
-);
-define_map!(MODE_FLAGS, "MODE_FLAGS", u32, bpf_api::MODE_FLAGS_CAPACITY);
-
-#[cfg(target_arch = "bpf")]
-#[map(name = "WORKLOAD_UNITS")]
-static mut WORKLOAD_UNITS: HashMap<u32, u32> =
-    HashMap::with_max_entries(bpf_api::WORKLOAD_UNITS_CAPACITY, 0);
 
 #[cfg(any(test, feature = "fuzzing"))]
-static WORKLOAD_UNITS: TestHashMap<u32, u32, { bpf_api::WORKLOAD_UNITS_CAPACITY as usize }> =
-    TestHashMap::new();
+#[derive(Clone, Copy)]
+pub struct MapDescriptor {
+    pub name: &'static str,
+    pub kind: MapKind,
+    pub capacity: u32,
+    pub clear: fn(),
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+#[derive(Clone, Copy)]
+pub enum MapKind {
+    Array { value_size: u32 },
+    HashMap { key_size: u32, value_size: u32 },
+    RingBuf { byte_size: u32 },
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const EXEC_ALLOWLIST_DESCRIPTOR: ArrayDescriptor<
+    bpf_api::ExecAllowEntry,
+    { bpf_api::EXEC_ALLOWLIST_CAPACITY as usize },
+> = ArrayDescriptor::new("EXEC_ALLOWLIST");
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const EXEC_ALLOWLIST_LENGTH_DESCRIPTOR: ArrayDescriptor<u32, 1> =
+    ArrayDescriptor::new("EXEC_ALLOWLIST_LENGTH");
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const NET_RULES_DESCRIPTOR: ArrayDescriptor<
+    bpf_api::NetRuleEntry,
+    { bpf_api::NET_RULES_CAPACITY as usize },
+> = ArrayDescriptor::new("NET_RULES");
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const NET_RULES_LENGTH_DESCRIPTOR: ArrayDescriptor<u32, 1> =
+    ArrayDescriptor::new("NET_RULES_LENGTH");
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const NET_PARENTS_DESCRIPTOR: ArrayDescriptor<
+    bpf_api::NetParentEntry,
+    { bpf_api::NET_PARENTS_CAPACITY as usize },
+> = ArrayDescriptor::new("NET_PARENTS");
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const NET_PARENTS_LENGTH_DESCRIPTOR: ArrayDescriptor<u32, 1> =
+    ArrayDescriptor::new("NET_PARENTS_LENGTH");
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const FS_RULES_DESCRIPTOR: ArrayDescriptor<
+    bpf_api::FsRuleEntry,
+    { bpf_api::FS_RULES_CAPACITY as usize },
+> = ArrayDescriptor::new("FS_RULES");
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const FS_RULES_LENGTH_DESCRIPTOR: ArrayDescriptor<u32, 1> = ArrayDescriptor::new("FS_RULES_LENGTH");
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const EVENT_COUNTS_DESCRIPTOR: ArrayDescriptor<u64, { bpf_api::EVENT_COUNT_SLOTS as usize }> =
+    ArrayDescriptor::new("EVENT_COUNTS");
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const MODE_FLAGS_DESCRIPTOR: ArrayDescriptor<u32, { bpf_api::MODE_FLAGS_CAPACITY as usize }> =
+    ArrayDescriptor::new("MODE_FLAGS");
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const WORKLOAD_UNITS_DESCRIPTOR: HashMapDescriptor<
+    u32,
+    u32,
+    { bpf_api::WORKLOAD_UNITS_CAPACITY as usize },
+> = HashMapDescriptor::new("WORKLOAD_UNITS");
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const EVENTS_DESCRIPTOR: RingBufDescriptor<{ bpf_api::EVENT_RINGBUF_CAPACITY_BYTES as usize }> =
+    RingBufDescriptor::new("EVENTS");
+
+#[cfg(target_arch = "bpf")]
+type ExecAllowlistMap = Array<bpf_api::ExecAllowEntry>;
+#[cfg(any(test, feature = "fuzzing"))]
+type ExecAllowlistMap =
+    TestArray<bpf_api::ExecAllowEntry, { bpf_api::EXEC_ALLOWLIST_CAPACITY as usize }>;
+
+#[cfg(target_arch = "bpf")]
+type LengthMap = Array<u32>;
+#[cfg(any(test, feature = "fuzzing"))]
+type LengthMap = TestArray<u32, 1>;
+
+#[cfg(target_arch = "bpf")]
+type NetRulesMap = Array<bpf_api::NetRuleEntry>;
+#[cfg(any(test, feature = "fuzzing"))]
+type NetRulesMap = TestArray<bpf_api::NetRuleEntry, { bpf_api::NET_RULES_CAPACITY as usize }>;
+
+#[cfg(target_arch = "bpf")]
+type NetParentsMap = Array<bpf_api::NetParentEntry>;
+#[cfg(any(test, feature = "fuzzing"))]
+type NetParentsMap = TestArray<bpf_api::NetParentEntry, { bpf_api::NET_PARENTS_CAPACITY as usize }>;
+
+#[cfg(target_arch = "bpf")]
+type FsRulesMap = Array<bpf_api::FsRuleEntry>;
+#[cfg(any(test, feature = "fuzzing"))]
+type FsRulesMap = TestArray<bpf_api::FsRuleEntry, { bpf_api::FS_RULES_CAPACITY as usize }>;
+
+#[cfg(target_arch = "bpf")]
+type EventCountsMap = Array<u64>;
+#[cfg(any(test, feature = "fuzzing"))]
+type EventCountsMap = TestArray<u64, { bpf_api::EVENT_COUNT_SLOTS as usize }>;
+
+#[cfg(target_arch = "bpf")]
+type ModeFlagsMap = Array<u32>;
+#[cfg(any(test, feature = "fuzzing"))]
+type ModeFlagsMap = TestArray<u32, { bpf_api::MODE_FLAGS_CAPACITY as usize }>;
+
+#[cfg(target_arch = "bpf")]
+type WorkloadUnitsMap = HashMap<u32, u32>;
+#[cfg(any(test, feature = "fuzzing"))]
+type WorkloadUnitsMap = TestHashMap<u32, u32, { bpf_api::WORKLOAD_UNITS_CAPACITY as usize }>;
 
 #[cfg(target_arch = "bpf")]
 type EventsMap = RingBuf;
@@ -394,21 +283,202 @@ type EventsMap = RingBuf;
 type EventsMap = DummyRingBuf;
 
 #[cfg(target_arch = "bpf")]
-const fn events_map() -> EventsMap {
-    RingBuf::with_byte_size(bpf_api::EVENT_RINGBUF_CAPACITY_BYTES, 0)
-}
+#[map(name = "EXEC_ALLOWLIST")]
+static mut EXEC_ALLOWLIST: ExecAllowlistMap = EXEC_ALLOWLIST_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
-const fn events_map() -> EventsMap {
-    DummyRingBuf
-}
+static EXEC_ALLOWLIST: ExecAllowlistMap = EXEC_ALLOWLIST_DESCRIPTOR.host_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "EXEC_ALLOWLIST_LENGTH")]
+static mut EXEC_ALLOWLIST_LENGTH: LengthMap = EXEC_ALLOWLIST_LENGTH_DESCRIPTOR.bpf_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static EXEC_ALLOWLIST_LENGTH: LengthMap = EXEC_ALLOWLIST_LENGTH_DESCRIPTOR.host_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "NET_RULES")]
+static mut NET_RULES: NetRulesMap = NET_RULES_DESCRIPTOR.bpf_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static NET_RULES: NetRulesMap = NET_RULES_DESCRIPTOR.host_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "NET_RULES_LENGTH")]
+static mut NET_RULES_LENGTH: LengthMap = NET_RULES_LENGTH_DESCRIPTOR.bpf_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static NET_RULES_LENGTH: LengthMap = NET_RULES_LENGTH_DESCRIPTOR.host_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "NET_PARENTS")]
+static mut NET_PARENTS: NetParentsMap = NET_PARENTS_DESCRIPTOR.bpf_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static NET_PARENTS: NetParentsMap = NET_PARENTS_DESCRIPTOR.host_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "NET_PARENTS_LENGTH")]
+static mut NET_PARENTS_LENGTH: LengthMap = NET_PARENTS_LENGTH_DESCRIPTOR.bpf_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static NET_PARENTS_LENGTH: LengthMap = NET_PARENTS_LENGTH_DESCRIPTOR.host_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "FS_RULES")]
+static mut FS_RULES: FsRulesMap = FS_RULES_DESCRIPTOR.bpf_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static FS_RULES: FsRulesMap = FS_RULES_DESCRIPTOR.host_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "FS_RULES_LENGTH")]
+static mut FS_RULES_LENGTH: LengthMap = FS_RULES_LENGTH_DESCRIPTOR.bpf_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static FS_RULES_LENGTH: LengthMap = FS_RULES_LENGTH_DESCRIPTOR.host_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "EVENT_COUNTS")]
+static mut EVENT_COUNTS: EventCountsMap = EVENT_COUNTS_DESCRIPTOR.bpf_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static EVENT_COUNTS: EventCountsMap = EVENT_COUNTS_DESCRIPTOR.host_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "MODE_FLAGS")]
+static mut MODE_FLAGS: ModeFlagsMap = MODE_FLAGS_DESCRIPTOR.bpf_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static MODE_FLAGS: ModeFlagsMap = MODE_FLAGS_DESCRIPTOR.host_map();
+
+#[cfg(target_arch = "bpf")]
+#[map(name = "WORKLOAD_UNITS")]
+static mut WORKLOAD_UNITS: WorkloadUnitsMap = WORKLOAD_UNITS_DESCRIPTOR.bpf_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+static WORKLOAD_UNITS: WorkloadUnitsMap = WORKLOAD_UNITS_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
 #[map(name = "EVENTS")]
-static mut EVENTS: EventsMap = events_map();
+static mut EVENTS: EventsMap = EVENTS_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
-static EVENTS: EventsMap = events_map();
+static EVENTS: EventsMap = EVENTS_DESCRIPTOR.host_map();
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_array<T: Copy, const CAPACITY: usize>(map: &'static TestArray<T, CAPACITY>) {
+    map.clear();
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_hash_map<K: Copy + PartialEq, V: Copy, const CAPACITY: usize>(
+    map: &'static TestHashMap<K, V, CAPACITY>,
+) {
+    map.clear();
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_exec_allowlist() {
+    clear_array(&EXEC_ALLOWLIST);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_exec_allowlist_length() {
+    clear_array(&EXEC_ALLOWLIST_LENGTH);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_net_rules() {
+    clear_array(&NET_RULES);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_net_rules_length() {
+    clear_array(&NET_RULES_LENGTH);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_net_parents() {
+    clear_array(&NET_PARENTS);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_net_parents_length() {
+    clear_array(&NET_PARENTS_LENGTH);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_fs_rules() {
+    clear_array(&FS_RULES);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_fs_rules_length() {
+    clear_array(&FS_RULES_LENGTH);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_event_counts() {
+    clear_array(&EVENT_COUNTS);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_mode_flags() {
+    clear_array(&MODE_FLAGS);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_workload_units_map() {
+    clear_hash_map(&WORKLOAD_UNITS);
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+fn clear_events_map() {
+    EVENTS.clear();
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+const HOST_MAP_DESCRIPTORS: &[MapDescriptor] = &[
+    EXEC_ALLOWLIST_DESCRIPTOR.map_descriptor(clear_exec_allowlist),
+    EXEC_ALLOWLIST_LENGTH_DESCRIPTOR.map_descriptor(clear_exec_allowlist_length),
+    NET_RULES_DESCRIPTOR.map_descriptor(clear_net_rules),
+    NET_RULES_LENGTH_DESCRIPTOR.map_descriptor(clear_net_rules_length),
+    NET_PARENTS_DESCRIPTOR.map_descriptor(clear_net_parents),
+    NET_PARENTS_LENGTH_DESCRIPTOR.map_descriptor(clear_net_parents_length),
+    FS_RULES_DESCRIPTOR.map_descriptor(clear_fs_rules),
+    FS_RULES_LENGTH_DESCRIPTOR.map_descriptor(clear_fs_rules_length),
+    EVENT_COUNTS_DESCRIPTOR.map_descriptor(clear_event_counts),
+    MODE_FLAGS_DESCRIPTOR.map_descriptor(clear_mode_flags),
+    WORKLOAD_UNITS_DESCRIPTOR.map_descriptor(clear_workload_units_map),
+    EVENTS_DESCRIPTOR.map_descriptor(clear_events_map),
+];
+
+#[cfg(any(test, feature = "fuzzing"))]
+pub mod host_maps {
+    pub use super::{MapDescriptor, MapKind};
+
+    pub const MAP_DESCRIPTORS: &[MapDescriptor] = super::HOST_MAP_DESCRIPTORS;
+
+    pub fn reset_all() {
+        for descriptor in MAP_DESCRIPTORS {
+            (descriptor.clear)();
+        }
+    }
+
+    pub fn clear_by_name(name: &str) -> bool {
+        if let Some(descriptor) = MAP_DESCRIPTORS.iter().find(|d| d.name == name) {
+            (descriptor.clear)();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn descriptor(name: &str) -> Option<&'static MapDescriptor> {
+        MAP_DESCRIPTORS.iter().find(|d| d.name == name)
+    }
+}
 
 #[cfg(target_arch = "bpf")]
 unsafe fn load_mode_flags() -> u32 {
@@ -758,7 +828,7 @@ fn remove_workload_unit(pid: u32) {
 
 #[cfg(any(test, feature = "fuzzing"))]
 fn clear_workload_units() {
-    WORKLOAD_UNITS.clear();
+    host_maps::clear_by_name("WORKLOAD_UNITS");
 }
 
 #[cfg(target_arch = "bpf")]
@@ -1487,6 +1557,7 @@ pub extern "C" fn inode_unlink(_dir: *mut c_void, dentry: *mut c_void) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::host_maps;
     use bpf_api::{FS_READ, FS_WRITE};
     use bpf_host::{
         fs::{TestDentry, TestFile},
@@ -1618,7 +1689,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let path = "/var/warden/allowed/file.txt";
         set_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
@@ -1647,7 +1718,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let rules = default_fs_rules();
         set_fs_rules(&rules);
@@ -1671,7 +1742,7 @@ mod tests {
         assert!(bytes_to_string(&allowed_event.needed_perm).is_empty());
         let allowed_count = EVENT_COUNTS.get(0).unwrap_or(0);
         assert_eq!(allowed_count, 1);
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let path = "/etc/warden/forbidden.txt";
         let path_bytes = c_string(path);
@@ -1695,7 +1766,7 @@ mod tests {
         reset_fs_state();
         enable_observe_mode();
         assert!(is_observe_mode(), "observe mode should be enabled");
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let path = "/var/warden/forbidden.txt";
         let path_bytes = c_string(path);
@@ -1773,7 +1844,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let rules = default_fs_rules();
         set_fs_rules(&rules);
@@ -1798,7 +1869,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let mut file = TestFile {
             path: ptr::null(),
@@ -1973,7 +2044,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let old_path = "/etc/warden/src.txt";
         let new_path = "/etc/warden/dst.txt";
@@ -2008,7 +2079,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let old_path = "/etc/warden/allowed.txt";
         let new_path = "/etc/warden/blocked.txt";
@@ -2043,7 +2114,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let old_path = "/workspace/dir/source.txt";
         let new_path = "/workspace/dir/dest.txt";
@@ -2076,7 +2147,7 @@ mod tests {
         reset_fs_state();
         enable_observe_mode();
         assert!(is_observe_mode(), "observe mode should be enabled");
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let old_path = "/etc/warden/src.txt";
         let new_path = "/etc/warden/dst.txt";
@@ -2109,7 +2180,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let old_path = "/etc/warden/src.txt";
         let new_path = "/etc/warden/dst.txt";
@@ -2142,7 +2213,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        EVENT_COUNTS.clear();
+        host_maps::clear_by_name("EVENT_COUNTS");
         LAST_EVENT.lock().unwrap().take();
         let mut old_dentry = TestDentry { name: ptr::null() };
         let mut new_dentry = TestDentry { name: ptr::null() };
@@ -2360,8 +2431,8 @@ mod tests {
     }
 
     fn set_net_rules(entries: &[bpf_api::NetRuleEntry]) {
-        NET_RULES.clear();
-        NET_RULES_LENGTH.clear();
+        host_maps::clear_by_name("NET_RULES");
+        host_maps::clear_by_name("NET_RULES_LENGTH");
         for (idx, entry) in entries.iter().enumerate() {
             NET_RULES.set(idx as u32, *entry);
         }
@@ -2369,8 +2440,8 @@ mod tests {
     }
 
     fn set_net_parents(entries: &[bpf_api::NetParentEntry]) {
-        NET_PARENTS.clear();
-        NET_PARENTS_LENGTH.clear();
+        host_maps::clear_by_name("NET_PARENTS");
+        host_maps::clear_by_name("NET_PARENTS_LENGTH");
         for (idx, entry) in entries.iter().enumerate() {
             NET_PARENTS.set(idx as u32, *entry);
         }
@@ -2378,23 +2449,23 @@ mod tests {
     }
 
     fn reset_mode_flags() {
-        MODE_FLAGS.clear();
+        host_maps::clear_by_name("MODE_FLAGS");
         MODE_FLAGS.set(0, bpf_api::MODE_FLAG_ENFORCE);
     }
 
     fn reset_network_state() {
-        NET_RULES.clear();
-        NET_RULES_LENGTH.clear();
-        NET_PARENTS.clear();
-        NET_PARENTS_LENGTH.clear();
+        host_maps::clear_by_name("NET_RULES");
+        host_maps::clear_by_name("NET_RULES_LENGTH");
+        host_maps::clear_by_name("NET_PARENTS");
+        host_maps::clear_by_name("NET_PARENTS_LENGTH");
         reset_mode_flags();
         clear_workload_units();
         refresh_current_unit();
     }
 
     fn set_fs_rules(entries: &[bpf_api::FsRuleEntry]) {
-        FS_RULES.clear();
-        FS_RULES_LENGTH.clear();
+        host_maps::clear_by_name("FS_RULES");
+        host_maps::clear_by_name("FS_RULES_LENGTH");
         for (idx, entry) in entries.iter().enumerate() {
             FS_RULES.set(idx as u32, *entry);
         }
@@ -2402,8 +2473,8 @@ mod tests {
     }
 
     fn reset_fs_state() {
-        FS_RULES.clear();
-        FS_RULES_LENGTH.clear();
+        host_maps::clear_by_name("FS_RULES");
+        host_maps::clear_by_name("FS_RULES_LENGTH");
         reset_mode_flags();
         clear_workload_units();
         refresh_current_unit();
@@ -2415,8 +2486,8 @@ mod tests {
     }
 
     fn reset_exec_state() {
-        EXEC_ALLOWLIST.clear();
-        EXEC_ALLOWLIST_LENGTH.clear();
+        host_maps::clear_by_name("EXEC_ALLOWLIST");
+        host_maps::clear_by_name("EXEC_ALLOWLIST_LENGTH");
     }
 
     fn fs_rule_entry(unit: u32, path: &str, access: u8) -> bpf_api::FsRuleEntry {
