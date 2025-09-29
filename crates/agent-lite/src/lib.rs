@@ -685,6 +685,7 @@ mod tests {
             action: 2,
             verdict: 0,
             reserved: 0,
+            reserved_padding: [0; 4],
             container_id: 7,
             caps: 1,
             path_or_addr: path,

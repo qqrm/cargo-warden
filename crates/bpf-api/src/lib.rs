@@ -1,4 +1,6 @@
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+use bytemuck::{Pod, Zeroable};
 
 /// Bit flag for read access.
 pub const FS_READ: u8 = 1;
@@ -37,13 +39,13 @@ pub const MODE_FLAG_OBSERVE: u32 = 0;
 pub const MODE_FLAG_ENFORCE: u32 = 1;
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct ExecAllowEntry {
     pub path: [u8; 256],
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct NetRule {
     pub addr: [u8; 16],
     pub protocol: u8,
@@ -52,21 +54,21 @@ pub struct NetRule {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct NetRuleEntry {
     pub unit: u32,
     pub rule: NetRule,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct NetParentEntry {
     pub child: u32,
     pub parent: u32,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct FsRule {
     pub access: u8,
     pub reserved: [u8; 3],
@@ -74,14 +76,14 @@ pub struct FsRule {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct FsRuleEntry {
     pub unit: u32,
     pub rule: FsRule,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 /// Event emitted by BPF programs.
 pub struct Event {
     /// Thread identifier (kernel PID).
@@ -96,8 +98,10 @@ pub struct Event {
     pub action: u8,
     /// Allow (0) or deny (1).
     pub verdict: u8,
-    /// Reserved for future use and alignment.
+    /// Reserved for future use.
     pub reserved: u8,
+    /// Additional padding for alignment; always zeroed.
+    pub reserved_padding: [u8; 4],
     /// Identifier of the container or sandbox.
     pub container_id: u64,
     /// Bitmask of Linux capabilities held by the process.
@@ -107,6 +111,21 @@ pub struct Event {
     /// Suggested policy entry required to permit the operation.
     pub needed_perm: [u8; 64],
 }
+
+#[cfg(feature = "aya-pod")]
+unsafe impl aya::Pod for ExecAllowEntry {}
+#[cfg(feature = "aya-pod")]
+unsafe impl aya::Pod for NetRule {}
+#[cfg(feature = "aya-pod")]
+unsafe impl aya::Pod for NetRuleEntry {}
+#[cfg(feature = "aya-pod")]
+unsafe impl aya::Pod for NetParentEntry {}
+#[cfg(feature = "aya-pod")]
+unsafe impl aya::Pod for FsRule {}
+#[cfg(feature = "aya-pod")]
+unsafe impl aya::Pod for FsRuleEntry {}
+#[cfg(feature = "aya-pod")]
+unsafe impl aya::Pod for Event {}
 
 #[cfg(test)]
 mod tests {

@@ -1,6 +1,7 @@
 use std::ffi::{OsStr, OsString};
 
 use bpf_api::{UNIT_BUILD_SCRIPT, UNIT_LINKER, UNIT_OTHER, UNIT_PROC_MACRO, UNIT_RUSTC};
+use unicase::UniCase;
 
 pub(crate) fn detect_program_unit(program: &OsStr, args: &[OsString]) -> u32 {
     let program_str = program.to_string_lossy();
@@ -64,33 +65,30 @@ fn is_linker(filename: &str) -> bool {
 }
 
 fn matches_ignore_case(input: &str, expected: &str) -> bool {
-    if input.len() != expected.len() {
-        return false;
-    }
-    input
-        .chars()
-        .zip(expected.chars())
-        .all(|(a, b)| a.eq_ignore_ascii_case(&b))
+    UniCase::new(input) == UniCase::new(expected)
 }
 
 fn args_include_proc_macro(args: &[&str]) -> bool {
-    let mut idx = 0usize;
-    while idx < args.len() {
-        let current = args[idx].to_ascii_lowercase();
-        if current.contains("--crate-type=proc-macro") {
-            return true;
-        }
-        if current == "--crate-type"
-            && args
-                .get(idx + 1)
-                .map(|next| next.to_ascii_lowercase().contains("proc-macro"))
-                .unwrap_or(false)
-        {
-            return true;
-        }
-        idx += 1;
-    }
-    false
+    let crate_type_flag = UniCase::new("--crate-type");
+    let proc_macro = "proc-macro";
+
+    let inline = args.iter().any(|arg| {
+        arg.split_once('=')
+            .filter(|(flag, _)| UniCase::new(*flag) == crate_type_flag)
+            .map(|(_, value)| contains_proc_macro(value, proc_macro))
+            .unwrap_or(false)
+    });
+
+    inline
+        || args.windows(2).any(|window| {
+            UniCase::new(window[0]) == crate_type_flag && contains_proc_macro(window[1], proc_macro)
+        })
+}
+
+fn contains_proc_macro(value: &str, needle: &str) -> bool {
+    value
+        .split(',')
+        .any(|entry| matches_ignore_case(entry.trim(), needle))
 }
 
 #[cfg(test)]

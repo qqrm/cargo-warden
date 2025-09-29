@@ -1,8 +1,7 @@
 use aya::maps::{Array, HashMap, MapData};
 use aya::{Ebpf, Pod};
-use bpf_api::{
-    ExecAllowEntry, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE, NetParentEntry, NetRuleEntry,
-};
+use bpf_api::{MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE};
+use bytemuck::Pod as BytemuckPod;
 use policy_core::Mode;
 use qqrm_policy_compiler::MapsLayout;
 use std::convert::TryFrom;
@@ -14,29 +13,15 @@ pub(crate) fn populate_maps(bpf: &mut Ebpf, layout: &MapsLayout) -> io::Result<(
         "EXEC_ALLOWLIST",
         "EXEC_ALLOWLIST_LENGTH",
         &layout.exec_allowlist,
-        |entry| ExecAllowEntryPod(*entry),
     )?;
-    update_array(
-        bpf,
-        "NET_RULES",
-        "NET_RULES_LENGTH",
-        &layout.net_rules,
-        |entry| NetRuleEntryPod(*entry),
-    )?;
+    update_array(bpf, "NET_RULES", "NET_RULES_LENGTH", &layout.net_rules)?;
     update_array(
         bpf,
         "NET_PARENTS",
         "NET_PARENTS_LENGTH",
         &layout.net_parents,
-        |entry| NetParentEntryPod(*entry),
     )?;
-    update_array(
-        bpf,
-        "FS_RULES",
-        "FS_RULES_LENGTH",
-        &layout.fs_rules,
-        |entry| FsRuleEntryPod(*entry),
-    )?;
+    update_array(bpf, "FS_RULES", "FS_RULES_LENGTH", &layout.fs_rules)?;
     Ok(())
 }
 
@@ -92,16 +77,14 @@ pub(crate) fn write_mode_flag(bpf: &mut Ebpf, mode: Mode) -> io::Result<()> {
         .map_err(|err| io::Error::other(format!("set {map_name}[0]: {err}")))
 }
 
-fn update_array<T, P, F>(
+fn update_array<T>(
     bpf: &mut Ebpf,
     map_name: &str,
     len_map_name: &str,
     entries: &[T],
-    convert: F,
 ) -> io::Result<()>
 where
-    P: Pod,
-    F: Fn(&T) -> P,
+    T: Pod + BytemuckPod + Copy,
 {
     {
         let len_map = bpf
@@ -118,7 +101,7 @@ where
         let map = bpf
             .map_mut(map_name)
             .ok_or_else(|| map_not_found(map_name))?;
-        let mut array = Array::<&mut MapData, P>::try_from(map)
+        let mut array = Array::<&mut MapData, T>::try_from(map)
             .map_err(|err| io::Error::other(format!("{map_name}: {err}")))?;
         let capacity = array.len() as usize;
         if entries.len() > capacity {
@@ -130,9 +113,9 @@ where
                 ),
             ));
         }
-        for (idx, entry) in entries.iter().enumerate() {
+        for (idx, entry) in entries.iter().copied().enumerate() {
             array
-                .set(idx as u32, convert(entry), 0)
+                .set(idx as u32, entry, 0)
                 .map_err(|err| io::Error::other(format!("set {map_name}[{idx}]: {err}")))?;
         }
     }
@@ -159,27 +142,3 @@ where
 fn map_not_found(name: &str) -> io::Error {
     io::Error::new(io::ErrorKind::NotFound, format!("missing BPF map {name}"))
 }
-
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-struct ExecAllowEntryPod(ExecAllowEntry);
-
-unsafe impl Pod for ExecAllowEntryPod {}
-
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-struct NetRuleEntryPod(NetRuleEntry);
-
-unsafe impl Pod for NetRuleEntryPod {}
-
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-struct NetParentEntryPod(NetParentEntry);
-
-unsafe impl Pod for NetParentEntryPod {}
-
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-struct FsRuleEntryPod(FsRuleEntry);
-
-unsafe impl Pod for FsRuleEntryPod {}

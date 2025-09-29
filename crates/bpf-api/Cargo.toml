@@ -13,4 +13,11 @@ readme = "../../README.md"
 path = "src/lib.rs"
 crate-type = ["lib"]
 
+[features]
+default = []
+std = []
+aya-pod = ["std", "aya"]
+
 [dependencies]
+bytemuck = { version = "1.15", features = ["derive"], default-features = false }
+aya = { version = "0.13", optional = true, default-features = false }

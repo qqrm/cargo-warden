@@ -12,7 +12,8 @@ pub struct Event {
     pub unit: u8,        // 0 Other, 1 BuildRs, 2 ProcMacro, 3 Rustc, 4 Linker
     pub action: u8,      // 0 Open, 1 Rename, 2 Unlink, 3 Exec, 4 Connect
     pub verdict: u8,     // 0 Allowed, 1 Denied
-    pub reserved: u8,    // padding for alignment, reserved for future use
+    pub reserved: u8,    // reserved for future use
+    pub reserved_padding: [u8; 4],
     pub container_id: u64,
     pub caps: u64,       // Linux capability bitmask
     pub path_or_addr: [u8; 256], // null-terminated path or network address

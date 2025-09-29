@@ -1222,6 +1222,7 @@ fn fs_event(action: u8, path: &[u8; 256], access: u8, allowed: bool) -> Event {
         action,
         verdict: if allowed { 0 } else { 1 },
         reserved: 0,
+        reserved_padding: [0; 4],
         container_id: 0,
         caps: 0,
         path_or_addr: [0; 256],
