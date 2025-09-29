@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use arrayvec::ArrayVec;
+
 use bpf_api::{
     ExecAllowEntry, FS_READ, FS_WRITE, FsRule, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE,
     NetParentEntry, NetRule, NetRuleEntry,
@@ -12,6 +14,7 @@ use thiserror::Error;
 
 const TCP_PROTOCOL: u8 = 6;
 const MAX_PATH_BYTES: usize = 255;
+const PATH_BUFFER_CAPACITY: usize = MAX_PATH_BYTES + 1;
 
 /// Errors that can occur while compiling a [`Policy`].
 #[derive(Debug, Error)]
@@ -128,14 +131,15 @@ fn compile_fs_rules(policy: &Policy) -> Result<Vec<FsRuleEntry>, CompileError> {
     if policy.fs_default() != FsDefault::Strict {
         return Ok(Vec::new());
     }
-    let mut entries = Vec::new();
-    for path in policy.fs_write_paths() {
-        entries.push(fs_rule_entry(path.as_path(), FS_READ | FS_WRITE)?);
-    }
-    for path in policy.fs_read_paths() {
-        entries.push(fs_rule_entry(path.as_path(), FS_READ)?);
-    }
-    Ok(entries)
+    policy
+        .fs_write_paths()
+        .map(|path| fs_rule_entry(path.as_path(), FS_READ | FS_WRITE))
+        .chain(
+            policy
+                .fs_read_paths()
+                .map(|path| fs_rule_entry(path.as_path(), FS_READ)),
+        )
+        .collect()
 }
 
 fn fs_rule_entry(path: &Path, access: u8) -> Result<FsRuleEntry, CompileError> {
@@ -181,22 +185,33 @@ fn parse_host_entry(host: &str) -> Result<NetRuleEntry, CompileError> {
     })
 }
 
-fn encode_exec_path(path: &str) -> Result<[u8; 256], CompileError> {
-    fill_path_bytes(path).ok_or_else(|| CompileError::ExecPathTooLong { path: path.into() })
+fn encode_exec_path(path: &str) -> Result<[u8; PATH_BUFFER_CAPACITY], CompileError> {
+    encode_path_buffer(path).map_err(|_| CompileError::ExecPathTooLong { path: path.into() })
 }
 
-fn encode_fs_path(path: &str) -> Result<[u8; 256], CompileError> {
-    fill_path_bytes(path).ok_or_else(|| CompileError::FsPathTooLong { path: path.into() })
+fn encode_fs_path(path: &str) -> Result<[u8; PATH_BUFFER_CAPACITY], CompileError> {
+    encode_path_buffer(path).map_err(|_| CompileError::FsPathTooLong { path: path.into() })
 }
 
-fn fill_path_bytes(path: &str) -> Option<[u8; 256]> {
+fn encode_path_buffer(path: &str) -> Result<[u8; PATH_BUFFER_CAPACITY], PathBufferError> {
     let bytes = path.as_bytes();
     if bytes.len() > MAX_PATH_BYTES {
-        return None;
+        return Err(PathBufferError::TooLong);
     }
-    let mut buf = [0u8; 256];
-    buf[..bytes.len()].copy_from_slice(bytes);
-    Some(buf)
+
+    let mut buffer = ArrayVec::<u8, PATH_BUFFER_CAPACITY>::new();
+    buffer
+        .try_extend_from_slice(bytes)
+        .map_err(|_| PathBufferError::TooLong)?;
+    while buffer.len() < PATH_BUFFER_CAPACITY {
+        buffer.try_push(0).map_err(|_| PathBufferError::TooLong)?;
+    }
+    buffer.into_inner().map_err(|_| PathBufferError::TooLong)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PathBufferError {
+    TooLong,
 }
 
 fn slice_to_bytes<T: Copy>(slice: &[T]) -> Vec<u8> {
