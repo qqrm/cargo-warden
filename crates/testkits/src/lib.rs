@@ -56,6 +56,7 @@ use std::process;
 use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
+use thiserror::Error;
 
 /// Convenient alias for results produced by the testkits helpers.
 pub type Result<T> = std::result::Result<T, TestkitError>;
