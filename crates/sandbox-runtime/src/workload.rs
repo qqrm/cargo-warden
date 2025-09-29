@@ -1,6 +1,7 @@
 use std::ffi::{OsStr, OsString};
 
 use bpf_api::{UNIT_BUILD_SCRIPT, UNIT_LINKER, UNIT_OTHER, UNIT_PROC_MACRO, UNIT_RUSTC};
+use unicase::UniCase;
 
 pub(crate) fn detect_program_unit(program: &OsStr, args: &[OsString]) -> u32 {
     let program_str = program.to_string_lossy();
@@ -46,11 +47,13 @@ fn is_build_script(path: &str, filename: &str) -> bool {
 }
 
 fn is_rustc(filename: &str) -> bool {
-    matches_ignore_case(filename, "rustc") || matches_ignore_case(filename, "rustc.exe")
+    let file = UniCase::new(filename);
+    file == UniCase::new("rustc") || file == UniCase::new("rustc.exe")
 }
 
 fn is_cargo(filename: &str) -> bool {
-    matches_ignore_case(filename, "cargo") || matches_ignore_case(filename, "cargo.exe")
+    let file = UniCase::new(filename);
+    file == UniCase::new("cargo") || file == UniCase::new("cargo.exe")
 }
 
 fn is_linker(filename: &str) -> bool {
@@ -58,39 +61,33 @@ fn is_linker(filename: &str) -> bool {
         "ld", "ld.lld", "ld64", "lld", "link", "link.exe", "cc", "clang", "clang++", "gcc", "g++",
         "collect2",
     ];
+    let file = UniCase::new(filename);
     LINKERS
         .iter()
-        .any(|candidate| matches_ignore_case(filename, candidate))
-}
-
-fn matches_ignore_case(input: &str, expected: &str) -> bool {
-    if input.len() != expected.len() {
-        return false;
-    }
-    input
-        .chars()
-        .zip(expected.chars())
-        .all(|(a, b)| a.eq_ignore_ascii_case(&b))
+        .map(|candidate| UniCase::new(*candidate))
+        .any(|candidate| file == candidate)
 }
 
 fn args_include_proc_macro(args: &[&str]) -> bool {
-    let mut idx = 0usize;
-    while idx < args.len() {
-        let current = args[idx].to_ascii_lowercase();
-        if current.contains("--crate-type=proc-macro") {
-            return true;
+    let proc_macro = UniCase::new("proc-macro");
+    let has_proc_macro = |value: &str| {
+        value
+            .split(',')
+            .map(|candidate| UniCase::new(candidate.trim()))
+            .any(|candidate| candidate == proc_macro)
+    };
+
+    args.iter().any(|arg| {
+        arg.split_once('=')
+            .filter(|(key, _)| UniCase::new(key.trim()) == UniCase::new("--crate-type"))
+            .map(|(_, value)| has_proc_macro(value))
+            .unwrap_or(false)
+    }) || args.windows(2).any(|window| match window {
+        [flag, value] => {
+            UniCase::new(flag.trim()) == UniCase::new("--crate-type") && has_proc_macro(value)
         }
-        if current == "--crate-type"
-            && args
-                .get(idx + 1)
-                .map(|next| next.to_ascii_lowercase().contains("proc-macro"))
-                .unwrap_or(false)
-        {
-            return true;
-        }
-        idx += 1;
-    }
-    false
+        _ => false,
+    })
 }
 
 #[cfg(test)]

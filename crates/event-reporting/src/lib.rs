@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::collections::BTreeMap;
+use serde_sarif::sarif::{
+    Artifact, ArtifactLocation, Location, Message, PhysicalLocation, Result, ResultLevel, Run,
+    Sarif, Tool, ToolComponent, Version,
+};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io;
 use std::path::Path;
@@ -80,29 +83,67 @@ impl fmt::Display for EventRecord {
 }
 
 /// Builds a SARIF log from a slice of events.
-pub fn sarif_from_events(events: &[EventRecord]) -> serde_json::Value {
-    let results: Vec<_> = events
-        .iter()
-        .map(|e| {
-            json!({
-                "ruleId": e.action.to_string(),
-                "level": if e.verdict == 1 { "error" } else { "note" },
-                "message": { "text": format!("{}", e) },
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": { "uri": e.path_or_addr }
-                    }
-                }]
-            })
-        })
-        .collect();
-    json!({
-        "version": "2.1.0",
-        "runs": [{
-            "tool": { "driver": { "name": "cargo-warden" } },
-            "results": results
-        }]
-    })
+pub fn sarif_from_events(events: &[EventRecord]) -> Sarif {
+    let tool = Tool::builder()
+        .driver(ToolComponent::builder().name("cargo-warden").build())
+        .build();
+
+    let mut seen_artifacts = BTreeSet::new();
+    let mut artifacts = Vec::new();
+    let mut results = Vec::new();
+
+    for event in events {
+        if seen_artifacts.insert(event.path_or_addr.clone()) {
+            let artifact_location = ArtifactLocation::builder()
+                .uri(event.path_or_addr.clone())
+                .build();
+
+            artifacts.push(Artifact::builder().location(artifact_location).build());
+        }
+
+        let level = if event.verdict == 1 {
+            ResultLevel::Error
+        } else {
+            ResultLevel::Note
+        };
+
+        let location = Location::builder()
+            .physical_location(
+                PhysicalLocation::builder()
+                    .artifact_location(
+                        ArtifactLocation::builder()
+                            .uri(event.path_or_addr.clone())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build();
+
+        let message_text = event.to_string();
+        let message = Message::from(&message_text);
+
+        let result = Result::builder()
+            .rule_id(event.action.to_string())
+            .level(level)
+            .message(message)
+            .locations(vec![location])
+            .build();
+
+        results.push(result);
+    }
+
+    let mut run = Run::builder().tool(tool).build();
+    if !artifacts.is_empty() {
+        run.artifacts = Some(artifacts);
+    }
+    if !results.is_empty() {
+        run.results = Some(results);
+    }
+
+    Sarif::builder()
+        .version(serde_json::to_value(Version::V2_1_0).expect("version serialization"))
+        .runs(vec![run])
+        .build()
 }
 
 /// Writes a SARIF log to the given path.
@@ -115,6 +156,9 @@ pub fn export_sarif(events: &[EventRecord], path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jsonschema::{Draft, JSONSchema};
+    use serde_json::json;
+    use serde_sarif::sarif::Sarif;
     use std::fs::File;
     use std::io::Read;
     use tempfile::NamedTempFile;
@@ -134,8 +178,31 @@ mod tests {
             needed_perm: "allow.fs.read_extra".into(),
         }];
         let sarif = sarif_from_events(&records);
-        assert_eq!(sarif["version"], "2.1.0");
-        assert_eq!(sarif["runs"][0]["results"].as_array().unwrap().len(), 1);
+        let expected_version = serde_json::to_value(Version::V2_1_0).unwrap();
+        assert_eq!(sarif.version, expected_version);
+
+        let run = sarif.runs.first().expect("run present");
+        assert_eq!(run.tool.driver.name, "cargo-warden");
+        let results = run.results.as_ref().expect("results present");
+        assert_eq!(results.len(), 1);
+
+        let result = &results[0];
+        let expected_message = records[0].to_string();
+        assert_eq!(result.rule_id.as_deref(), Some("3"));
+        assert_eq!(result.level, Some(ResultLevel::Error));
+        assert_eq!(
+            result.message.text.as_deref(),
+            Some(expected_message.as_str())
+        );
+
+        let location_uri = result
+            .locations
+            .as_ref()
+            .and_then(|locations| locations.first())
+            .and_then(|location| location.physical_location.as_ref())
+            .and_then(|physical| physical.artifact_location.as_ref())
+            .and_then(|artifact| artifact.uri.as_ref());
+        assert_eq!(location_uri, Some(&records[0].path_or_addr));
     }
 
     #[test]
@@ -160,8 +227,64 @@ mod tests {
             .unwrap()
             .read_to_string(&mut content)
             .unwrap();
-        assert!(content.contains("\"version\": \"2.1.0\""));
-        assert!(content.contains(&record.path_or_addr));
+        let sarif: Sarif = serde_json::from_str(&content).unwrap();
+        let run = sarif.runs.first().expect("run present");
+        let results = run.results.as_ref().expect("results present");
+        let result = results.first().expect("result present");
+        assert_eq!(
+            result.message.text.as_deref(),
+            Some(record.to_string().as_str())
+        );
+
+        let artifacts = run.artifacts.as_ref().expect("artifacts present");
+        let artifact_uri = artifacts
+            .iter()
+            .filter_map(|artifact| artifact.location.as_ref())
+            .filter_map(|location| location.uri.as_ref())
+            .find(|uri| *uri == &record.path_or_addr);
+        assert!(artifact_uri.is_some());
+
+        let schema = json!({
+            "type": "object",
+            "required": ["version", "runs"],
+            "properties": {
+                "version": { "const": "2.1.0" },
+                "runs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "required": ["tool"],
+                        "properties": {
+                            "tool": {
+                                "type": "object",
+                                "required": ["driver"],
+                                "properties": {
+                                    "driver": {
+                                        "type": "object",
+                                        "required": ["name"],
+                                        "properties": {
+                                            "name": { "type": "string" }
+                                        }
+                                    }
+                                }
+                            },
+                            "results": { "type": "array" }
+                        }
+                    }
+                }
+            }
+        });
+
+        let compiled = JSONSchema::options()
+            .with_draft(Draft::Draft7)
+            .compile(&schema)
+            .expect("schema compiles");
+        let sarif_value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        if let Err(errors) = compiled.validate(&sarif_value) {
+            let details: Vec<String> = errors.map(|err| err.to_string()).collect();
+            panic!("schema validation failed: {details:?}");
+        }
     }
 
     #[test]

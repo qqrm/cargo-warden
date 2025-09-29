@@ -22,6 +22,7 @@ semver = "1"
 toml = "0.8"
 event-reporting = { version = "0.1.0", path = "../event-reporting" }
 directories = "5"
+itertools = "0.12"
 
 
 [dev-dependencies]
