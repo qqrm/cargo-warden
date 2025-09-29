@@ -8,7 +8,7 @@ use bpf_api::{
     ExecAllowEntry, FS_READ, FS_WRITE, FsRule, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE,
     NetParentEntry, NetRule, NetRuleEntry,
 };
-use bytemuck::{Pod, TransparentWrapper, Zeroable, cast_slice};
+use bytemuck::{Pod, TransparentWrapper, Zeroable};
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
 use thiserror::Error;
 
@@ -51,11 +51,11 @@ impl MapsLayout {
     /// Convert the layout into raw byte buffers for each map.
     pub fn to_binary(&self) -> MapsBinary {
         MapsBinary {
-            mode_flags: slice_to_bytes(&self.mode_flags),
-            exec_allowlist: slice_to_bytes(ExecAllowEntryPod::wrap_slice(&self.exec_allowlist)),
-            net_rules: slice_to_bytes(NetRuleEntryPod::wrap_slice(&self.net_rules)),
-            net_parents: slice_to_bytes(NetParentEntryPod::wrap_slice(&self.net_parents)),
-            fs_rules: slice_to_bytes(FsRuleEntryPod::wrap_slice(&self.fs_rules)),
+            mode_flags: slice_to_bytes::<_, ModeFlagPod>(&self.mode_flags),
+            exec_allowlist: slice_to_bytes::<_, ExecAllowEntryPod>(&self.exec_allowlist),
+            net_rules: slice_to_bytes::<_, NetRuleEntryPod>(&self.net_rules),
+            net_parents: slice_to_bytes::<_, NetParentEntryPod>(&self.net_parents),
+            fs_rules: slice_to_bytes::<_, FsRuleEntryPod>(&self.fs_rules),
         }
     }
 }
@@ -215,6 +215,14 @@ fn into_padded_array(buf: ArrayVec<u8, 256>) -> [u8; 256] {
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
+struct ModeFlagPod(u32);
+
+unsafe impl Zeroable for ModeFlagPod {}
+unsafe impl Pod for ModeFlagPod {}
+unsafe impl TransparentWrapper<u32> for ModeFlagPod {}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
 struct ExecAllowEntryPod(ExecAllowEntry);
 
 unsafe impl Zeroable for ExecAllowEntryPod {}
@@ -245,8 +253,11 @@ unsafe impl Zeroable for FsRuleEntryPod {}
 unsafe impl Pod for FsRuleEntryPod {}
 unsafe impl TransparentWrapper<FsRuleEntry> for FsRuleEntryPod {}
 
-fn slice_to_bytes<T: Pod>(slice: &[T]) -> Vec<u8> {
-    cast_slice(slice).to_vec()
+fn slice_to_bytes<T, Wrapper>(slice: &[T]) -> Vec<u8>
+where
+    Wrapper: TransparentWrapper<T> + Pod,
+{
+    bytemuck::cast_slice(Wrapper::wrap_slice(slice)).to_vec()
 }
 
 #[cfg(test)]
