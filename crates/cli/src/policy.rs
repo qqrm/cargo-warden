@@ -1,13 +1,12 @@
+use cargo_metadata::{Metadata, MetadataCommand, PackageId};
 use policy_core::{FsDefault, Mode, Policy, WorkspacePolicy};
 use qqrm_policy_compiler::{self, CompiledPolicy, MapsLayout};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
-use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub(crate) struct IsolationConfig {
     pub(crate) mode: Mode,
@@ -18,11 +17,11 @@ pub(crate) struct IsolationConfig {
 
 #[derive(Default)]
 struct PolicyContext {
-    metadata: Option<CargoMetadata>,
+    metadata: Option<Metadata>,
 }
 
 impl PolicyContext {
-    fn metadata(&mut self) -> io::Result<&CargoMetadata> {
+    fn metadata(&mut self) -> io::Result<&Metadata> {
         if self.metadata.is_none() {
             self.metadata = Some(fetch_cargo_metadata()?);
         }
@@ -228,22 +227,16 @@ fn parse_workspace_member_value(value: &str) -> Option<String> {
     Some(candidate.to_string())
 }
 
-fn fetch_cargo_metadata() -> io::Result<CargoMetadata> {
-    let cargo: OsString = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let output = Command::new(cargo)
-        .arg("metadata")
-        .arg("--no-deps")
-        .arg("--format-version=1")
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(io::Error::other(format!("cargo metadata failed: {stderr}")));
+fn fetch_cargo_metadata() -> io::Result<Metadata> {
+    let mut command = MetadataCommand::new();
+    if let Some(cargo) = std::env::var_os("CARGO").filter(|value| !value.is_empty()) {
+        command.cargo_path(cargo);
     }
-    serde_json::from_slice(&output.stdout)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+    command.no_deps();
+    command.exec().map_err(io::Error::other)
 }
 
-fn extend_fs_access(policy: &mut Policy, metadata: &CargoMetadata) -> io::Result<()> {
+fn extend_fs_access(policy: &mut Policy, metadata: &Metadata) -> io::Result<()> {
     if policy.fs_default() != FsDefault::Strict {
         return Ok(());
     }
@@ -275,7 +268,8 @@ fn maybe_extend_fs_write(policy: &mut Policy, path: &Path) {
     }
 }
 
-fn normalize_path(path: &Path) -> PathBuf {
+fn normalize_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
     match path.canonicalize() {
         Ok(canonical) => canonical,
         Err(_) => {
@@ -315,26 +309,19 @@ fn contains_path<'a>(paths: impl Iterator<Item = &'a PathBuf>, candidate: &Path)
     false
 }
 
-fn apply_manifest_permissions(policy: &mut Policy, metadata: &CargoMetadata) -> io::Result<()> {
-    let member_ids: HashSet<&str> = metadata
-        .workspace_members
-        .iter()
-        .map(String::as_str)
-        .collect();
+fn apply_manifest_permissions(policy: &mut Policy, metadata: &Metadata) -> io::Result<()> {
+    let member_ids: HashSet<&PackageId> = metadata.workspace_members.iter().collect();
 
     for package in &metadata.packages {
-        if !member_ids.contains(package.id.as_str()) {
+        if !member_ids.contains(&package.id) {
             continue;
         }
         let Some(manifest_dir) = package.manifest_path.parent() else {
             continue;
         };
-        let manifest_dir = normalize_path(manifest_dir);
+        let manifest_dir = normalize_path(manifest_dir.to_path_buf());
 
-        let Some(package_metadata) = package.metadata.as_ref() else {
-            continue;
-        };
-        let Some(warden) = package_metadata.cargo_warden.as_ref() else {
+        let Some(warden) = package.metadata.get("cargo-warden") else {
             continue;
         };
         if warden.is_null() {
@@ -361,7 +348,7 @@ fn apply_manifest_permissions(policy: &mut Policy, metadata: &CargoMetadata) -> 
     Ok(())
 }
 
-fn apply_trust_permissions(policy: &mut Policy, metadata: &CargoMetadata) -> io::Result<()> {
+fn apply_trust_permissions(policy: &mut Policy, metadata: &Metadata) -> io::Result<()> {
     let Some(db) = load_trust_db()? else {
         return Ok(());
     };
@@ -369,29 +356,17 @@ fn apply_trust_permissions(policy: &mut Policy, metadata: &CargoMetadata) -> io:
         return Ok(());
     }
 
-    let member_ids: HashSet<&str> = metadata
-        .workspace_members
-        .iter()
-        .map(String::as_str)
-        .collect();
+    let member_ids: HashSet<&PackageId> = metadata.workspace_members.iter().collect();
 
     for package in &metadata.packages {
-        if !member_ids.contains(package.id.as_str()) {
+        if !member_ids.contains(&package.id) {
             continue;
         }
         let Some(manifest_dir) = package.manifest_path.parent() else {
             continue;
         };
-        let manifest_dir = normalize_path(manifest_dir);
-        let version = Version::parse(&package.version).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "failed to parse version '{}' for package '{}': {err}",
-                    package.version, package.name
-                ),
-            )
-        })?;
+        let manifest_dir = normalize_path(manifest_dir.to_path_buf());
+        let version = package.version.clone();
 
         for entry in &db.entries {
             if entry.package != package.name {
@@ -516,7 +491,7 @@ fn apply_permission_list<'a, I>(
     policy: &mut Policy,
     permissions: I,
     manifest_dir: &Path,
-    metadata: &CargoMetadata,
+    metadata: &Metadata,
     source: &PermissionSource<'_>,
 ) -> io::Result<()>
 where
@@ -654,10 +629,10 @@ where
     Ok(())
 }
 
-fn resolve_fs_path(value: &str, manifest_dir: &Path, metadata: &CargoMetadata) -> PathBuf {
+fn resolve_fs_path(value: &str, manifest_dir: &Path, metadata: &Metadata) -> PathBuf {
     match value {
-        "workspace" => normalize_path(metadata.workspace_root.as_path()),
-        "target" => normalize_path(metadata.target_directory.as_path()),
+        "workspace" => normalize_path(metadata.workspace_root.clone().into_std_path_buf()),
+        "target" => normalize_path(metadata.target_directory.clone().into_std_path_buf()),
         "manifest" | "package" => normalize_path(manifest_dir),
         other => {
             let path = PathBuf::from(other);
@@ -760,27 +735,23 @@ impl TrustEntry {
     }
 }
 
-fn workspace_member_from_dir(metadata: &CargoMetadata) -> io::Result<Option<String>> {
-    let member_ids: HashSet<&str> = metadata
-        .workspace_members
-        .iter()
-        .map(String::as_str)
-        .collect();
+fn workspace_member_from_dir(metadata: &Metadata) -> io::Result<Option<String>> {
+    let member_ids: HashSet<&PackageId> = metadata.workspace_members.iter().collect();
     let cwd = std::env::current_dir()?;
     let canonical_cwd = cwd.canonicalize().unwrap_or(cwd);
     let mut best_match: Option<(String, usize, bool)> = None;
 
     for pkg in &metadata.packages {
-        if !member_ids.contains(pkg.id.as_str()) {
+        if !member_ids.contains(&pkg.id) {
             continue;
         }
-        let manifest_path = PathBuf::from(&pkg.manifest_path);
-        let Some(manifest_dir) = manifest_path.parent() else {
+        let Some(manifest_dir) = pkg.manifest_path.parent() else {
             continue;
         };
+        let manifest_dir = manifest_dir.as_std_path().to_path_buf();
         let canonical_dir = manifest_dir
             .canonicalize()
-            .unwrap_or_else(|_| manifest_dir.to_path_buf());
+            .unwrap_or_else(|_| manifest_dir.clone());
         if !canonical_cwd.starts_with(&canonical_dir) {
             continue;
         }
@@ -858,14 +829,14 @@ struct BuildPaths {
     out_dirs: Vec<PathBuf>,
 }
 
-fn detect_build_paths(metadata: &CargoMetadata) -> BuildPaths {
-    let workspace_root = metadata.workspace_root.clone();
+fn detect_build_paths(metadata: &Metadata) -> BuildPaths {
+    let workspace_root = metadata.workspace_root.clone().into_std_path_buf();
 
     let mut target_dirs = Vec::new();
     if let Some(env_target) = env_path("CARGO_TARGET_DIR") {
         target_dirs.push(env_target);
     }
-    target_dirs.push(metadata.target_directory.clone());
+    target_dirs.push(metadata.target_directory.clone().into_std_path_buf());
     dedup_paths(&mut target_dirs);
 
     let mut out_dirs = Vec::new();
@@ -895,32 +866,6 @@ fn env_path(var: &str) -> Option<PathBuf> {
 fn dedup_paths(paths: &mut Vec<PathBuf>) {
     let mut seen = HashSet::new();
     paths.retain(|path| seen.insert(path.clone()));
-}
-
-#[derive(Deserialize)]
-struct CargoMetadata {
-    packages: Vec<CargoPackage>,
-    workspace_members: Vec<String>,
-    workspace_root: PathBuf,
-    target_directory: PathBuf,
-    #[serde(default)]
-    _metadata: Value,
-}
-
-#[derive(Deserialize)]
-struct CargoPackage {
-    id: String,
-    name: String,
-    version: String,
-    manifest_path: PathBuf,
-    #[serde(default)]
-    metadata: Option<CargoPackageMetadata>,
-}
-
-#[derive(Default, Deserialize)]
-struct CargoPackageMetadata {
-    #[serde(rename = "cargo-warden")]
-    cargo_warden: Option<Value>,
 }
 
 #[cfg(test)]
@@ -1167,8 +1112,8 @@ deny = ["execve"]
         assert_eq!(exec.len(), 3);
 
         let metadata = super::fetch_cargo_metadata().unwrap();
-        let workspace = super::normalize_path(&metadata.workspace_root);
-        let target = super::normalize_path(&metadata.target_directory);
+        let workspace = super::normalize_path(metadata.workspace_root.clone().into_std_path_buf());
+        let target = super::normalize_path(metadata.target_directory.clone().into_std_path_buf());
         let fs_rules = fs_entries(&isolation.maps_layout);
         assert!(
             fs_rules
@@ -1197,8 +1142,8 @@ deny = ["execve"]
         assert!(isolation.maps_layout.net_rules.is_empty());
 
         let metadata = super::fetch_cargo_metadata().unwrap();
-        let workspace = super::normalize_path(&metadata.workspace_root);
-        let target = super::normalize_path(&metadata.target_directory);
+        let workspace = super::normalize_path(metadata.workspace_root.clone().into_std_path_buf());
+        let target = super::normalize_path(metadata.target_directory.clone().into_std_path_buf());
         let fs_rules = fs_entries(&isolation.maps_layout);
         assert!(
             fs_rules
@@ -1227,8 +1172,8 @@ deny = ["execve"]
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
 
         let metadata = super::fetch_cargo_metadata().unwrap();
-        let workspace = super::normalize_path(&metadata.workspace_root);
-        let target = super::normalize_path(&metadata.target_directory);
+        let workspace = super::normalize_path(metadata.workspace_root.clone().into_std_path_buf());
+        let target = super::normalize_path(metadata.target_directory.clone().into_std_path_buf());
         let fs_rules = fs_entries(&isolation.maps_layout);
         assert!(
             fs_rules
@@ -1295,8 +1240,8 @@ exec.default = "allow"
         init_cargo_package(dir.path());
 
         let metadata = super::fetch_cargo_metadata().unwrap();
-        let workspace = metadata.workspace_root.to_string_lossy().into_owned();
-        let target = metadata.target_directory.to_string_lossy().into_owned();
+        let workspace = metadata.workspace_root.as_str().to_string();
+        let target = metadata.target_directory.as_str().to_string();
 
         write(
             "warden.toml",
@@ -1338,8 +1283,8 @@ exec.default = "allow"
         drop(out_guard);
 
         let metadata = super::fetch_cargo_metadata().unwrap();
-        let workspace = super::normalize_path(&metadata.workspace_root);
-        let target = super::normalize_path(&metadata.target_directory);
+        let workspace = super::normalize_path(metadata.workspace_root.clone().into_std_path_buf());
+        let target = super::normalize_path(metadata.target_directory.clone().into_std_path_buf());
         let out_dir = super::normalize_path(&out_dir_path);
 
         let fs_rules = fs_entries(&isolation.maps_layout);
@@ -1402,7 +1347,7 @@ permissions = ["env:read:PROTOC"]
         let include_path = super::normalize_path(&include_dir);
         let workspace = super::normalize_path(dir.path());
         let metadata = super::fetch_cargo_metadata().unwrap();
-        let target = super::normalize_path(&metadata.target_directory);
+        let target = super::normalize_path(metadata.target_directory.clone().into_std_path_buf());
 
         assert!(fs_rules.iter().any(|(path, access)| {
             path == &include_path.to_string_lossy() && *access == FS_READ
