@@ -1,6 +1,7 @@
 use aya::maps::{MapData, ring_buf::RingBuf};
 use bpf_api::{Event, UNIT_BUILD_SCRIPT, UNIT_LINKER, UNIT_OTHER, UNIT_PROC_MACRO, UNIT_RUSTC};
 use cfg_if::cfg_if;
+use file_rotate::{ContentLimit, FileRotate, compression::Compression, suffix::AppendCount};
 use log::{info, warn};
 use prometheus::{Encoder, IntCounter, IntGaugeVec, Registry, TextEncoder};
 use std::convert::TryFrom;
@@ -28,90 +29,78 @@ const ACTION_CONNECT: u8 = 4;
 const VERDICT_DENIED: u8 = 1;
 
 static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
+macro_rules! register_metric {
+    ($macro:ident, $($args:expr),+ $(,)?) => {{
+        prometheus::$macro!($($args),+, &*REGISTRY).expect("metric registration failed")
+    }};
+}
+
 static EVENT_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
-    let c = IntCounter::new("warden_events_total", "Total number of events processed").unwrap();
-    REGISTRY.register(Box::new(c.clone())).unwrap();
-    c
+    register_metric!(
+        register_int_counter_with_registry,
+        "warden_events_total",
+        "Total number of events processed",
+    )
 });
 static DENIED_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
-    let c = IntCounter::new(
+    register_metric!(
+        register_int_counter_with_registry,
         "warden_denied_events_total",
         "Total number of denied events",
     )
-    .unwrap();
-    REGISTRY.register(Box::new(c.clone())).unwrap();
-    c
 });
 static VIOLATIONS_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
-    let c = IntCounter::new(
+    register_metric!(
+        register_int_counter_with_registry,
         "violations_total",
         "Total number of policy violations observed",
     )
-    .unwrap();
-    REGISTRY.register(Box::new(c.clone())).unwrap();
-    c
 });
 static BLOCKED_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
-    let c = IntCounter::new(
+    register_metric!(
+        register_int_counter_with_registry,
         "blocked_total",
         "Total number of operations blocked by enforcement",
     )
-    .unwrap();
-    REGISTRY.register(Box::new(c.clone())).unwrap();
-    c
 });
 static ALLOWED_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
-    let c = IntCounter::new("allowed_total", "Total number of operations allowed").unwrap();
-    REGISTRY.register(Box::new(c.clone())).unwrap();
-    c
+    register_metric!(
+        register_int_counter_with_registry,
+        "allowed_total",
+        "Total number of operations allowed",
+    )
 });
 static IO_READ_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    let g = IntGaugeVec::new(
-        prometheus::Opts::new(
-            "io_read_bytes_by_unit",
-            "Cumulative read IO usage in bytes grouped by unit",
-        ),
+    register_metric!(
+        register_int_gauge_vec_with_registry,
+        "io_read_bytes_by_unit",
+        "Cumulative read IO usage in bytes grouped by unit",
         &["unit"],
     )
-    .unwrap();
-    REGISTRY.register(Box::new(g.clone())).unwrap();
-    g
 });
 static IO_WRITE_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    let g = IntGaugeVec::new(
-        prometheus::Opts::new(
-            "io_write_bytes_by_unit",
-            "Cumulative write IO usage in bytes grouped by unit",
-        ),
+    register_metric!(
+        register_int_gauge_vec_with_registry,
+        "io_write_bytes_by_unit",
+        "Cumulative write IO usage in bytes grouped by unit",
         &["unit"],
     )
-    .unwrap();
-    REGISTRY.register(Box::new(g.clone())).unwrap();
-    g
 });
 static CPU_TIME_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    let g = IntGaugeVec::new(
-        prometheus::Opts::new(
-            "cpu_time_ms_by_unit",
-            "CPU time spent in milliseconds grouped by unit",
-        ),
+    register_metric!(
+        register_int_gauge_vec_with_registry,
+        "cpu_time_ms_by_unit",
+        "CPU time spent in milliseconds grouped by unit",
         &["unit"],
     )
-    .unwrap();
-    REGISTRY.register(Box::new(g.clone())).unwrap();
-    g
 });
 static PAGE_FAULTS_GAUGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
-    let g = IntGaugeVec::new(
-        prometheus::Opts::new(
-            "page_faults_by_unit",
-            "Number of page faults grouped by unit",
-        ),
+    register_metric!(
+        register_int_gauge_vec_with_registry,
+        "page_faults_by_unit",
+        "Number of page faults grouped by unit",
         &["unit"],
     )
-    .unwrap();
-    REGISTRY.register(Box::new(g.clone())).unwrap();
-    g
 });
 
 static UNIT_LABELS: LazyLock<Mutex<HashMap<u32, &'static str>>> =
@@ -321,6 +310,45 @@ pub struct RotationConfig {
     pub retain: usize,
 }
 
+enum EventLogWriter {
+    Plain(File),
+    Rotating(FileRotate<AppendCount>),
+}
+
+impl EventLogWriter {
+    fn plain(file: File) -> Self {
+        Self::Plain(file)
+    }
+
+    fn rotating(path: &Path, cfg: &RotationConfig) -> Self {
+        let limit = usize::try_from(cfg.max_bytes).unwrap_or(usize::MAX).max(1);
+        let writer = FileRotate::new(
+            path,
+            AppendCount::new(cfg.retain),
+            ContentLimit::Bytes(limit),
+            Compression::None,
+            None,
+        );
+        Self::Rotating(writer)
+    }
+}
+
+impl Write for EventLogWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            EventLogWriter::Plain(file) => file.write(buf),
+            EventLogWriter::Rotating(writer) => writer.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            EventLogWriter::Plain(file) => file.flush(),
+            EventLogWriter::Rotating(writer) => writer.flush(),
+        }
+    }
+}
+
 /// Agent runtime configuration.
 #[derive(Debug, Default, Clone)]
 pub struct Config {
@@ -442,7 +470,16 @@ pub fn run_with_shutdown(
         let _ = j.install();
     }
     let path = jsonl.to_path_buf();
-    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    let mut writer = match cfg.rotation.as_ref() {
+        Some(rotation) => {
+            OpenOptions::new().create(true).append(true).open(&path)?;
+            EventLogWriter::rotating(&path, rotation)
+        }
+        None => {
+            let file = OpenOptions::new().create(true).append(true).open(&path)?;
+            EventLogWriter::plain(file)
+        }
+    };
     configure_metrics_storage(&path)?;
     if let Some(port) = cfg.metrics_port {
         start_metrics_server(port);
@@ -479,21 +516,9 @@ pub fn run_with_shutdown(
             let record = event_record_from_event(event);
             cfg_if! {
                 if #[cfg(feature = "grpc")] {
-                    write_outputs(
-                        &record,
-                        &mut file,
-                        &path,
-                        cfg.rotation.as_ref(),
-                        Some(&tx),
-                    )?;
+                    write_outputs(&record, &mut writer, Some(&tx))?;
                 } else {
-                    write_outputs(
-                        &record,
-                        &mut file,
-                        &path,
-                        cfg.rotation.as_ref(),
-                        None,
-                    )?;
+                    write_outputs(&record, &mut writer, None)?;
                 }
             }
         }
@@ -538,18 +563,14 @@ fn start_metrics_server(port: u16) {
 #[cfg_attr(not(feature = "grpc"), allow(unused_variables))]
 fn write_outputs(
     record: &EventRecord,
-    file: &mut File,
-    path: &Path,
-    rotation: Option<&RotationConfig>,
+    writer: &mut EventLogWriter,
     tx: Option<EventSender<'_>>,
 ) -> Result<(), anyhow::Error> {
     let json = serde_json::to_string(record)?;
-    writeln!(file, "{}", json)?;
+    writeln!(writer, "{}", json)?;
+    writer.flush()?;
     info!("{}", json);
     record_event_metrics(record)?;
-    if let Some(cfg) = rotation {
-        rotate_if_needed(file, path, cfg)?;
-    }
     if let Some(msg) = diagnostic(record) {
         warn!("{}", msg);
     }
@@ -558,40 +579,6 @@ fn write_outputs(
         let _ = sender.send(record.clone());
     }
     Ok(())
-}
-
-fn rotate_if_needed(
-    file: &mut File,
-    path: &Path,
-    cfg: &RotationConfig,
-) -> Result<(), anyhow::Error> {
-    file.flush()?;
-    if file.metadata()?.len() <= cfg.max_bytes {
-        return Ok(());
-    }
-    rotate_files(path, cfg.retain)?;
-    *file = OpenOptions::new().create(true).append(true).open(path)?;
-    Ok(())
-}
-
-fn rotate_files(base: &Path, retain: usize) -> Result<(), anyhow::Error> {
-    let last = rotated_path(base, retain);
-    if last.exists() {
-        std::fs::remove_file(&last)?;
-    }
-    for i in (1..retain).rev() {
-        let from = rotated_path(base, i);
-        if from.exists() {
-            let to = rotated_path(base, i + 1);
-            std::fs::rename(from, to)?;
-        }
-    }
-    std::fs::rename(base, rotated_path(base, 1))?;
-    Ok(())
-}
-
-fn rotated_path(base: &Path, index: usize) -> PathBuf {
-    PathBuf::from(format!("{}.{index}", base.display()))
 }
 
 #[cfg(feature = "grpc")]
@@ -662,8 +649,8 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use std::{
-        fs::{self, File},
-        io::{Read, Seek, Write},
+        fs::{self, File, OpenOptions},
+        io::{Read, Write},
         net::{Shutdown, TcpListener, TcpStream},
         thread,
         time::Duration,
@@ -762,6 +749,7 @@ mod tests {
     #[test]
     #[serial]
     fn writes_jsonl_line() {
+        reset_all_metrics();
         let record = EventRecord {
             pid: 1,
             tgid: 21,
@@ -774,21 +762,28 @@ mod tests {
             path_or_addr: "/bin/echo".into(),
             needed_perm: String::new(),
         };
-        let mut tmp = NamedTempFile::new().unwrap();
+        let tmp = NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
+        let mut writer = EventLogWriter::plain(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .unwrap(),
+        );
         cfg_if! {
             if #[cfg(feature = "grpc")] {
                 use tokio::sync::broadcast;
                 let (tx, _) = broadcast::channel(1);
-                write_outputs(&record, tmp.as_file_mut(), &path, None, Some(&tx)).unwrap();
+                write_outputs(&record, &mut writer, Some(&tx)).unwrap();
             } else {
-                write_outputs(&record, tmp.as_file_mut(), &path, None, None).unwrap();
+                write_outputs(&record, &mut writer, None).unwrap();
             }
         }
-        tmp.as_file_mut().rewind().unwrap();
-        let mut content = String::new();
-        tmp.as_file_mut().read_to_string(&mut content).unwrap();
+        drop(writer);
+        let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("\"pid\":1"));
+        reset_all_metrics();
     }
 
     #[test]
@@ -832,15 +827,22 @@ mod tests {
             path_or_addr: "/bin/deny".into(),
             needed_perm: "allow.exec.allowed".into(),
         };
-        let mut tmp = NamedTempFile::new().unwrap();
+        let tmp = NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
+        let mut writer = EventLogWriter::plain(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .unwrap(),
+        );
         cfg_if! {
             if #[cfg(feature = "grpc")] {
                 use tokio::sync::broadcast;
                 let (tx, _) = broadcast::channel(1);
-                write_outputs(&record, tmp.as_file_mut(), &path, None, Some(&tx)).unwrap();
+                write_outputs(&record, &mut writer, Some(&tx)).unwrap();
             } else {
-                write_outputs(&record, tmp.as_file_mut(), &path, None, None).unwrap();
+                write_outputs(&record, &mut writer, None).unwrap();
             }
         }
         assert_eq!(EVENT_COUNTER.get(), 1);
@@ -848,6 +850,25 @@ mod tests {
         assert_eq!(VIOLATIONS_COUNTER.get(), 1);
         assert_eq!(BLOCKED_COUNTER.get(), 1);
         assert_eq!(ALLOWED_COUNTER.get(), 0);
+    }
+
+    #[test]
+    #[serial]
+    fn metric_helper_registers_counter() {
+        reset_all_metrics();
+        let counter = register_metric!(
+            register_int_counter_with_registry,
+            "helper_counter_total",
+            "Helper counter registered via macro",
+        );
+        counter.inc_by(2);
+        let families = REGISTRY.gather();
+        let helper_family = families
+            .iter()
+            .find(|family| family.name() == "helper_counter_total");
+        assert!(helper_family.is_some());
+        assert_eq!(counter.get(), 2);
+        reset_all_metrics();
     }
 
     #[test]
@@ -860,8 +881,15 @@ mod tests {
         start_metrics_server(port);
         thread::sleep(Duration::from_millis(50));
 
-        let mut tmp = NamedTempFile::new().unwrap();
+        let tmp = NamedTempFile::new().unwrap();
         let path = tmp.path().to_path_buf();
+        let mut writer = EventLogWriter::plain(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .unwrap(),
+        );
 
         let denied_record = EventRecord {
             pid: 10,
@@ -875,7 +903,7 @@ mod tests {
             path_or_addr: "/bin/deny".into(),
             needed_perm: "allow.exec.allowed".into(),
         };
-        write_outputs(&denied_record, tmp.as_file_mut(), &path, None, None).unwrap();
+        write_outputs(&denied_record, &mut writer, None).unwrap();
 
         let allowed_record = EventRecord {
             pid: 11,
@@ -889,7 +917,7 @@ mod tests {
             path_or_addr: "/bin/allow".into(),
             needed_perm: String::new(),
         };
-        write_outputs(&allowed_record, tmp.as_file_mut(), &path, None, None).unwrap();
+        write_outputs(&allowed_record, &mut writer, None).unwrap();
 
         update_unit_resource_metrics(1, 1024, 2048, 500, 7);
         update_unit_resource_metrics(99, 1, 2, 3, 4);
@@ -914,6 +942,52 @@ mod tests {
         assert!(body.contains("cpu_time_ms_by_unit{unit=\"build_script\"} 500"));
         assert!(body.contains("page_faults_by_unit{unit=\"build_script\"} 7"));
         assert!(body.contains("io_read_bytes_by_unit{unit=\"99\"} 1"));
+    }
+
+    #[test]
+    #[serial]
+    fn rotating_writer_rolls_files() {
+        reset_all_metrics();
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("warden-events.jsonl");
+        let rotation = RotationConfig {
+            max_bytes: 200,
+            retain: 2,
+        };
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .unwrap();
+        let mut writer = EventLogWriter::rotating(&path, &rotation);
+
+        for idx in 0..3 {
+            let suffix = "x".repeat(200);
+            let payload = format!("/bin/cmd_{idx}_{suffix}");
+            let record = EventRecord {
+                pid: idx as u32,
+                tgid: idx as u32,
+                time_ns: idx as u64,
+                unit: 0,
+                action: ACTION_EXEC,
+                verdict: VERDICT_DENIED,
+                container_id: 0,
+                caps: 0,
+                path_or_addr: payload.clone(),
+                needed_perm: format!("allow.exec.{idx}_{suffix}"),
+            };
+            write_outputs(&record, &mut writer, None).unwrap();
+        }
+
+        drop(writer);
+        let rotated_one = path.with_extension("jsonl.1");
+        let rotated_two = path.with_extension("jsonl.2");
+        assert!(path.exists());
+        assert!(rotated_one.exists());
+        assert!(rotated_two.exists());
+        let rotated_content = fs::read_to_string(rotated_one).unwrap();
+        assert!(!rotated_content.is_empty());
+        reset_all_metrics();
     }
 
     #[test]

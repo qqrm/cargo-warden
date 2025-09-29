@@ -58,7 +58,7 @@ install_actionlint() {
 ensure_rustup_nightly() {
   if ! command -v rustup >/dev/null 2>&1; then
     echo "rustup is required to configure the nightly toolchain; please install rustup and re-run this script." >&2
-    return
+    return 1
   fi
 
   echo "Installing Rust nightly toolchain with rustfmt and clippy components..." >&2

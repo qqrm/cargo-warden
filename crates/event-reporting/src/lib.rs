@@ -1,6 +1,7 @@
-use sarif_rust::builder::{ResultBuilder, RunBuilder};
-use sarif_rust::types::{ArtifactLocation, Level, Location, PhysicalLocation};
-use sarif_rust::{SarifLog, SarifLogBuilder};
+use sarif::{
+    ArtifactLocation, Level, Location, PhysicalLocation, ResultBuilder, RunBuilder, SarifLog,
+    SarifLogBuilder,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -83,23 +84,25 @@ impl fmt::Display for EventRecord {
 
 /// Builds a SARIF log from a slice of events.
 pub fn sarif_from_events(events: &[EventRecord]) -> SarifLog {
-    let mut run_builder = RunBuilder::with_tool("cargo-warden", None::<String>);
     let mut seen_artifacts = BTreeSet::new();
+    let mut run_builder = RunBuilder::with_tool("cargo-warden", None::<String>);
 
     for event in events {
-        if seen_artifacts.insert(event.path_or_addr.clone()) {
-            run_builder = run_builder.add_file_artifact(event.path_or_addr.clone());
+        let path = event.path_or_addr.clone();
+
+        if seen_artifacts.insert(path.clone()) {
+            run_builder = run_builder.add_file_artifact(path.clone());
         }
+
+        let location = Location::with_physical_location(PhysicalLocation::with_artifact_location(
+            ArtifactLocation::new(path.clone()),
+        ));
 
         let level = if event.verdict == 1 {
             Level::Error
         } else {
             Level::Note
         };
-
-        let location = Location::with_physical_location(PhysicalLocation::with_artifact_location(
-            ArtifactLocation::new(event.path_or_addr.clone()),
-        ));
 
         let result = ResultBuilder::with_text_message(event.to_string())
             .with_rule_id(event.action.to_string())
@@ -110,7 +113,7 @@ pub fn sarif_from_events(events: &[EventRecord]) -> SarifLog {
         run_builder = run_builder.add_result(result);
     }
 
-    SarifLogBuilder::new()
+    SarifLogBuilder::v2_1_0()
         .add_run(run_builder.build())
         .build_unchecked()
 }
@@ -118,14 +121,16 @@ pub fn sarif_from_events(events: &[EventRecord]) -> SarifLog {
 /// Writes a SARIF log to the given path.
 pub fn export_sarif(events: &[EventRecord], path: &Path) -> io::Result<()> {
     let sarif = sarif_from_events(events);
-    let content = sarif_rust::to_string_pretty(&sarif).map_err(io::Error::other)?;
+    let content = sarif::to_string_pretty(&sarif).map_err(io::Error::other)?;
     std::fs::write(path, content)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sarif_rust::{SarifLog, from_str, types::Level};
+    use jsonschema::{Draft, JSONSchema};
+    use sarif::{self, Level, SarifLog};
+    use serde_json::json;
     use std::fs::File;
     use std::io::Read;
     use tempfile::NamedTempFile;
@@ -145,9 +150,10 @@ mod tests {
             needed_perm: "allow.fs.read_extra".into(),
         }];
         let sarif = sarif_from_events(&records);
-        assert_eq!(sarif.version, "2.1.0");
+        assert_eq!(sarif.version, sarif::SARIF_VERSION);
 
         let run = sarif.runs.first().expect("run present");
+        assert_eq!(run.tool.driver.name, "cargo-warden");
         let results = run.results.as_ref().expect("results present");
         assert_eq!(results.len(), 1);
 
@@ -166,8 +172,8 @@ mod tests {
             .and_then(|locations| locations.first())
             .and_then(|location| location.physical_location.as_ref())
             .and_then(|physical| physical.artifact_location.as_ref())
-            .and_then(|artifact| artifact.uri.as_ref());
-        assert_eq!(location_uri, Some(&records[0].path_or_addr));
+            .and_then(|artifact| artifact.uri.as_deref());
+        assert_eq!(location_uri, Some(records[0].path_or_addr.as_str()));
     }
 
     #[test]
@@ -192,23 +198,64 @@ mod tests {
             .unwrap()
             .read_to_string(&mut content)
             .unwrap();
-        let sarif: SarifLog = from_str(&content).unwrap();
+        let sarif: SarifLog = sarif::from_str(&content).unwrap();
         let run = sarif.runs.first().expect("run present");
         let results = run.results.as_ref().expect("results present");
         let result = results.first().expect("result present");
-        let expected_message = record.to_string();
         assert_eq!(
             result.message.text.as_deref(),
-            Some(expected_message.as_str())
+            Some(record.to_string().as_str())
         );
 
         let artifacts = run.artifacts.as_ref().expect("artifacts present");
         let artifact_uri = artifacts
             .iter()
             .filter_map(|artifact| artifact.location.as_ref())
-            .filter_map(|location| location.uri.as_ref())
-            .find(|uri| *uri == &record.path_or_addr);
+            .filter_map(|location| location.uri.as_deref())
+            .find(|uri| *uri == record.path_or_addr);
         assert!(artifact_uri.is_some());
+
+        let schema = json!({
+            "type": "object",
+            "required": ["version", "runs"],
+            "properties": {
+                "version": { "const": "2.1.0" },
+                "runs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "required": ["tool"],
+                        "properties": {
+                            "tool": {
+                                "type": "object",
+                                "required": ["driver"],
+                                "properties": {
+                                    "driver": {
+                                        "type": "object",
+                                        "required": ["name"],
+                                        "properties": {
+                                            "name": { "type": "string" }
+                                        }
+                                    }
+                                }
+                            },
+                            "results": { "type": "array" }
+                        }
+                    }
+                }
+            }
+        });
+
+        let compiled = JSONSchema::options()
+            .with_draft(Draft::Draft7)
+            .compile(&schema)
+            .expect("schema compiles");
+        let sarif_value: serde_json::Value = serde_json::from_str(&content).unwrap();
+        if let Err(errors) = compiled.validate(&sarif_value) {
+            let details: Vec<String> = errors.map(|err| err.to_string()).collect();
+            panic!("schema validation failed: {details:?}");
+        }
     }
 
     #[test]

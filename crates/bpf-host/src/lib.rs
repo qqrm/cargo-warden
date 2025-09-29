@@ -72,6 +72,10 @@ pub mod maps {
         pub const fn new() -> Self {
             Self
         }
+
+        /// Clears the dummy ring buffer.
+        #[allow(clippy::unused_self)]
+        pub fn clear(&self) {}
     }
 
     /// Simplified hash map implementation for host-based tests.
