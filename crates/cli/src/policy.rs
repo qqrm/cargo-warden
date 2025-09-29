@@ -1,4 +1,5 @@
 use cargo_metadata::{Metadata, MetadataCommand, PackageId};
+use directories::ProjectDirs;
 use policy_core::{FsDefault, Mode, Policy, WorkspacePolicy};
 use qqrm_policy_compiler::{self, CompiledPolicy, MapsLayout};
 use semver::{Version, VersionReq};
@@ -674,26 +675,8 @@ fn trust_db_path() -> Option<PathBuf> {
         return Some(PathBuf::from(explicit));
     }
 
-    let base = if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME") {
-        if dir.is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(dir))
-        }
-    } else if let Some(home) = std::env::var_os("HOME") {
-        if home.is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(home).join(".config"))
-        }
-    } else {
-        None
-    }?;
-
-    let mut path = base;
-    path.push("cargo-warden");
-    path.push("trust.json");
-    Some(path)
+    let dirs = ProjectDirs::from("", "", "cargo-warden")?;
+    Some(dirs.config_dir().join("trust.json"))
 }
 
 #[derive(Deserialize)]
