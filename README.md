@@ -4,7 +4,7 @@
 
 The quickstart covers environment setup, policy enforcement, and log inspection steps at a glance.
 
-1. Run `./repo-setup.sh` to install toolchains and dependencies.
+1. Run `./scripts/setup/repo-setup.sh` to install toolchains and dependencies.
 2. Apply a policy such as `warden.toml` and execute builds with `cargo warden --policy warden.toml build`.
 3. Inspect audit events via `cargo warden --observe test` or your preferred logging pipeline.
 
@@ -83,3 +83,8 @@ wrkflw run .github/workflows/CI.yml
 Use `scripts/prune_branches.sh` to list feature branches that have been inactive for more than 48 hours. Pass `--prune` to
 delete the remote branches once you have reviewed the list. Export `CARGO_WARDEN_PRUNE_AGE` (in seconds) to customise the age
 threshold.
+
+## Documentation Index
+
+All supplemental guides, policies, and security notes now live under `DOCS/`. Start with `DOCS/INDEX.md` for a curated map of
+the available references.

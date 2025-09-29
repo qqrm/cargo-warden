@@ -7,7 +7,7 @@ Thank you for helping us harden cargo-warden. This document explains how to set 
 1. Install the required toolchain and repository tooling by running:
 
 ```bash
-./repo-setup.sh
+./scripts/setup/repo-setup.sh
 ```
 
 2. Configure GitHub CLI access so you can inspect workflows and automation:
