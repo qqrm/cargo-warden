@@ -18,12 +18,11 @@ use bpf_host::{
     maps::{DummyRingBuf, TestArray, TestHashMap},
 };
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+use core::ffi::{CStr, c_void};
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 use core::marker::PhantomData;
-use core::{
-    ffi::{CStr, c_void},
-    marker::PhantomData,
-    mem::size_of,
-};
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+use core::mem::size_of;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const _EVENT_SIZE: usize = size_of::<Event>();
