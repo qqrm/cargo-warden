@@ -113,15 +113,6 @@ where
         }
     }
 
-    pub(crate) fn extend<I>(&mut self, iter: I)
-    where
-        I: IntoIterator<Item = T>,
-    {
-        for value in iter {
-            self.insert(value);
-        }
-    }
-
     pub(crate) fn merge(&mut self, other: Self) {
         self.values.extend(other.values);
         self.duplicates.extend(other.duplicates);
@@ -173,7 +164,9 @@ macro_rules! define_duplicate_rules {
             where
                 I: IntoIterator<Item = $value_ty>,
             {
-                self.$field.extend(iter);
+                for value in iter {
+                    self.insert_raw(value);
+                }
             }
 
             pub(crate) fn merge(&mut self, other: $name) {
@@ -217,7 +210,9 @@ macro_rules! define_duplicate_rules {
             where
                 I: IntoIterator<Item = $value_ty>,
             {
-                self.$field.extend(iter);
+                for value in iter {
+                    self.insert_raw(value);
+                }
             }
 
             pub(crate) fn merge(&mut self, other: $name) {
