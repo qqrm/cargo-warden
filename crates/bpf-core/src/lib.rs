@@ -431,7 +431,7 @@ fn clear_workload_units_map() {
 
 #[cfg(any(test, feature = "fuzzing"))]
 fn clear_events_map() {
-    let _ = &EVENTS;
+    EVENTS.clear();
 }
 
 #[cfg(any(test, feature = "fuzzing"))]
