@@ -1,9 +1,10 @@
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufReader};
 use std::path::Path;
 
 use event_reporting::EventRecord;
+use serde_jsonlines::JsonLinesReader;
 
 #[derive(Debug, Default)]
 pub(crate) struct ReadEventsResult {
@@ -21,15 +22,18 @@ pub(crate) fn read_recent_events(path: &Path, limit: usize) -> io::Result<ReadEv
     let mut events = VecDeque::new();
     let mut skipped = 0usize;
 
-    for line in reader.lines() {
-        let line = line?;
-        if let Ok(event) = serde_json::from_str::<EventRecord>(&line) {
-            if events.len() == limit {
-                events.pop_front();
+    for record in JsonLinesReader::new(reader).read_all::<EventRecord>() {
+        match record {
+            Ok(event) => {
+                if events.len() == limit {
+                    events.pop_front();
+                }
+                events.push_back(event);
             }
-            events.push_back(event);
-        } else {
-            skipped += 1;
+            Err(err) if is_deserialization_error(&err) => {
+                skipped += 1;
+            }
+            Err(err) => return Err(err),
         }
     }
 
@@ -44,6 +48,14 @@ pub(crate) fn read_recent_events(path: &Path, limit: usize) -> io::Result<ReadEv
         events: events.into_iter().collect(),
         skipped,
     })
+}
+
+fn is_deserialization_error(err: &io::Error) -> bool {
+    err.kind() == io::ErrorKind::InvalidData
+        && err
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<serde_json::Error>())
+            .is_some()
 }
 
 #[cfg(test)]

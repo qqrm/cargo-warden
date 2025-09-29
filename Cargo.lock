@@ -1271,6 +1271,7 @@ dependencies = [
  "qqrm-testkits",
  "semver",
  "serde",
+ "serde-jsonlines",
  "serde_json",
  "serial_test",
  "tempfile",
@@ -1581,6 +1582,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad"
 dependencies = [
  "serde_derive",
+]
+
+[[package]]
+name = "serde-jsonlines"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "013e069239d98648ea43a9c01845b381445e88de08b5a895ef9302e3bffde03d"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
