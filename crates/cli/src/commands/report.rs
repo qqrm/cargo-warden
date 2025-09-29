@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use event_reporting::{EventRecord, METRICS_SNAPSHOT_FILE, MetricsSnapshot, export_sarif};
+use itertools::Itertools;
 use serde::Serialize;
 
 use crate::commands::{ReadEventsResult, read_recent_events};
@@ -36,29 +37,39 @@ struct ReportStatistics {
 
 impl ReportStatistics {
     fn from_events(events: &[EventRecord]) -> Self {
-        let mut stats = Self::default();
-        for event in events {
-            match event.verdict {
-                0 => {
-                    stats.allowed += 1;
-                    stats
-                        .per_unit
-                        .entry(u32::from(event.unit))
-                        .or_default()
-                        .allowed += 1;
-                }
-                1 => {
-                    stats.denied += 1;
-                    stats
-                        .per_unit
-                        .entry(u32::from(event.unit))
-                        .or_default()
-                        .denied += 1;
-                }
-                _ => {}
-            }
+        let (allowed, denied) = events
+            .iter()
+            .fold((0, 0), |(allowed, denied), event| match event.verdict {
+                0 => (allowed + 1, denied),
+                1 => (allowed, denied + 1),
+                _ => (allowed, denied),
+            });
+
+        let per_unit = events
+            .iter()
+            .filter(|event| matches!(event.verdict, 0 | 1))
+            .sorted_by_key(|event| event.unit)
+            .group_by(|event| event.unit)
+            .into_iter()
+            .map(|(unit, unit_events)| {
+                let stats = unit_events.fold(UnitStatistics::default(), |mut acc, event| {
+                    match event.verdict {
+                        0 => acc.allowed += 1,
+                        1 => acc.denied += 1,
+                        _ => {}
+                    }
+                    acc
+                });
+                (u32::from(unit), stats)
+            })
+            .collect();
+
+        Self {
+            allowed,
+            denied,
+            per_unit,
+            ..Self::default()
         }
-        stats
     }
 }
 
@@ -129,37 +140,58 @@ fn export_text<W: Write>(
     writeln!(writer, "Denied events: {}", stats.denied)?;
     writeln!(writer, "Malformed events skipped: {}", stats.skipped_events)?;
     writeln!(writer, "Per-unit breakdown:")?;
-    for (unit, unit_stats) in &stats.per_unit {
+    if !stats.per_unit.is_empty() {
         writeln!(
             writer,
-            "  unit {}: allowed={}, denied={}",
-            unit, unit_stats.allowed, unit_stats.denied
+            "{}",
+            stats
+                .per_unit
+                .iter()
+                .map(|(unit, unit_stats)| {
+                    format!(
+                        "  unit {}: allowed={}, denied={}",
+                        unit, unit_stats.allowed, unit_stats.denied
+                    )
+                })
+                .join("\n")
         )?;
     }
     match &stats.metrics {
         Some(metrics) => {
             writeln!(writer, "Metrics snapshot:")?;
-            writeln!(writer, "  allowed_total: {}", metrics.allowed_total)?;
-            writeln!(writer, "  denied_total: {}", metrics.denied_total)?;
-            writeln!(writer, "  violations_total: {}", metrics.violations_total)?;
-            writeln!(writer, "  blocked_total: {}", metrics.blocked_total)?;
+            writeln!(
+                writer,
+                "{}",
+                [
+                    format!("  allowed_total: {}", metrics.allowed_total),
+                    format!("  denied_total: {}", metrics.denied_total),
+                    format!("  violations_total: {}", metrics.violations_total),
+                    format!("  blocked_total: {}", metrics.blocked_total),
+                ]
+                .join("\n")
+            )?;
             writeln!(writer, "  Per-unit metrics:")?;
-            for (unit, unit_metrics) in &metrics.per_unit {
-                writeln!(writer, "    unit {}:", unit)?;
-                writeln!(writer, "      allowed: {}", unit_metrics.allowed)?;
-                writeln!(writer, "      denied: {}", unit_metrics.denied)?;
+            if !metrics.per_unit.is_empty() {
                 writeln!(
                     writer,
-                    "      io_read_bytes: {}",
-                    unit_metrics.io_read_bytes
+                    "{}",
+                    metrics
+                        .per_unit
+                        .iter()
+                        .map(|(unit, unit_metrics)| {
+                            [
+                                format!("    unit {}:", unit),
+                                format!("      allowed: {}", unit_metrics.allowed),
+                                format!("      denied: {}", unit_metrics.denied),
+                                format!("      io_read_bytes: {}", unit_metrics.io_read_bytes),
+                                format!("      io_write_bytes: {}", unit_metrics.io_write_bytes),
+                                format!("      cpu_time_ms: {}", unit_metrics.cpu_time_ms),
+                                format!("      page_faults: {}", unit_metrics.page_faults),
+                            ]
+                            .join("\n")
+                        })
+                        .join("\n")
                 )?;
-                writeln!(
-                    writer,
-                    "      io_write_bytes: {}",
-                    unit_metrics.io_write_bytes
-                )?;
-                writeln!(writer, "      cpu_time_ms: {}", unit_metrics.cpu_time_ms)?;
-                writeln!(writer, "      page_faults: {}", unit_metrics.page_faults)?;
             }
         }
         None => {
@@ -167,8 +199,12 @@ fn export_text<W: Write>(
         }
     }
     writeln!(writer)?;
-    for event in events {
-        writeln!(writer, "{event}")?;
+    if !events.is_empty() {
+        writeln!(
+            writer,
+            "{}",
+            events.iter().map(ToString::to_string).join("\n")
+        )?;
     }
     Ok(())
 }

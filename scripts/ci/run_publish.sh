@@ -6,22 +6,25 @@ if [[ ! "${interval}" =~ ^[0-9]+$ ]]; then
   interval="60"
 fi
 
-branch="$(git rev-parse --abbrev-ref HEAD)"
-if [[ "${branch}" != "main" ]]; then
-  echo "::warning::Publishing from non-main branch '${branch}'."
+ref_name="${GITHUB_REF_NAME:-}"
+if [[ -z "${ref_name}" ]]; then
+  ref_name="$(git describe --tags --exact-match 2>/dev/null || git rev-parse --abbrev-ref HEAD)"
 fi
 
 echo "::notice::Publishing crates to crates.io"
+echo "::notice::Publish ref: ${ref_name}"
 echo "::notice::Publish interval: ${interval}s"
 
 set -- \
-  --allow-branch "${branch}" \
-  --all \
+  --from-git \
   --skip-published \
   --no-verify \
-  -y
+  --yes
 if [[ "${interval}" != "0" ]]; then
   set -- "$@" --publish-interval "${interval}"
+fi
+if [[ -n "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+  set -- "$@" --token "${CARGO_REGISTRY_TOKEN}"
 fi
 
 cargo workspaces publish "$@"

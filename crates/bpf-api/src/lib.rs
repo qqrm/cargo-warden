@@ -1,5 +1,7 @@
 #![no_std]
 
+use static_assertions::const_assert_eq;
+
 /// Bit flag for read access.
 pub const FS_READ: u8 = 1;
 /// Bit flag for write access.
@@ -108,43 +110,10 @@ pub struct Event {
     pub needed_perm: [u8; 64],
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use core::mem::size_of;
-
-    #[test]
-    fn exec_allow_entry_size() {
-        assert_eq!(size_of::<ExecAllowEntry>(), 256);
-    }
-
-    #[test]
-    fn net_rule_size() {
-        assert_eq!(size_of::<NetRule>(), 20);
-    }
-
-    #[test]
-    fn net_rule_entry_size() {
-        assert_eq!(size_of::<NetRuleEntry>(), 24);
-    }
-
-    #[test]
-    fn net_parent_entry_size() {
-        assert_eq!(size_of::<NetParentEntry>(), 8);
-    }
-
-    #[test]
-    fn fs_rule_size() {
-        assert_eq!(size_of::<FsRule>(), 260);
-    }
-
-    #[test]
-    fn fs_rule_entry_size() {
-        assert_eq!(size_of::<FsRuleEntry>(), 264);
-    }
-
-    #[test]
-    fn event_size() {
-        assert_eq!(size_of::<Event>(), 360);
-    }
-}
+const_assert_eq!(core::mem::size_of::<ExecAllowEntry>(), 256);
+const_assert_eq!(core::mem::size_of::<NetRule>(), 20);
+const_assert_eq!(core::mem::size_of::<NetRuleEntry>(), 24);
+const_assert_eq!(core::mem::size_of::<NetParentEntry>(), 8);
+const_assert_eq!(core::mem::size_of::<FsRule>(), 260);
+const_assert_eq!(core::mem::size_of::<FsRuleEntry>(), 264);
+const_assert_eq!(core::mem::size_of::<Event>(), 360);

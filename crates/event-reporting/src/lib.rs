@@ -1,6 +1,8 @@
+use sarif_rust::builder::{ResultBuilder, RunBuilder};
+use sarif_rust::types::{ArtifactLocation, Level, Location, PhysicalLocation};
+use sarif_rust::{SarifLog, SarifLogBuilder};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io;
 use std::path::Path;
@@ -80,41 +82,50 @@ impl fmt::Display for EventRecord {
 }
 
 /// Builds a SARIF log from a slice of events.
-pub fn sarif_from_events(events: &[EventRecord]) -> serde_json::Value {
-    let results: Vec<_> = events
-        .iter()
-        .map(|e| {
-            json!({
-                "ruleId": e.action.to_string(),
-                "level": if e.verdict == 1 { "error" } else { "note" },
-                "message": { "text": format!("{}", e) },
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": { "uri": e.path_or_addr }
-                    }
-                }]
-            })
-        })
-        .collect();
-    json!({
-        "version": "2.1.0",
-        "runs": [{
-            "tool": { "driver": { "name": "cargo-warden" } },
-            "results": results
-        }]
-    })
+pub fn sarif_from_events(events: &[EventRecord]) -> SarifLog {
+    let mut run_builder = RunBuilder::with_tool("cargo-warden", None::<String>);
+    let mut seen_artifacts = BTreeSet::new();
+
+    for event in events {
+        if seen_artifacts.insert(event.path_or_addr.clone()) {
+            run_builder = run_builder.add_file_artifact(event.path_or_addr.clone());
+        }
+
+        let level = if event.verdict == 1 {
+            Level::Error
+        } else {
+            Level::Note
+        };
+
+        let location = Location::with_physical_location(PhysicalLocation::with_artifact_location(
+            ArtifactLocation::new(event.path_or_addr.clone()),
+        ));
+
+        let result = ResultBuilder::with_text_message(event.to_string())
+            .with_rule_id(event.action.to_string())
+            .with_level(level)
+            .add_location(location)
+            .build();
+
+        run_builder = run_builder.add_result(result);
+    }
+
+    SarifLogBuilder::new()
+        .add_run(run_builder.build())
+        .build_unchecked()
 }
 
 /// Writes a SARIF log to the given path.
 pub fn export_sarif(events: &[EventRecord], path: &Path) -> io::Result<()> {
     let sarif = sarif_from_events(events);
-    let content = serde_json::to_string_pretty(&sarif).map_err(io::Error::other)?;
+    let content = sarif_rust::to_string_pretty(&sarif).map_err(io::Error::other)?;
     std::fs::write(path, content)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sarif_rust::{SarifLog, from_str, types::Level};
     use std::fs::File;
     use std::io::Read;
     use tempfile::NamedTempFile;
@@ -134,8 +145,29 @@ mod tests {
             needed_perm: "allow.fs.read_extra".into(),
         }];
         let sarif = sarif_from_events(&records);
-        assert_eq!(sarif["version"], "2.1.0");
-        assert_eq!(sarif["runs"][0]["results"].as_array().unwrap().len(), 1);
+        assert_eq!(sarif.version, "2.1.0");
+
+        let run = sarif.runs.first().expect("run present");
+        let results = run.results.as_ref().expect("results present");
+        assert_eq!(results.len(), 1);
+
+        let result = &results[0];
+        let expected_message = records[0].to_string();
+        assert_eq!(result.rule_id.as_deref(), Some("3"));
+        assert_eq!(result.level, Some(Level::Error));
+        assert_eq!(
+            result.message.text.as_deref(),
+            Some(expected_message.as_str())
+        );
+
+        let location_uri = result
+            .locations
+            .as_ref()
+            .and_then(|locations| locations.first())
+            .and_then(|location| location.physical_location.as_ref())
+            .and_then(|physical| physical.artifact_location.as_ref())
+            .and_then(|artifact| artifact.uri.as_ref());
+        assert_eq!(location_uri, Some(&records[0].path_or_addr));
     }
 
     #[test]
@@ -160,8 +192,23 @@ mod tests {
             .unwrap()
             .read_to_string(&mut content)
             .unwrap();
-        assert!(content.contains("\"version\": \"2.1.0\""));
-        assert!(content.contains(&record.path_or_addr));
+        let sarif: SarifLog = from_str(&content).unwrap();
+        let run = sarif.runs.first().expect("run present");
+        let results = run.results.as_ref().expect("results present");
+        let result = results.first().expect("result present");
+        let expected_message = record.to_string();
+        assert_eq!(
+            result.message.text.as_deref(),
+            Some(expected_message.as_str())
+        );
+
+        let artifacts = run.artifacts.as_ref().expect("artifacts present");
+        let artifact_uri = artifacts
+            .iter()
+            .filter_map(|artifact| artifact.location.as_ref())
+            .filter_map(|location| location.uri.as_ref())
+            .find(|uri| *uri == &record.path_or_addr);
+        assert!(artifact_uri.is_some());
     }
 
     #[test]

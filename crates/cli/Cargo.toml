@@ -11,21 +11,25 @@ readme = "../../README.md"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+cargo_metadata = { workspace = true }
 policy-core = { package = "qqrm-policy-core", version = "0.1.0", path = "../policy-core" }
 qqrm-policy-compiler = { version = "0.1.0", path = "../policy-compiler" }
 sandbox-runtime = { package = "qqrm-sandbox-runtime", version = "0.1.0", path = "../sandbox-runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde-jsonlines = "0.7"
 semver = "1"
 toml = "0.8"
 event-reporting = { version = "0.1.0", path = "../event-reporting" }
 directories = "5"
+itertools = "0.12"
 
 
 [dev-dependencies]
 serial_test = "3"
 assert_cmd = "2"
 tempfile = "3"
+scoped-env = "2.1.0"
 bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
 qqrm-testkits = { version = "0.1.0", path = "../testkits" }
 

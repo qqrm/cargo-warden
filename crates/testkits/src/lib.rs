@@ -70,7 +70,7 @@ const MAX_ATTEMPTS: usize = 50;
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Error returned by the integration testing helpers.
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum TestkitError {
     /// Wrapper around [`io::Error`].
     #[error("io error: {0}")]
