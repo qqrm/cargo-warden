@@ -11,43 +11,28 @@ pub enum Mode {
     Enforce,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum FsDefault {
+    #[default]
     Strict,
     Unrestricted,
 }
 
-impl Default for FsDefault {
-    fn default() -> Self {
-        Self::Strict
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum NetDefault {
+    #[default]
     Deny,
     Allow,
 }
 
-impl Default for NetDefault {
-    fn default() -> Self {
-        Self::Deny
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecDefault {
+    #[default]
     Allowlist,
     Allow,
-}
-
-impl Default for ExecDefault {
-    fn default() -> Self {
-        Self::Allowlist
-    }
 }
 
 #[derive(Debug, Clone)]

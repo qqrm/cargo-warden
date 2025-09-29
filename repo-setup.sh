@@ -55,8 +55,59 @@ install_actionlint() {
   export PATH="$HOME/.local/bin:$PATH"
 }
 
+ensure_rustup_nightly() {
+  if ! command -v rustup >/dev/null 2>&1; then
+    echo "rustup is required to configure the nightly toolchain; please install rustup and re-run this script." >&2
+    return
+  fi
+
+  echo "Installing Rust nightly toolchain with rustfmt and clippy components..." >&2
+  rustup toolchain install nightly --profile minimal --component rustfmt --component clippy
+
+  echo "Setting default Rust toolchain to nightly..." >&2
+  rustup default nightly
+  echo "Rust default toolchain is now nightly." >&2
+}
+
+ensure_docker() {
+  if command -v docker >/dev/null 2>&1; then
+    return
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "docker is required for local workflow execution but apt-get is unavailable; please install Docker manually." >&2
+    return
+  fi
+
+  local need_sudo=0
+  if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
+    if command -v sudo >/dev/null 2>&1; then
+      need_sudo=1
+    else
+      echo "docker is required but root privileges are unavailable; please install it manually." >&2
+      return
+    fi
+  fi
+
+  echo "Installing Docker CLI..." >&2
+  local -a runner=()
+  if (( need_sudo )); then
+    runner+=(sudo)
+  fi
+  if [[ -z "${DEBIAN_FRONTEND:-}" ]]; then
+    runner+=(env DEBIAN_FRONTEND=noninteractive)
+  fi
+
+  "${runner[@]}" apt-get update
+  "${runner[@]}" apt-get install -y docker.io
+
+  echo "Docker CLI installed." >&2
+}
+
 ensure_libseccomp_dev
 install_actionlint
+ensure_rustup_nightly
+ensure_docker
 
 current_fetch=""
 if git remote get-url "$REMOTE_NAME" >/dev/null 2>&1; then
