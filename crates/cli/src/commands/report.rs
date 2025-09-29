@@ -3,6 +3,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use event_reporting::{EventRecord, METRICS_SNAPSHOT_FILE, MetricsSnapshot, export_sarif};
+use itertools::Itertools;
 use serde::Serialize;
 
 use crate::commands::{ReadEventsResult, read_recent_events};
@@ -36,29 +37,41 @@ struct ReportStatistics {
 
 impl ReportStatistics {
     fn from_events(events: &[EventRecord]) -> Self {
-        let mut stats = Self::default();
-        for event in events {
-            match event.verdict {
-                0 => {
-                    stats.allowed += 1;
-                    stats
-                        .per_unit
-                        .entry(u32::from(event.unit))
-                        .or_default()
-                        .allowed += 1;
-                }
-                1 => {
-                    stats.denied += 1;
-                    stats
-                        .per_unit
-                        .entry(u32::from(event.unit))
-                        .or_default()
-                        .denied += 1;
-                }
-                _ => {}
-            }
+        let per_unit = events
+            .iter()
+            .filter_map(|event| {
+                (event.verdict <= 1).then_some((u32::from(event.unit), event.verdict == 0))
+            })
+            .into_group_map()
+            .into_iter()
+            .map(|(unit, verdicts)| {
+                let stats = verdicts.into_iter().fold(
+                    UnitStatistics::default(),
+                    |mut unit_stats, allowed| {
+                        if allowed {
+                            unit_stats.allowed += 1;
+                        } else {
+                            unit_stats.denied += 1;
+                        }
+                        unit_stats
+                    },
+                );
+                (unit, stats)
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        let (allowed, denied) = per_unit
+            .values()
+            .fold((0usize, 0usize), |(allowed, denied), stats| {
+                (allowed + stats.allowed, denied + stats.denied)
+            });
+
+        Self {
+            allowed,
+            denied,
+            per_unit,
+            ..Self::default()
         }
-        stats
     }
 }
 
@@ -250,6 +263,70 @@ mod tests {
         let snapshot = read_metrics_snapshot(Path::new(METRICS_SNAPSHOT_FILE)).unwrap();
         assert!(snapshot.is_none());
         assert!(!dir.path().join(METRICS_SNAPSHOT_FILE).exists());
+    }
+
+    #[test]
+    fn report_statistics_handles_mixed_verdicts() {
+        let events = vec![
+            EventRecord {
+                pid: 7,
+                tgid: 70,
+                time_ns: 700,
+                unit: 0,
+                action: 2,
+                verdict: 0,
+                container_id: 1,
+                caps: 0,
+                path_or_addr: "/bin/ok".into(),
+                needed_perm: String::new(),
+            },
+            EventRecord {
+                pid: 8,
+                tgid: 80,
+                time_ns: 800,
+                unit: 0,
+                action: 3,
+                verdict: 1,
+                container_id: 2,
+                caps: 0,
+                path_or_addr: "/bin/bad".into(),
+                needed_perm: "allow.exec.allowed".into(),
+            },
+            EventRecord {
+                pid: 9,
+                tgid: 90,
+                time_ns: 900,
+                unit: 1,
+                action: 4,
+                verdict: 2,
+                container_id: 3,
+                caps: 0,
+                path_or_addr: "/bin/unknown".into(),
+                needed_perm: "allow.exec.unknown".into(),
+            },
+            EventRecord {
+                pid: 10,
+                tgid: 100,
+                time_ns: 1_000,
+                unit: 1,
+                action: 5,
+                verdict: 0,
+                container_id: 4,
+                caps: 0,
+                path_or_addr: "/bin/ok-again".into(),
+                needed_perm: String::new(),
+            },
+        ];
+
+        let stats = ReportStatistics::from_events(&events);
+
+        assert_eq!(stats.allowed, 2);
+        assert_eq!(stats.denied, 1);
+        assert_eq!(stats.per_unit.len(), 2);
+        assert_eq!(stats.per_unit[&0].allowed, 1);
+        assert_eq!(stats.per_unit[&0].denied, 1);
+        assert_eq!(stats.per_unit[&1].allowed, 1);
+        assert_eq!(stats.per_unit[&1].denied, 0);
     }
 
     #[test]
