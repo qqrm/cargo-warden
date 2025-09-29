@@ -21,6 +21,7 @@ use bpf_host::{
 use core::marker::PhantomData;
 use core::{
     ffi::{CStr, c_void},
+    marker::PhantomData,
     mem::size_of,
 };
 
