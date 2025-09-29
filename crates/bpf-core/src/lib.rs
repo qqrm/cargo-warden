@@ -279,84 +279,84 @@ type EventsMap = RingBuf;
 type EventsMap = DummyRingBuf;
 
 #[cfg(target_arch = "bpf")]
-#[map(name = EXEC_ALLOWLIST_DESCRIPTOR.name)]
+#[map(name = "EXEC_ALLOWLIST")]
 static mut EXEC_ALLOWLIST: ExecAllowlistMap = EXEC_ALLOWLIST_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static EXEC_ALLOWLIST: ExecAllowlistMap = EXEC_ALLOWLIST_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = EXEC_ALLOWLIST_LENGTH_DESCRIPTOR.name)]
+#[map(name = "EXEC_ALLOWLIST_LENGTH")]
 static mut EXEC_ALLOWLIST_LENGTH: LengthMap = EXEC_ALLOWLIST_LENGTH_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static EXEC_ALLOWLIST_LENGTH: LengthMap = EXEC_ALLOWLIST_LENGTH_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = NET_RULES_DESCRIPTOR.name)]
+#[map(name = "NET_RULES")]
 static mut NET_RULES: NetRulesMap = NET_RULES_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static NET_RULES: NetRulesMap = NET_RULES_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = NET_RULES_LENGTH_DESCRIPTOR.name)]
+#[map(name = "NET_RULES_LENGTH")]
 static mut NET_RULES_LENGTH: LengthMap = NET_RULES_LENGTH_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static NET_RULES_LENGTH: LengthMap = NET_RULES_LENGTH_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = NET_PARENTS_DESCRIPTOR.name)]
+#[map(name = "NET_PARENTS")]
 static mut NET_PARENTS: NetParentsMap = NET_PARENTS_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static NET_PARENTS: NetParentsMap = NET_PARENTS_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = NET_PARENTS_LENGTH_DESCRIPTOR.name)]
+#[map(name = "NET_PARENTS_LENGTH")]
 static mut NET_PARENTS_LENGTH: LengthMap = NET_PARENTS_LENGTH_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static NET_PARENTS_LENGTH: LengthMap = NET_PARENTS_LENGTH_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = FS_RULES_DESCRIPTOR.name)]
+#[map(name = "FS_RULES")]
 static mut FS_RULES: FsRulesMap = FS_RULES_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static FS_RULES: FsRulesMap = FS_RULES_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = FS_RULES_LENGTH_DESCRIPTOR.name)]
+#[map(name = "FS_RULES_LENGTH")]
 static mut FS_RULES_LENGTH: LengthMap = FS_RULES_LENGTH_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static FS_RULES_LENGTH: LengthMap = FS_RULES_LENGTH_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = EVENT_COUNTS_DESCRIPTOR.name)]
+#[map(name = "EVENT_COUNTS")]
 static mut EVENT_COUNTS: EventCountsMap = EVENT_COUNTS_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static EVENT_COUNTS: EventCountsMap = EVENT_COUNTS_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = MODE_FLAGS_DESCRIPTOR.name)]
+#[map(name = "MODE_FLAGS")]
 static mut MODE_FLAGS: ModeFlagsMap = MODE_FLAGS_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static MODE_FLAGS: ModeFlagsMap = MODE_FLAGS_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = WORKLOAD_UNITS_DESCRIPTOR.name)]
+#[map(name = "WORKLOAD_UNITS")]
 static mut WORKLOAD_UNITS: WorkloadUnitsMap = WORKLOAD_UNITS_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
 static WORKLOAD_UNITS: WorkloadUnitsMap = WORKLOAD_UNITS_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = EVENTS_DESCRIPTOR.name)]
+#[map(name = "EVENTS")]
 static mut EVENTS: EventsMap = EVENTS_DESCRIPTOR.bpf_map();
 
 #[cfg(any(test, feature = "fuzzing"))]
