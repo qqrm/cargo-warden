@@ -1,11 +1,13 @@
 //! Host-only shims for exercising qqrm-bpf-core programs outside the kernel.
 
 pub mod maps {
-    use core::cell::UnsafeCell;
+    use core::cell::{Ref, RefCell, RefMut};
 
-    /// Simplified fixed-size array map used by tests and fuzzers.
+    use heapless::LinearMap;
+
+    /// Simplified fixed-capacity array map used by tests and fuzzers.
     pub struct TestArray<T: Copy, const N: usize> {
-        data: UnsafeCell<[Option<T>; N]>,
+        data: RefCell<LinearMap<usize, T, N>>,
     }
 
     unsafe impl<T: Copy, const N: usize> Sync for TestArray<T, N> {}
@@ -20,17 +22,42 @@ pub mod maps {
         /// Creates an empty map instance.
         pub const fn new() -> Self {
             Self {
-                data: UnsafeCell::new([None; N]),
+                data: RefCell::new(LinearMap::new()),
             }
         }
 
-        /// Retrieves an entry if the index is in range and populated.
-        pub fn get(&self, index: u32) -> Option<T> {
+        /// Retrieves a shared reference to an entry when the index is valid.
+        pub fn get(&self, index: u32) -> Option<Ref<'_, T>> {
             let idx = index as usize;
             if idx >= N {
                 return None;
             }
-            unsafe { (*self.data.get())[idx] }
+            let borrow = self.data.borrow();
+            if borrow.iter().any(|(key, _)| *key == idx) {
+                Some(Ref::map(borrow, move |map| {
+                    map.get(&idx)
+                        .expect("entry presence validated before mapping")
+                }))
+            } else {
+                None
+            }
+        }
+
+        /// Retrieves a mutable reference to an entry when the index is valid.
+        pub fn get_mut(&self, index: u32) -> Option<RefMut<'_, T>> {
+            let idx = index as usize;
+            if idx >= N {
+                return None;
+            }
+            let borrow = self.data.borrow_mut();
+            if borrow.iter().any(|(key, _)| *key == idx) {
+                Some(RefMut::map(borrow, move |map| {
+                    map.get_mut(&idx)
+                        .expect("entry presence validated before mapping")
+                }))
+            } else {
+                None
+            }
         }
 
         /// Writes an entry if the index is in range.
@@ -39,18 +66,21 @@ pub mod maps {
             if idx >= N {
                 return;
             }
-            unsafe {
-                (*self.data.get())[idx] = Some(value);
+            let mut map = self.data.borrow_mut();
+            match map.insert(idx, value) {
+                Ok(_) => {}
+                Err((pending_idx, pending_value)) => {
+                    if let Some(first_key) = map.iter().next().map(|(key, _)| *key) {
+                        let _ = map.remove(&first_key);
+                    }
+                    let _ = map.insert(pending_idx, pending_value);
+                }
             }
         }
 
         /// Clears all entries in place.
         pub fn clear(&self) {
-            unsafe {
-                for slot in (*self.data.get()).iter_mut() {
-                    *slot = None;
-                }
-            }
+            self.data.borrow_mut().clear();
         }
     }
 
@@ -72,79 +102,74 @@ pub mod maps {
     }
 
     /// Simplified hash map implementation for host-based tests.
-    pub struct TestHashMap<K: Copy + PartialEq, V: Copy, const N: usize> {
-        data: UnsafeCell<[Option<(K, V)>; N]>,
+    pub struct TestHashMap<K: Copy + Eq, V: Copy, const N: usize> {
+        data: RefCell<LinearMap<K, V, N>>,
     }
 
-    unsafe impl<K: Copy + PartialEq, V: Copy, const N: usize> Sync for TestHashMap<K, V, N> {}
+    unsafe impl<K: Copy + Eq, V: Copy, const N: usize> Sync for TestHashMap<K, V, N> {}
 
-    impl<K: Copy + PartialEq, V: Copy, const N: usize> Default for TestHashMap<K, V, N> {
+    impl<K: Copy + Eq, V: Copy, const N: usize> Default for TestHashMap<K, V, N> {
         fn default() -> Self {
             Self::new()
         }
     }
 
-    impl<K: Copy + PartialEq, V: Copy, const N: usize> TestHashMap<K, V, N> {
+    impl<K: Copy + Eq, V: Copy, const N: usize> TestHashMap<K, V, N> {
         /// Creates an empty hash map instance.
         pub const fn new() -> Self {
             Self {
-                data: UnsafeCell::new([None; N]),
+                data: RefCell::new(LinearMap::new()),
             }
         }
 
-        /// Retrieves a value for the provided key when it exists.
-        pub fn get(&self, key: K) -> Option<V> {
-            unsafe {
-                (*self.data.get()).iter().find_map(|slot| {
-                    slot.and_then(
-                        |(stored, value)| {
-                            if stored == key { Some(value) } else { None }
-                        },
-                    )
-                })
+        /// Retrieves a shared reference to the value associated with the provided key.
+        pub fn get(&self, key: &K) -> Option<Ref<'_, V>> {
+            let borrow = self.data.borrow();
+            if borrow.iter().any(|(stored, _)| stored == key) {
+                Some(Ref::map(borrow, |map| {
+                    map.get(key)
+                        .expect("entry presence validated before mapping")
+                }))
+            } else {
+                None
+            }
+        }
+
+        /// Retrieves a mutable reference to the value associated with the provided key.
+        pub fn get_mut(&self, key: &K) -> Option<RefMut<'_, V>> {
+            let borrow = self.data.borrow_mut();
+            if borrow.iter().any(|(stored, _)| stored == key) {
+                Some(RefMut::map(borrow, |map| {
+                    map.get_mut(key)
+                        .expect("entry presence validated before mapping")
+                }))
+            } else {
+                None
             }
         }
 
         /// Inserts or updates the value for the provided key.
         pub fn insert(&self, key: K, value: V) {
-            unsafe {
-                let slots = &mut *self.data.get();
-                for slot in slots.iter_mut() {
-                    if let Some((stored, _)) = slot
-                        && *stored == key
-                    {
-                        *slot = Some((key, value));
-                        return;
+            let mut map = self.data.borrow_mut();
+            match map.insert(key, value) {
+                Ok(_) => {}
+                Err((pending_key, pending_value)) => {
+                    if let Some(first_key) = map.iter().next().map(|(key, _)| *key) {
+                        let _ = map.remove(&first_key);
                     }
-                }
-                if let Some(empty) = slots.iter_mut().find(|slot| slot.is_none()) {
-                    *empty = Some((key, value));
-                    return;
-                }
-                if let Some(slot) = slots.first_mut() {
-                    *slot = Some((key, value));
+                    let _ = map.insert(pending_key, pending_value);
                 }
             }
         }
 
         /// Removes the value associated with the provided key.
-        pub fn remove(&self, key: K) {
-            unsafe {
-                for slot in (*self.data.get()).iter_mut() {
-                    if slot.map(|(stored, _)| stored == key).unwrap_or(false) {
-                        *slot = None;
-                    }
-                }
-            }
+        pub fn remove(&self, key: &K) {
+            let _ = self.data.borrow_mut().remove(key);
         }
 
         /// Clears all entries from the hash map.
         pub fn clear(&self) {
-            unsafe {
-                for slot in (*self.data.get()).iter_mut() {
-                    *slot = None;
-                }
-            }
+            self.data.borrow_mut().clear();
         }
     }
 }

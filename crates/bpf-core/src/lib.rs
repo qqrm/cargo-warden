@@ -414,7 +414,7 @@ unsafe fn load_mode_flags() -> u32 {
 
 #[cfg(any(test, feature = "fuzzing"))]
 unsafe fn load_mode_flags() -> u32 {
-    MODE_FLAGS.get(0).unwrap_or(0)
+    MODE_FLAGS.get(0).map(|value| *value).unwrap_or(0)
 }
 
 #[cfg(target_arch = "bpf")]
@@ -424,7 +424,7 @@ unsafe fn load_length(map: &LengthMap) -> u32 {
 
 #[cfg(any(test, feature = "fuzzing"))]
 unsafe fn load_length(map: &LengthMap) -> u32 {
-    map.get(0).unwrap_or(0)
+    map.get(0).map(|value| *value).unwrap_or(0)
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -458,7 +458,7 @@ macro_rules! define_map_accessors {
 
         #[cfg(any(test, feature = "fuzzing"))]
         unsafe fn $load_fn(index: u32) -> Option<$entry> {
-            $map.get(index)
+            $map.get(index).map(|entry| *entry)
         }
 
         #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -516,7 +516,7 @@ fn increment_event_count() {
 
     #[cfg(any(test, feature = "fuzzing"))]
     {
-        let current = EVENT_COUNTS.get(0).unwrap_or(0);
+        let current = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         EVENT_COUNTS.set(0, current.wrapping_add(1));
     }
 }
@@ -703,7 +703,7 @@ fn workload_unit_for_pid(pid: u32) -> u32 {
 
 #[cfg(any(test, feature = "fuzzing"))]
 fn workload_unit_for_pid(pid: u32) -> u32 {
-    WORKLOAD_UNITS.get(pid).unwrap_or(0)
+    WORKLOAD_UNITS.get(&pid).map(|value| *value).unwrap_or(0)
 }
 
 #[cfg(target_arch = "bpf")]
@@ -750,7 +750,7 @@ fn set_workload_unit(pid: u32, unit: u32) {
 
 #[cfg(any(test, feature = "fuzzing"))]
 fn remove_workload_unit(pid: u32) {
-    WORKLOAD_UNITS.remove(pid);
+    WORKLOAD_UNITS.remove(&pid);
 }
 
 #[cfg(any(test, feature = "fuzzing"))]
@@ -1619,7 +1619,7 @@ mod tests {
         assert_eq!(event.verdict, 0);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
         assert!(bytes_to_string(&event.needed_perm).is_empty());
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         assert_eq!(count, 1);
     }
 
@@ -1650,7 +1650,7 @@ mod tests {
         assert_eq!(allowed_event.verdict, 0);
         assert_eq!(bytes_to_string(&allowed_event.path_or_addr), allowed_path);
         assert!(bytes_to_string(&allowed_event.needed_perm).is_empty());
-        let allowed_count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let allowed_count = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         assert_eq!(allowed_count, 1);
         EVENT_COUNTS.clear();
         LAST_EVENT.lock().unwrap().take();
@@ -1691,7 +1691,7 @@ mod tests {
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
         assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.read_extra");
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         assert_eq!(count, 1);
     }
 
@@ -1770,7 +1770,7 @@ mod tests {
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 0);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         assert_eq!(count, 1);
     }
 
@@ -1788,7 +1788,7 @@ mod tests {
         let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
         assert_ne!(result, 0);
         assert!(LAST_EVENT.lock().unwrap().is_none());
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         assert_eq!(count, 0);
     }
 
@@ -1940,7 +1940,7 @@ mod tests {
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), old_path);
         assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.write_extra");
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         assert_eq!(count, 1);
     }
 
@@ -1975,7 +1975,7 @@ mod tests {
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), new_path);
         assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.write_extra");
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         assert_eq!(count, 1);
     }
 
@@ -2006,7 +2006,7 @@ mod tests {
         );
         assert_eq!(result, 0);
         assert!(LAST_EVENT.lock().unwrap().is_none());
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         assert_eq!(count, 0);
     }
 
@@ -2041,7 +2041,7 @@ mod tests {
         assert_eq!(event.action, ACTION_RENAME);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), new_path);
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         assert_eq!(count, 2);
     }
 
@@ -2074,7 +2074,7 @@ mod tests {
         assert_eq!(event.action, ACTION_RENAME);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), new_path);
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         assert_eq!(count, 2);
     }
 
@@ -2096,7 +2096,7 @@ mod tests {
         );
         assert_ne!(result, 0);
         assert!(LAST_EVENT.lock().unwrap().is_none());
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = EVENT_COUNTS.get(0).map(|value| *value).unwrap_or(0);
         assert_eq!(count, 0);
     }
 
