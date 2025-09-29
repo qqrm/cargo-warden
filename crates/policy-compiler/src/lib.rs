@@ -7,6 +7,7 @@ use bpf_api::{
     ExecAllowEntry, FS_READ, FS_WRITE, FsRule, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE,
     NetParentEntry, NetRule, NetRuleEntry,
 };
+use bytemuck::{Pod, Zeroable};
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
 use thiserror::Error;
 
@@ -199,9 +200,82 @@ fn fill_path_bytes(path: &str) -> Option<[u8; 256]> {
     Some(buf)
 }
 
-fn slice_to_bytes<T: Copy>(slice: &[T]) -> Vec<u8> {
-    let len = core::mem::size_of_val(slice);
-    unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const u8, len).to_vec() }
+fn slice_to_bytes<T: AsPodSlice>(slice: &[T]) -> Vec<u8> {
+    bytemuck::cast_slice(T::as_pod_slice(slice)).to_vec()
+}
+
+trait AsPodSlice: Sized {
+    type Pod: Pod;
+
+    fn as_pod_slice(slice: &[Self]) -> &[Self::Pod];
+}
+
+impl AsPodSlice for u32 {
+    type Pod = u32;
+
+    fn as_pod_slice(slice: &[Self]) -> &[Self::Pod] {
+        slice
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct ExecAllowEntryPod(ExecAllowEntry);
+
+unsafe impl Zeroable for ExecAllowEntryPod {}
+unsafe impl Pod for ExecAllowEntryPod {}
+
+impl AsPodSlice for ExecAllowEntry {
+    type Pod = ExecAllowEntryPod;
+
+    fn as_pod_slice(slice: &[Self]) -> &[Self::Pod] {
+        unsafe { core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()) }
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct NetRuleEntryPod(NetRuleEntry);
+
+unsafe impl Zeroable for NetRuleEntryPod {}
+unsafe impl Pod for NetRuleEntryPod {}
+
+impl AsPodSlice for NetRuleEntry {
+    type Pod = NetRuleEntryPod;
+
+    fn as_pod_slice(slice: &[Self]) -> &[Self::Pod] {
+        unsafe { core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()) }
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct NetParentEntryPod(NetParentEntry);
+
+unsafe impl Zeroable for NetParentEntryPod {}
+unsafe impl Pod for NetParentEntryPod {}
+
+impl AsPodSlice for NetParentEntry {
+    type Pod = NetParentEntryPod;
+
+    fn as_pod_slice(slice: &[Self]) -> &[Self::Pod] {
+        unsafe { core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()) }
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct FsRuleEntryPod(FsRuleEntry);
+
+unsafe impl Zeroable for FsRuleEntryPod {}
+unsafe impl Pod for FsRuleEntryPod {}
+
+impl AsPodSlice for FsRuleEntry {
+    type Pod = FsRuleEntryPod;
+
+    fn as_pod_slice(slice: &[Self]) -> &[Self::Pod] {
+        unsafe { core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()) }
+    }
 }
 
 #[cfg(test)]
