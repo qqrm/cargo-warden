@@ -11,7 +11,7 @@ pub enum Mode {
     Enforce,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Default, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum FsDefault {
     #[default]
@@ -19,7 +19,7 @@ pub enum FsDefault {
     Unrestricted,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Default, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum NetDefault {
     #[default]
@@ -27,7 +27,7 @@ pub enum NetDefault {
     Allow,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Default, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum ExecDefault {
     #[default]
