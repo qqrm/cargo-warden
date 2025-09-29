@@ -3,10 +3,9 @@ set -euo pipefail
 
 plan_tmp="$(mktemp)"
 if cargo workspaces publish \
-  --all \
+  --from-git \
   --skip-published \
   --no-verify \
-  --allow-dirty \
   --dry-run \
   >"${plan_tmp}" 2>&1; then
   cat "${plan_tmp}"

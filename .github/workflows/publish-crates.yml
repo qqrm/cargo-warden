@@ -6,11 +6,15 @@ on:
       dry_run:
         description: "Dry run without publishing"
         required: false
-        default: "true"
+        default: "false"
       publish_interval:
         description: "Seconds to wait between crate publishes (0 disables the wait)"
         required: false
         default: "60"
+      release_prefix:
+        description: "Optional <major>.<minor> override for the release tag"
+        required: false
+        default: ""
 
 concurrency:
   group: publish-crates
@@ -24,11 +28,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: prod
     permissions:
-      contents: read
+      contents: write
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-      DRY_RUN: ${{ inputs.dry_run || 'true' }}
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
       PUBLISH_INTERVAL: ${{ inputs.publish_interval || '60' }}
+      RELEASE_PREFIX: ${{ inputs.release_prefix || '' }}
 
     steps:
       - name: Checkout
@@ -70,11 +75,21 @@ jobs:
         shell: bash
         run: bash scripts/ci/resolve_publish_plan.sh
 
+      - name: Determine release tag
+        id: release_tag
+        shell: bash
+        run: bash scripts/ci/determine_release_tag.sh
+
       - name: Publish
         if: ${{ env.DRY_RUN == 'false' }}
         shell: bash
         timeout-minutes: 45
         run: bash scripts/ci/run_publish.sh
+
+      - name: Create release tag
+        if: ${{ success() && env.DRY_RUN == 'false' }}
+        shell: bash
+        run: bash scripts/ci/create_release_tag.sh
 
       - name: Post-publish summary
         if: ${{ success() }}
