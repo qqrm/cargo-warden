@@ -1407,6 +1407,7 @@ dependencies = [
  "clap",
  "directories",
  "event-reporting",
+ "itertools",
  "qqrm-bpf-api",
  "qqrm-policy-compiler",
  "qqrm-policy-core",
