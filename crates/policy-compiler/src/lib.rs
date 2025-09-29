@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use arrayvec::ArrayVec;
 use bpf_api::{
     ExecAllowEntry, FS_READ, FS_WRITE, FsRule, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE,
     NetParentEntry, NetRule, NetRuleEntry,
@@ -128,14 +129,15 @@ fn compile_fs_rules(policy: &Policy) -> Result<Vec<FsRuleEntry>, CompileError> {
     if policy.fs_default() != FsDefault::Strict {
         return Ok(Vec::new());
     }
-    let mut entries = Vec::new();
-    for path in policy.fs_write_paths() {
-        entries.push(fs_rule_entry(path.as_path(), FS_READ | FS_WRITE)?);
-    }
-    for path in policy.fs_read_paths() {
-        entries.push(fs_rule_entry(path.as_path(), FS_READ)?);
-    }
-    Ok(entries)
+    policy
+        .fs_write_paths()
+        .map(|path| fs_rule_entry(path.as_path(), FS_READ | FS_WRITE))
+        .chain(
+            policy
+                .fs_read_paths()
+                .map(|path| fs_rule_entry(path.as_path(), FS_READ)),
+        )
+        .collect()
 }
 
 fn fs_rule_entry(path: &Path, access: u8) -> Result<FsRuleEntry, CompileError> {
@@ -182,21 +184,32 @@ fn parse_host_entry(host: &str) -> Result<NetRuleEntry, CompileError> {
 }
 
 fn encode_exec_path(path: &str) -> Result<[u8; 256], CompileError> {
-    fill_path_bytes(path).ok_or_else(|| CompileError::ExecPathTooLong { path: path.into() })
+    build_path_vec(path)
+        .map(into_padded_array)
+        .ok_or_else(|| CompileError::ExecPathTooLong { path: path.into() })
 }
 
 fn encode_fs_path(path: &str) -> Result<[u8; 256], CompileError> {
-    fill_path_bytes(path).ok_or_else(|| CompileError::FsPathTooLong { path: path.into() })
+    build_path_vec(path)
+        .map(into_padded_array)
+        .ok_or_else(|| CompileError::FsPathTooLong { path: path.into() })
 }
 
-fn fill_path_bytes(path: &str) -> Option<[u8; 256]> {
+fn build_path_vec(path: &str) -> Option<ArrayVec<u8, 256>> {
     let bytes = path.as_bytes();
     if bytes.len() > MAX_PATH_BYTES {
         return None;
     }
-    let mut buf = [0u8; 256];
-    buf[..bytes.len()].copy_from_slice(bytes);
+    let mut buf = ArrayVec::<u8, 256>::new();
+    buf.try_extend_from_slice(bytes).expect("capacity checked");
     Some(buf)
+}
+
+fn into_padded_array(buf: ArrayVec<u8, 256>) -> [u8; 256] {
+    let mut array = [0u8; 256];
+    let len = buf.len();
+    array[..len].copy_from_slice(buf.as_slice());
+    array
 }
 
 fn slice_to_bytes<T: Copy>(slice: &[T]) -> Vec<u8> {

@@ -1,11 +1,13 @@
 //! Host-only shims for exercising qqrm-bpf-core programs outside the kernel.
 
 pub mod maps {
-    use core::cell::UnsafeCell;
+    use arrayvec::ArrayVec;
+    use core::cell::RefCell;
+    use std::sync::{Mutex, MutexGuard};
 
     /// Simplified fixed-size array map used by tests and fuzzers.
     pub struct TestArray<T: Copy, const N: usize> {
-        data: UnsafeCell<[Option<T>; N]>,
+        data: RefCell<ArrayVec<Option<T>, N>>,
     }
 
     unsafe impl<T: Copy, const N: usize> Sync for TestArray<T, N> {}
@@ -20,7 +22,7 @@ pub mod maps {
         /// Creates an empty map instance.
         pub const fn new() -> Self {
             Self {
-                data: UnsafeCell::new([None; N]),
+                data: RefCell::new(ArrayVec::new_const()),
             }
         }
 
@@ -30,7 +32,7 @@ pub mod maps {
             if idx >= N {
                 return None;
             }
-            unsafe { (*self.data.get())[idx] }
+            self.data.borrow().get(idx).copied().flatten()
         }
 
         /// Writes an entry if the index is in range.
@@ -39,17 +41,18 @@ pub mod maps {
             if idx >= N {
                 return;
             }
-            unsafe {
-                (*self.data.get())[idx] = Some(value);
+            let mut data = self.data.borrow_mut();
+            while data.len() <= idx {
+                data.push(None);
             }
+            data[idx] = Some(value);
         }
 
         /// Clears all entries in place.
         pub fn clear(&self) {
-            unsafe {
-                for slot in (*self.data.get()).iter_mut() {
-                    *slot = None;
-                }
+            let mut data = self.data.borrow_mut();
+            for slot in data.iter_mut() {
+                *slot = None;
             }
         }
     }
@@ -69,11 +72,15 @@ pub mod maps {
         pub const fn new() -> Self {
             Self
         }
+
+        /// Clears the dummy ring buffer.
+        #[allow(clippy::unused_self)]
+        pub fn clear(&self) {}
     }
 
     /// Simplified hash map implementation for host-based tests.
     pub struct TestHashMap<K: Copy + PartialEq, V: Copy, const N: usize> {
-        data: UnsafeCell<[Option<(K, V)>; N]>,
+        data: Mutex<ArrayVec<(K, V), N>>,
     }
 
     unsafe impl<K: Copy + PartialEq, V: Copy, const N: usize> Sync for TestHashMap<K, V, N> {}
@@ -88,62 +95,54 @@ pub mod maps {
         /// Creates an empty hash map instance.
         pub const fn new() -> Self {
             Self {
-                data: UnsafeCell::new([None; N]),
+                data: Mutex::new(ArrayVec::new_const()),
             }
         }
 
         /// Retrieves a value for the provided key when it exists.
         pub fn get(&self, key: K) -> Option<V> {
-            unsafe {
-                (*self.data.get()).iter().find_map(|slot| {
-                    slot.and_then(
-                        |(stored, value)| {
-                            if stored == key { Some(value) } else { None }
-                        },
-                    )
-                })
-            }
+            let slots = self.lock();
+            slots
+                .iter()
+                .find_map(|(stored, value)| if *stored == key { Some(*value) } else { None })
         }
 
         /// Inserts or updates the value for the provided key.
         pub fn insert(&self, key: K, value: V) {
-            unsafe {
-                let slots = &mut *self.data.get();
-                for slot in slots.iter_mut() {
-                    if let Some((stored, _)) = slot
-                        && *stored == key
-                    {
-                        *slot = Some((key, value));
-                        return;
-                    }
-                }
-                if let Some(empty) = slots.iter_mut().find(|slot| slot.is_none()) {
-                    *empty = Some((key, value));
-                    return;
-                }
-                if let Some(slot) = slots.first_mut() {
-                    *slot = Some((key, value));
-                }
+            let mut slots = self.lock();
+            if let Some(existing) = slots.iter_mut().find(|(stored, _)| *stored == key) {
+                *existing = (key, value);
+                return;
+            }
+            if slots.len() < N {
+                slots.push((key, value));
+            } else if let Some(slot) = slots.first_mut() {
+                *slot = (key, value);
             }
         }
 
         /// Removes the value associated with the provided key.
         pub fn remove(&self, key: K) {
-            unsafe {
-                for slot in (*self.data.get()).iter_mut() {
-                    if slot.map(|(stored, _)| stored == key).unwrap_or(false) {
-                        *slot = None;
-                    }
+            let mut slots = self.lock();
+            let mut i = 0;
+            while i < slots.len() {
+                if slots[i].0 == key {
+                    slots.remove(i);
+                } else {
+                    i += 1;
                 }
             }
         }
 
         /// Clears all entries from the hash map.
         pub fn clear(&self) {
-            unsafe {
-                for slot in (*self.data.get()).iter_mut() {
-                    *slot = None;
-                }
+            self.lock().clear();
+        }
+
+        fn lock(&self) -> MutexGuard<'_, ArrayVec<(K, V), N>> {
+            match self.data.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
             }
         }
     }

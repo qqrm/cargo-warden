@@ -118,6 +118,43 @@ impl FsRules {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct DuplicateAwareSet<T>
+where
+    T: Ord,
+{
+    values: BTreeSet<T>,
+    duplicates: BTreeSet<T>,
+}
+
+impl<T> DuplicateAwareSet<T>
+where
+    T: Ord + Clone,
+{
+    pub(crate) fn insert(&mut self, value: T) {
+        if !self.values.insert(value.clone()) {
+            self.duplicates.insert(value);
+        }
+    }
+
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.values.extend(other.values);
+        self.duplicates.extend(other.duplicates);
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &T> {
+        self.values.iter()
+    }
+
+    pub(crate) fn first_duplicate(&self) -> Option<&T> {
+        self.duplicates.iter().next()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
+
 macro_rules! define_duplicate_rules {
     ($name:ident, $value_ty:ty, $field:ident, $default_ty:ty) => {
         #[derive(Debug, Clone)]
