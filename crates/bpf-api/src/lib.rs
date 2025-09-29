@@ -1,5 +1,7 @@
 #![no_std]
 
+use bytemuck::{Pod, Zeroable};
+
 /// Bit flag for read access.
 pub const FS_READ: u8 = 1;
 /// Bit flag for write access.
@@ -37,13 +39,13 @@ pub const MODE_FLAG_OBSERVE: u32 = 0;
 pub const MODE_FLAG_ENFORCE: u32 = 1;
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
 pub struct ExecAllowEntry {
     pub path: [u8; 256],
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
 pub struct NetRule {
     pub addr: [u8; 16],
     pub protocol: u8,
@@ -52,21 +54,21 @@ pub struct NetRule {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
 pub struct NetRuleEntry {
     pub unit: u32,
     pub rule: NetRule,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
 pub struct NetParentEntry {
     pub child: u32,
     pub parent: u32,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
 pub struct FsRule {
     pub access: u8,
     pub reserved: [u8; 3],
@@ -74,14 +76,14 @@ pub struct FsRule {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Zeroable, Pod)]
 pub struct FsRuleEntry {
     pub unit: u32,
     pub rule: FsRule,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Zeroable)]
 /// Event emitted by BPF programs.
 pub struct Event {
     /// Thread identifier (kernel PID).

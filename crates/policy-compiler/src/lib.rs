@@ -7,6 +7,7 @@ use bpf_api::{
     ExecAllowEntry, FS_READ, FS_WRITE, FsRule, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE,
     NetParentEntry, NetRule, NetRuleEntry,
 };
+use bytemuck::Pod;
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy};
 use thiserror::Error;
 
@@ -199,9 +200,8 @@ fn fill_path_bytes(path: &str) -> Option<[u8; 256]> {
     Some(buf)
 }
 
-fn slice_to_bytes<T: Copy>(slice: &[T]) -> Vec<u8> {
-    let len = core::mem::size_of_val(slice);
-    unsafe { core::slice::from_raw_parts(slice.as_ptr() as *const u8, len).to_vec() }
+fn slice_to_bytes<T: Pod>(slice: &[T]) -> Vec<u8> {
+    bytemuck::cast_slice(slice).to_vec()
 }
 
 #[cfg(test)]
