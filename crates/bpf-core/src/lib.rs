@@ -18,7 +18,10 @@ use bpf_host::{
     maps::{DummyRingBuf, TestArray, TestHashMap},
 };
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-use core::{ffi::c_void, mem::size_of};
+use core::{
+    ffi::{CStr, c_void},
+    mem::size_of,
+};
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const _EVENT_SIZE: usize = size_of::<Event>();
@@ -942,48 +945,55 @@ fn net_allowed(addr: &[u8; 16], port: u16, protocol: u8) -> bool {
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn c_str_len(buf: &[u8; 256]) -> usize {
-    let mut len = 0;
-    while len < buf.len() && buf[len] != 0 {
-        len += 1;
-    }
-    len
+fn c_path(buf: &[u8; 256]) -> Option<&CStr> {
+    CStr::from_bytes_until_nul(buf).ok()
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn trimmed_len(buf: &[u8; 256]) -> usize {
-    let mut len = c_str_len(buf);
-    while len > 1 && buf[len - 1] == b'/' {
-        len -= 1;
-    }
-    len
+fn c_str_len(path: &CStr) -> usize {
+    path.to_bytes().len()
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn path_prefix_matches(rule_path: &[u8; 256], actual_path: &[u8; 256]) -> bool {
-    let prefix_len = trimmed_len(rule_path);
-    if prefix_len == 0 {
+fn trimmed_len(path: &CStr) -> usize {
+    let bytes = path.to_bytes();
+    if bytes.len() <= 1 {
+        return bytes.len();
+    }
+    bytes
+        .iter()
+        .rposition(|&b| b != b'/')
+        .map(|idx| idx + 1)
+        .unwrap_or(1)
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn trimmed_bytes(path: &CStr) -> &[u8] {
+    let len = trimmed_len(path);
+    &path.to_bytes()[..len]
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn path_prefix_matches(rule_path: &CStr, actual_path: &CStr) -> bool {
+    let rule_bytes = trimmed_bytes(rule_path);
+    if rule_bytes.is_empty() {
         return false;
     }
     let path_len = c_str_len(actual_path);
-    if prefix_len > path_len {
+    if rule_bytes.len() > path_len {
         return false;
     }
-    let mut i = 0;
-    while i < prefix_len {
-        if rule_path[i] != actual_path[i] {
-            return false;
-        }
-        i += 1;
+    let actual_bytes = actual_path.to_bytes();
+    if !actual_bytes.starts_with(rule_bytes) {
+        return false;
     }
-    if prefix_len == path_len {
+    if rule_bytes.len() == path_len {
         return true;
     }
-    let last = rule_path[prefix_len - 1];
-    if last == b'/' {
+    if rule_bytes.last().copied() == Some(b'/') {
         return true;
     }
-    actual_path.get(prefix_len).copied() == Some(b'/')
+    actual_bytes.get(rule_bytes.len()).copied() == Some(b'/')
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -999,12 +1009,18 @@ fn rule_allows_access(rule_access: u8, needed: u8) -> bool {
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn fs_entry_allows(entry: &bpf_api::FsRuleEntry, path: &[u8; 256], needed: u8) -> bool {
-    rule_allows_access(entry.rule.access, needed) && path_prefix_matches(&entry.rule.path, path)
+fn fs_entry_allows(entry: &bpf_api::FsRuleEntry, path: &CStr, needed: u8) -> bool {
+    if !rule_allows_access(entry.rule.access, needed) {
+        return false;
+    }
+    let Some(rule_path) = c_path(&entry.rule.path) else {
+        return false;
+    };
+    path_prefix_matches(rule_path, path)
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn unit_fs_allowed(unit: u32, path: &[u8; 256], needed: u8) -> bool {
+fn unit_fs_allowed(unit: u32, path: &CStr, needed: u8) -> bool {
     let len = fs_rules_len();
     let mut i = 0;
     while i < len {
@@ -1024,6 +1040,9 @@ fn fs_allowed(path: &[u8; 256], needed: u8) -> bool {
     if needed == 0 {
         return true;
     }
+    let Some(path) = c_path(path) else {
+        return false;
+    };
     let mut unit = current_unit();
     let mut checked_root = unit == 0;
     loop {
@@ -1894,6 +1913,31 @@ mod tests {
     }
 
     #[test]
+    fn file_permission_allows_rule_with_trailing_slash() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        set_fs_rules(&[fs_rule_entry(0, "/var/data/", FS_READ | FS_WRITE)]);
+
+        let file_path = c_string("/var/data/report.log");
+        let mut file = TestFile {
+            path: file_path.as_ptr(),
+            mode: FMODE_READ | FMODE_WRITE,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        assert_eq!(file_permission(file_ptr, MAY_READ), 0);
+        assert_eq!(file_permission(file_ptr, MAY_WRITE), 0);
+
+        let dir_path = c_string("/var/data/");
+        let mut dir = TestFile {
+            path: dir_path.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let dir_ptr = (&mut dir) as *mut _ as *mut c_void;
+        assert_eq!(file_permission(dir_ptr, MAY_READ), 0);
+    }
+
+    #[test]
     fn file_permission_denies_mismatched_prefix() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
@@ -1901,6 +1945,21 @@ mod tests {
         let rule_path = "/var/data";
         set_fs_rules(&[fs_rule_entry(0, rule_path, FS_READ | FS_WRITE)]);
         let file_path = c_string("/var/database");
+        let mut file = TestFile {
+            path: file_path.as_ptr(),
+            mode: FMODE_READ,
+        };
+        let file_ptr = (&mut file) as *mut _ as *mut c_void;
+        assert_ne!(file_permission(file_ptr, MAY_READ), 0);
+    }
+
+    #[test]
+    fn file_permission_denies_trailing_slash_rule_without_separator() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_network_state();
+        reset_fs_state();
+        set_fs_rules(&[fs_rule_entry(0, "/var/data/", FS_READ)]);
+        let file_path = c_string("/var/data-archive");
         let mut file = TestFile {
             path: file_path.as_ptr(),
             mode: FMODE_READ,
