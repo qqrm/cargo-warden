@@ -1269,6 +1269,7 @@ dependencies = [
  "qqrm-policy-core",
  "qqrm-sandbox-runtime",
  "qqrm-testkits",
+ "scoped-env",
  "semver",
  "serde",
  "serde-jsonlines",
@@ -1332,6 +1333,7 @@ dependencies = [
  "qqrm-bpf-api",
  "qqrm-policy-compiler",
  "qqrm-policy-core",
+ "scoped-env",
  "serde",
  "serde_json",
 ]
@@ -1542,6 +1544,12 @@ checksum = "46e6f046b7fef48e2660c57ed794263155d713de679057f2d0c169bfc6e756cc"
 dependencies = [
  "sdd",
 ]
+
+[[package]]
+name = "scoped-env"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a86338a78d9058ae1bb70bf4ec558e9c51c611b443a356f7d041d29bb6c1c026"
 
 [[package]]
 name = "scopeguard"

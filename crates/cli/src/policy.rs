@@ -854,10 +854,10 @@ fn dedup_paths(paths: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{DirGuard, EnvVarGuard};
+    use crate::test_support::{DirGuard, ScopedEnv};
     use bpf_api::{FS_READ, FS_WRITE};
     use serial_test::serial;
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     use std::fs::{self, write};
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::path::Path;
@@ -926,11 +926,15 @@ mod tests {
         write(dir.join("src/lib.rs"), "pub fn fixture() {}\n").unwrap();
     }
 
-    fn guard_build_env() -> (EnvVarGuard, EnvVarGuard, EnvVarGuard) {
+    fn guard_build_env() -> (
+        ScopedEnv<&'static OsStr>,
+        ScopedEnv<&'static OsStr>,
+        ScopedEnv<&'static OsStr>,
+    ) {
         (
-            EnvVarGuard::unset("OUT_DIR"),
-            EnvVarGuard::unset("CARGO_TARGET_DIR"),
-            EnvVarGuard::unset("CARGO_TARGET_TMPDIR"),
+            ScopedEnv::remove(OsStr::new("OUT_DIR")),
+            ScopedEnv::remove(OsStr::new("CARGO_TARGET_DIR")),
+            ScopedEnv::remove(OsStr::new("CARGO_TARGET_TMPDIR")),
         )
     }
 
@@ -1260,7 +1264,10 @@ exec.default = "allow"
 
         let out_dir_path = dir.path().join("custom-out");
         fs::create_dir_all(&out_dir_path).unwrap();
-        let out_guard = EnvVarGuard::set("OUT_DIR", out_dir_path.as_os_str().to_os_string());
+        let out_guard = ScopedEnv::set(
+            OsString::from("OUT_DIR"),
+            out_dir_path.as_os_str().to_os_string(),
+        );
 
         let isolation = setup_isolation(&[], &[], None).unwrap();
         drop(out_guard);
@@ -1431,8 +1438,10 @@ permissions = ["env:read:PLUGIN_SETTINGS"]
         let config_dir = dir.path().join("config");
         let trust_path = config_dir.join("cargo-warden").join("trust.json");
         fs::create_dir_all(trust_path.parent().unwrap()).unwrap();
-        let _config_guard =
-            EnvVarGuard::set("XDG_CONFIG_HOME", OsString::from(config_dir.as_os_str()));
+        let _config_guard = ScopedEnv::set(
+            OsString::from("XDG_CONFIG_HOME"),
+            OsString::from(config_dir.as_os_str()),
+        );
 
         write(
             &trust_path,
@@ -1467,8 +1476,10 @@ permissions = ["env:read:PLUGIN_SETTINGS"]
     fn load_trust_db_ignores_missing_file() {
         let dir = tempfile::tempdir().unwrap();
         let config_dir = dir.path().join("cfg");
-        let _config_guard =
-            EnvVarGuard::set("XDG_CONFIG_HOME", OsString::from(config_dir.as_os_str()));
+        let _config_guard = ScopedEnv::set(
+            OsString::from("XDG_CONFIG_HOME"),
+            OsString::from(config_dir.as_os_str()),
+        );
 
         assert!(super::load_trust_db().unwrap().is_none());
     }

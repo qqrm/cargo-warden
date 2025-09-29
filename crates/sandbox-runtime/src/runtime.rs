@@ -76,53 +76,13 @@ impl Sandbox {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
+    use scoped_env::ScopedEnv;
+    use std::ffi::OsStr;
     use std::io;
     use std::process::Command;
     use std::sync::{Mutex, OnceLock};
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    struct VarGuard {
-        key: &'static str,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl VarGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let previous = env::var_os(key);
-            // SAFETY: guarded by `ENV_LOCK`, so environment mutations are serialized.
-            unsafe {
-                env::set_var(key, value);
-            }
-            Self { key, previous }
-        }
-
-        fn remove(key: &'static str) -> Self {
-            let previous = env::var_os(key);
-            // SAFETY: guarded by `ENV_LOCK`, so environment mutations are serialized.
-            unsafe {
-                env::remove_var(key);
-            }
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for VarGuard {
-        fn drop(&mut self) {
-            if let Some(value) = &self.previous {
-                // SAFETY: guarded by `ENV_LOCK`, so environment mutations are serialized.
-                unsafe {
-                    env::set_var(self.key, value);
-                }
-            } else {
-                // SAFETY: guarded by `ENV_LOCK`, so environment mutations are serialized.
-                unsafe {
-                    env::remove_var(self.key);
-                }
-            }
-        }
-    }
 
     fn empty_layout() -> MapsLayout {
         MapsLayout {
@@ -137,9 +97,9 @@ mod tests {
     #[test]
     fn restricts_environment_to_allowed_keys() -> io::Result<()> {
         let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
-        let _fake = VarGuard::set(super::FAKE_SANDBOX_ENV, "1");
-        let _allowed_parent = VarGuard::set("ALLOWED_PARENT", "visible");
-        let _blocked_parent = VarGuard::set("BLOCKED_PARENT", "hidden");
+        let _fake = ScopedEnv::set(OsStr::new(super::FAKE_SANDBOX_ENV), OsStr::new("1"));
+        let _allowed_parent = ScopedEnv::set(OsStr::new("ALLOWED_PARENT"), OsStr::new("visible"));
+        let _blocked_parent = ScopedEnv::set(OsStr::new("BLOCKED_PARENT"), OsStr::new("hidden"));
 
         let mut sandbox = Sandbox::new()?;
         let mut command = Command::new("sh");
@@ -156,8 +116,8 @@ mod tests {
     #[test]
     fn filters_command_defined_environment() -> io::Result<()> {
         let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
-        let _fake = VarGuard::set(super::FAKE_SANDBOX_ENV, "1");
-        let _clear_allowed = VarGuard::remove("ALLOWED_OVERRIDE");
+        let _fake = ScopedEnv::set(OsStr::new(super::FAKE_SANDBOX_ENV), OsStr::new("1"));
+        let _clear_allowed = ScopedEnv::remove(OsStr::new("ALLOWED_OVERRIDE"));
 
         let mut sandbox = Sandbox::new()?;
         let mut command = Command::new("sh");
@@ -176,7 +136,7 @@ mod tests {
     #[test]
     fn write_workload_units_available() -> io::Result<()> {
         let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
-        let _fake = VarGuard::set(super::FAKE_SANDBOX_ENV, "1");
+        let _fake = ScopedEnv::set(OsStr::new(super::FAKE_SANDBOX_ENV), OsStr::new("1"));
 
         let mut sandbox = Sandbox::new()?;
         sandbox.write_workload_units(&[(1, 2)])?;
