@@ -137,4 +137,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-fuzz
-      - run: cargo fuzz build net
+      - run: cargo +nightly fuzz build net

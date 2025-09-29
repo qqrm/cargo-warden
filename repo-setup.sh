@@ -7,41 +7,46 @@ PUSH_URL="${REMOTE_PUSH_URL:-}"
 BASE_URL="${REMOTE_URL:-}"
 DEFAULT_BRANCH="${REMOTE_BRANCH:-}"
 
-ensure_libseccomp_dev() {
+ensure_apt_packages() {
   if ! command -v dpkg >/dev/null 2>&1; then
     return
   fi
 
-  if dpkg -s libseccomp-dev >/dev/null 2>&1; then
+  local -a missing=()
+  for pkg in "$@"; do
+    if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+      missing+=("$pkg")
+    fi
+  done
+
+  if ((${#missing[@]} == 0)); then
     return
   fi
 
   if ! command -v apt-get >/dev/null 2>&1; then
-    echo "libseccomp-dev is required but apt-get is unavailable; please install it manually." >&2
+    echo "The following packages are required but apt-get is unavailable: ${missing[*]}" >&2
+    echo "Please install them manually." >&2
     return
   fi
 
-  local need_sudo=0
+  local -a runner=()
   if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
     if command -v sudo >/dev/null 2>&1; then
-      need_sudo=1
+      runner+=(sudo)
     else
-      echo "libseccomp-dev is required but root privileges are unavailable; please install it manually." >&2
+      echo "The following packages are required but root privileges are unavailable: ${missing[*]}" >&2
+      echo "Please install them manually." >&2
       return
     fi
   fi
 
-  echo "Installing libseccomp-dev..." >&2
-  local -a runner=()
-  if (( need_sudo )); then
-    runner+=(sudo)
-  fi
   if [[ -z "${DEBIAN_FRONTEND:-}" ]]; then
     runner+=(env DEBIAN_FRONTEND=noninteractive)
   fi
 
+  echo "Installing missing apt packages: ${missing[*]}" >&2
   "${runner[@]}" apt-get update
-  "${runner[@]}" apt-get install -y libseccomp-dev
+  "${runner[@]}" apt-get install -y "${missing[@]}"
 }
 
 install_actionlint() {
@@ -55,8 +60,61 @@ install_actionlint() {
   export PATH="$HOME/.local/bin:$PATH"
 }
 
-ensure_libseccomp_dev
+ensure_apt_packages pkg-config libseccomp-dev protobuf-compiler jq xxhash
 install_actionlint
+
+ensure_rust_components() {
+  if ! command -v rustup >/dev/null 2>&1; then
+    echo "rustup is required to install Rust components." >&2
+    exit 1
+  fi
+
+  rustup component add rustfmt clippy llvm-tools-preview >/dev/null
+}
+
+ensure_cargo_tool() {
+  local binary="$1"
+  local crate="$2"
+
+  if command -v "$binary" >/dev/null 2>&1; then
+    return
+  fi
+
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "cargo is required to install $crate." >&2
+    exit 1
+  fi
+
+  echo "Installing $crate via cargo install..." >&2
+  cargo install "$crate" --locked
+}
+
+ensure_cargo_tools() {
+  ensure_cargo_tool cargo-machete cargo-machete
+  ensure_cargo_tool cargo-audit cargo-audit
+  ensure_cargo_tool cargo-deny cargo-deny
+  ensure_cargo_tool cargo-nextest cargo-nextest
+  ensure_cargo_tool cargo-udeps cargo-udeps
+  ensure_cargo_tool cargo-fuzz cargo-fuzz
+}
+
+ensure_nightly_toolchain() {
+  if ! command -v rustup >/dev/null 2>&1; then
+    echo "rustup is required to install the nightly toolchain." >&2
+    exit 1
+  fi
+
+  if rustup toolchain list | grep -q '^nightly'; then
+    return
+  fi
+
+  echo "Installing Rust nightly toolchain..." >&2
+  rustup toolchain install nightly --profile minimal >/dev/null
+}
+
+ensure_rust_components
+ensure_cargo_tools
+ensure_nightly_toolchain
 
 current_fetch=""
 if git remote get-url "$REMOTE_NAME" >/dev/null 2>&1; then

@@ -279,7 +279,7 @@ mod tests {
             .iter()
             .map(|entry| to_string(&entry.path))
             .collect();
-        assert_eq!(exec_paths, vec!["/bin/bash", "/usr/bin/rustc"]);
+        assert_eq!(exec_paths, vec!["/usr/bin/rustc", "/bin/bash"]);
 
         assert_eq!(layout.net_rules.len(), 1);
         let net_rule = &layout.net_rules[0];
