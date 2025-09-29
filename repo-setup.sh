@@ -147,33 +147,67 @@ if [[ -z "$DEFAULT_BRANCH" ]]; then
   DEFAULT_BRANCH="$current_branch"
 fi
 
+skip_sync=0
+
 if [[ -z "$current_branch" ]]; then
   echo "HEAD is detached; skipping branch synchronization" >&2
-  exit 0
+  skip_sync=1
 fi
 
-if [[ -z "$DEFAULT_BRANCH" ]]; then
+if (( ! skip_sync )) && [[ -z "$DEFAULT_BRANCH" ]]; then
   DEFAULT_BRANCH="$current_branch"
 fi
 
-if ! git rev-parse --verify "$REMOTE_NAME/$DEFAULT_BRANCH" >/dev/null 2>&1; then
+if (( ! skip_sync )) && ! git rev-parse --verify "$REMOTE_NAME/$DEFAULT_BRANCH" >/dev/null 2>&1; then
   echo "Remote branch '$REMOTE_NAME/$DEFAULT_BRANCH' not found; skipping branch synchronization" >&2
-  exit 0
+  skip_sync=1
 fi
 
-git branch --set-upstream-to "$REMOTE_NAME/$DEFAULT_BRANCH" "$current_branch" 2>/dev/null || true
+if (( ! skip_sync )); then
+  git branch --set-upstream-to "$REMOTE_NAME/$DEFAULT_BRANCH" "$current_branch" 2>/dev/null || true
 
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "Working tree is not clean; skipping branch synchronization" >&2
-  exit 0
+  if [[ -n "$(git status --porcelain)" ]]; then
+    echo "Working tree is not clean; skipping branch synchronization" >&2
+    skip_sync=1
+  fi
 fi
 
-if git merge-base --is-ancestor HEAD "$REMOTE_NAME/$DEFAULT_BRANCH" 2>/dev/null; then
-  if ! git merge --ff-only "$REMOTE_NAME/$DEFAULT_BRANCH" >/dev/null 2>&1; then
+if (( ! skip_sync )); then
+  if git merge-base --is-ancestor HEAD "$REMOTE_NAME/$DEFAULT_BRANCH" 2>/dev/null; then
+    if ! git merge --ff-only "$REMOTE_NAME/$DEFAULT_BRANCH" >/dev/null 2>&1; then
+      git reset --hard "$REMOTE_NAME/$DEFAULT_BRANCH"
+    fi
+  else
     git reset --hard "$REMOTE_NAME/$DEFAULT_BRANCH"
   fi
-else
-  git reset --hard "$REMOTE_NAME/$DEFAULT_BRANCH"
+
+  echo "Synchronized '$current_branch' with '$REMOTE_NAME/$DEFAULT_BRANCH'" >&2
 fi
 
-echo "Synchronized '$current_branch' with '$REMOTE_NAME/$DEFAULT_BRANCH'" >&2
+merge_origin_main_into_current_branch() {
+  local merge_remote="${MERGE_REMOTE:-origin}"
+  local merge_branch="${MERGE_BRANCH:-main}"
+
+  if [[ -z "$current_branch" ]]; then
+    echo "HEAD is detached; skipping merge from '${merge_remote}/${merge_branch}'" >&2
+    return
+  fi
+
+  if ! git rev-parse --verify "${merge_remote}/${merge_branch}" >/dev/null 2>&1; then
+    echo "Remote branch '${merge_remote}/${merge_branch}' not found; skipping merge into '$current_branch'" >&2
+    return
+  fi
+
+  if [[ -n "$(git status --porcelain)" ]]; then
+    echo "Working tree is not clean; skipping merge from '${merge_remote}/${merge_branch}'" >&2
+    return
+  fi
+
+  echo "Pulling '${merge_remote}/${merge_branch}' into '$current_branch'" >&2
+  if ! git pull --ff-only "${merge_remote}" "${merge_branch}"; then
+    echo "Fast-forward pull failed; attempting merge from '${merge_remote}/${merge_branch}'" >&2
+    git merge --no-edit "${merge_remote}/${merge_branch}"
+  fi
+}
+
+merge_origin_main_into_current_branch
