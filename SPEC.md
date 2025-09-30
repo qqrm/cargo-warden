@@ -369,8 +369,8 @@ CI:
 ## 17. Documentation and Contribution
 
 * ✅ `README` with quick start instructions and a documented quickstart flow.
-* ⬜ `CONTRIBUTING` with development rules, lints, and style.
-* ⬜ `SECURITY` with vulnerability reporting procedure (current `SECURITY_MODEL.md` is internal design only).
+* ✅ `CONTRIBUTING` with development rules, lints, and style.
+* ✅ `SECURITY` with vulnerability reporting procedure (expanded in `README.md`).
 * ⬜ `CODEOWNERS` and PR templates.
 
 ## 18. Risks and Mitigations
