@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# NOTE: This helper runs via ./scripts/setup/repo-setup.sh throughout the docs and checks.
+# Preserve its executable bit so it can be invoked without explicitly calling bash.
+
 REMOTE_NAME="${REMOTE_NAME:-origin}"
 FETCH_URL="${REMOTE_FETCH_URL:-}"
 PUSH_URL="${REMOTE_PUSH_URL:-}"
