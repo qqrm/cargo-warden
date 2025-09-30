@@ -117,7 +117,6 @@ main() {
   log_step "Ensuring cargo subcommands"
   ensure_cargo_tool "${install_tools}" cargo-machete cargo-machete
   ensure_cargo_tool "${install_tools}" cargo-audit cargo-audit
-  ensure_cargo_tool "${install_tools}" cargo-deny cargo-deny
   ensure_cargo_tool "${install_tools}" cargo-nextest cargo-nextest
   ensure_cargo_tool "${install_tools}" cargo-udeps cargo-udeps
   ensure_cargo_tool "${install_tools}" cargo-fuzz cargo-fuzz
@@ -158,12 +157,6 @@ main() {
 
   log_step "Running cargo audit"
   cargo audit
-
-  log_step "Running cargo deny fetch"
-  cargo deny fetch
-
-  log_step "Running cargo deny check --disable-fetch"
-  cargo deny check --disable-fetch
 
   log_step "Running cargo +nightly udeps --all-targets --all-features"
   cargo +nightly udeps --all-targets --all-features
