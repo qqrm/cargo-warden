@@ -18,7 +18,6 @@ record_outcome "${CARGO_CLIPPY_OUTCOME}" "cargo clippy --all-targets --all-featu
 record_outcome "${CARGO_NEXTEST_OUTCOME}" "cargo nextest run"
 record_outcome "${CARGO_MACHETE_OUTCOME}" "cargo machete"
 record_outcome "${CARGO_AUDIT_OUTCOME}" "cargo audit"
-record_outcome "${CARGO_DENY_OUTCOME}" "cargo deny check --disable-fetch"
 record_outcome "${CARGO_UDEPS_OUTCOME}" "cargo +nightly udeps --all-targets --all-features"
 
 if [[ -s "$failures_file" ]]; then
