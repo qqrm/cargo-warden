@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# NOTE: This helper is executed directly via ./scripts/examples/run_examples.sh.
+# Keep the executable bit set so CI and documentation flows continue to work.
+
 declare -A EXAMPLE_DIRS=(
     [network-build]="network-build"
     [spawn-bash]="spawn-bash"
