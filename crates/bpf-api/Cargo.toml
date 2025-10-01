@@ -13,5 +13,3 @@ readme = "../../README.md"
 path = "src/lib.rs"
 crate-type = ["lib"]
 
-[dependencies]
-static_assertions = "1.1"

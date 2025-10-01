@@ -1,7 +1,5 @@
 #![no_std]
 
-use static_assertions::const_assert_eq;
-
 /// Bit flag for read access.
 pub const FS_READ: u8 = 1;
 /// Bit flag for write access.
@@ -110,10 +108,10 @@ pub struct Event {
     pub needed_perm: [u8; 64],
 }
 
-const_assert_eq!(core::mem::size_of::<ExecAllowEntry>(), 256);
-const_assert_eq!(core::mem::size_of::<NetRule>(), 20);
-const_assert_eq!(core::mem::size_of::<NetRuleEntry>(), 24);
-const_assert_eq!(core::mem::size_of::<NetParentEntry>(), 8);
-const_assert_eq!(core::mem::size_of::<FsRule>(), 260);
-const_assert_eq!(core::mem::size_of::<FsRuleEntry>(), 264);
-const_assert_eq!(core::mem::size_of::<Event>(), 360);
+const _: [(); 256] = [(); core::mem::size_of::<ExecAllowEntry>()];
+const _: [(); 20] = [(); core::mem::size_of::<NetRule>()];
+const _: [(); 24] = [(); core::mem::size_of::<NetRuleEntry>()];
+const _: [(); 8] = [(); core::mem::size_of::<NetParentEntry>()];
+const _: [(); 260] = [(); core::mem::size_of::<FsRule>()];
+const _: [(); 264] = [(); core::mem::size_of::<FsRuleEntry>()];
+const _: [(); 360] = [(); core::mem::size_of::<Event>()];
