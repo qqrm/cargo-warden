@@ -2,12 +2,11 @@
 
 pub mod maps {
     use arrayvec::ArrayVec;
-    use core::cell::RefCell;
     use std::sync::{Mutex, MutexGuard};
 
     /// Simplified fixed-size array map used by tests and fuzzers.
     pub struct TestArray<T: Copy, const N: usize> {
-        data: RefCell<ArrayVec<Option<T>, N>>,
+        inner: TestHashMap<u32, T, N>,
     }
 
     unsafe impl<T: Copy, const N: usize> Sync for TestArray<T, N> {}
@@ -22,7 +21,7 @@ pub mod maps {
         /// Creates an empty map instance.
         pub const fn new() -> Self {
             Self {
-                data: RefCell::new(ArrayVec::new_const()),
+                inner: TestHashMap::new(),
             }
         }
 
@@ -32,7 +31,7 @@ pub mod maps {
             if idx >= N {
                 return None;
             }
-            self.data.borrow().get(idx).copied().flatten()
+            self.inner.get(index)
         }
 
         /// Writes an entry if the index is in range.
@@ -41,19 +40,12 @@ pub mod maps {
             if idx >= N {
                 return;
             }
-            let mut data = self.data.borrow_mut();
-            while data.len() <= idx {
-                data.push(None);
-            }
-            data[idx] = Some(value);
+            self.inner.insert(index, value);
         }
 
         /// Clears all entries in place.
         pub fn clear(&self) {
-            let mut data = self.data.borrow_mut();
-            for slot in data.iter_mut() {
-                *slot = None;
-            }
+            self.inner.clear();
         }
     }
 
@@ -230,9 +222,35 @@ mod tests {
     use super::fs::{
         TestDentry, TestFile, dentry_path_ptr, file_mode_bits, file_path_ptr, rename_path_ptrs,
     };
+    use super::maps::TestArray;
     use core::ffi::c_void;
     use std::ffi::CString;
     use std::ptr;
+
+    #[test]
+    fn test_array_get_set_and_clear() {
+        const CAPACITY: usize = 4;
+        let map: TestArray<u32, CAPACITY> = TestArray::new();
+        assert_eq!(map.get(0), None);
+        map.set(0, 7);
+        map.set(3, 42);
+        assert_eq!(map.get(0), Some(7));
+        assert_eq!(map.get(3), Some(42));
+        assert_eq!(map.get(2), None);
+        map.clear();
+        assert_eq!(map.get(0), None);
+        assert_eq!(map.get(3), None);
+    }
+
+    #[test]
+    fn test_array_ignores_out_of_range_indices() {
+        const CAPACITY: usize = 2;
+        let map: TestArray<u8, CAPACITY> = TestArray::new();
+        map.set(5, 1);
+        assert_eq!(map.get(5), None);
+        map.set(1, 9);
+        assert_eq!(map.get(1), Some(9));
+    }
 
     #[test]
     fn file_helpers_expose_pointer_and_mode() {
