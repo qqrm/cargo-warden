@@ -221,8 +221,6 @@ const FS_RULES_DESCRIPTOR: ArrayDescriptor<
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const FS_RULES_LENGTH_DESCRIPTOR: ArrayDescriptor<u32, 1> = ArrayDescriptor::new("FS_RULES_LENGTH");
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-const EVENT_COUNTS_DESCRIPTOR: ArrayDescriptor<u64, { bpf_api::EVENT_COUNT_SLOTS as usize }> =
-    ArrayDescriptor::new("EVENT_COUNTS");
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const MODE_FLAGS_DESCRIPTOR: ArrayDescriptor<u32, { bpf_api::MODE_FLAGS_CAPACITY as usize }> =
     ArrayDescriptor::new("MODE_FLAGS");
@@ -263,10 +261,6 @@ type FsRulesMap = Array<bpf_api::FsRuleEntry>;
 type FsRulesMap = TestArray<bpf_api::FsRuleEntry, { bpf_api::FS_RULES_CAPACITY as usize }>;
 
 #[cfg(target_arch = "bpf")]
-type EventCountsMap = Array<u64>;
-#[cfg(any(test, feature = "fuzzing"))]
-type EventCountsMap = TestArray<u64, { bpf_api::EVENT_COUNT_SLOTS as usize }>;
-
 #[cfg(target_arch = "bpf")]
 type ModeFlagsMap = Array<u32>;
 #[cfg(any(test, feature = "fuzzing"))]
@@ -339,12 +333,6 @@ static mut FS_RULES_LENGTH: LengthMap = FS_RULES_LENGTH_DESCRIPTOR.bpf_map();
 static FS_RULES_LENGTH: LengthMap = FS_RULES_LENGTH_DESCRIPTOR.host_map();
 
 #[cfg(target_arch = "bpf")]
-#[map(name = "EVENT_COUNTS")]
-static mut EVENT_COUNTS: EventCountsMap = EVENT_COUNTS_DESCRIPTOR.bpf_map();
-
-#[cfg(any(test, feature = "fuzzing"))]
-static EVENT_COUNTS: EventCountsMap = EVENT_COUNTS_DESCRIPTOR.host_map();
-
 #[cfg(target_arch = "bpf")]
 #[map(name = "MODE_FLAGS")]
 static mut MODE_FLAGS: ModeFlagsMap = MODE_FLAGS_DESCRIPTOR.bpf_map();
@@ -419,10 +407,6 @@ fn clear_fs_rules_length() {
 }
 
 #[cfg(any(test, feature = "fuzzing"))]
-fn clear_event_counts() {
-    clear_array(&EVENT_COUNTS);
-}
-
 #[cfg(any(test, feature = "fuzzing"))]
 fn clear_mode_flags() {
     clear_array(&MODE_FLAGS);
@@ -448,7 +432,6 @@ const HOST_MAP_DESCRIPTORS: &[MapDescriptor] = &[
     NET_PARENTS_LENGTH_DESCRIPTOR.map_descriptor(clear_net_parents_length),
     FS_RULES_DESCRIPTOR.map_descriptor(clear_fs_rules),
     FS_RULES_LENGTH_DESCRIPTOR.map_descriptor(clear_fs_rules_length),
-    EVENT_COUNTS_DESCRIPTOR.map_descriptor(clear_event_counts),
     MODE_FLAGS_DESCRIPTOR.map_descriptor(clear_mode_flags),
     WORKLOAD_UNITS_DESCRIPTOR.map_descriptor(clear_workload_units_map),
     EVENTS_DESCRIPTOR.map_descriptor(clear_events_map),
@@ -480,24 +463,30 @@ pub mod host_maps {
     }
 }
 
-#[cfg(target_arch = "bpf")]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 unsafe fn load_mode_flags() -> u32 {
-    MODE_FLAGS.get(0).copied().unwrap_or(0)
+    #[cfg(target_arch = "bpf")]
+    {
+        MODE_FLAGS.get(0).copied().unwrap_or(0)
+    }
+
+    #[cfg(any(test, feature = "fuzzing"))]
+    {
+        MODE_FLAGS.get(0).unwrap_or(0)
+    }
 }
 
-#[cfg(any(test, feature = "fuzzing"))]
-unsafe fn load_mode_flags() -> u32 {
-    MODE_FLAGS.get(0).unwrap_or(0)
-}
-
-#[cfg(target_arch = "bpf")]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 unsafe fn load_length(map: &LengthMap) -> u32 {
-    map.get(0).copied().unwrap_or(0)
-}
+    #[cfg(target_arch = "bpf")]
+    {
+        map.get(0).copied().unwrap_or(0)
+    }
 
-#[cfg(any(test, feature = "fuzzing"))]
-unsafe fn load_length(map: &LengthMap) -> u32 {
-    map.get(0).unwrap_or(0)
+    #[cfg(any(test, feature = "fuzzing"))]
+    {
+        map.get(0).unwrap_or(0)
+    }
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -576,23 +565,6 @@ define_map_accessors!(
     bpf_api::FsRuleEntry,
     bpf_api::FS_RULES_CAPACITY
 );
-
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn increment_event_count() {
-    #[cfg(target_arch = "bpf")]
-    unsafe {
-        if let Some(counter) = EVENT_COUNTS.get_ptr_mut(0) {
-            let new_value = (*counter).wrapping_add(1);
-            *counter = new_value;
-        }
-    }
-
-    #[cfg(any(test, feature = "fuzzing"))]
-    {
-        let current = EVENT_COUNTS.get(0).unwrap_or(0);
-        EVENT_COUNTS.set(0, current.wrapping_add(1));
-    }
-}
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn path_matches(a: &[u8; 256], b: &[u8; 256]) -> bool {
@@ -769,26 +741,6 @@ fn classify_workload_unit(path: &[u8], args: &[&[u8]]) -> u32 {
     bpf_api::UNIT_OTHER
 }
 
-#[cfg(target_arch = "bpf")]
-fn workload_unit_for_pid(pid: u32) -> u32 {
-    unsafe { WORKLOAD_UNITS.get(&pid).copied().unwrap_or(0) }
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-fn workload_unit_for_pid(pid: u32) -> u32 {
-    WORKLOAD_UNITS.get(pid).unwrap_or(0)
-}
-
-#[cfg(target_arch = "bpf")]
-fn set_workload_unit(pid: u32, unit: u32) {
-    let _ = unsafe { WORKLOAD_UNITS.insert(&pid, &unit, 0) };
-}
-
-#[cfg(target_arch = "bpf")]
-fn remove_workload_unit(pid: u32) {
-    let _ = unsafe { WORKLOAD_UNITS.remove(&pid) };
-}
-
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 static mut CURRENT_UNIT: u32 = 0;
 
@@ -798,32 +750,52 @@ fn current_unit() -> u32 {
     unsafe { CURRENT_UNIT }
 }
 
-#[cfg(target_arch = "bpf")]
-fn refresh_current_unit() {
-    let pid = unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 };
-    let unit = workload_unit_for_pid(pid);
-    unsafe {
-        CURRENT_UNIT = unit;
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn workload_unit_for_pid(pid: u32) -> u32 {
+    #[cfg(target_arch = "bpf")]
+    {
+        unsafe { WORKLOAD_UNITS.get(&pid).copied().unwrap_or(0) }
+    }
+
+    #[cfg(any(test, feature = "fuzzing"))]
+    {
+        WORKLOAD_UNITS.get(pid).unwrap_or(0)
     }
 }
 
-#[cfg(any(test, feature = "fuzzing"))]
-fn refresh_current_unit() {
-    let pid = unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 };
-    let unit = workload_unit_for_pid(pid);
-    unsafe {
-        CURRENT_UNIT = unit;
-    }
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn set_workload_unit(pid: u32, unit: u32) {
-    WORKLOAD_UNITS.insert(pid, unit);
+    #[cfg(target_arch = "bpf")]
+    {
+        let _ = unsafe { WORKLOAD_UNITS.insert(&pid, &unit, 0) };
+    }
+
+    #[cfg(any(test, feature = "fuzzing"))]
+    {
+        WORKLOAD_UNITS.insert(pid, unit);
+    }
 }
 
-#[cfg(any(test, feature = "fuzzing"))]
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn remove_workload_unit(pid: u32) {
-    WORKLOAD_UNITS.remove(pid);
+    #[cfg(target_arch = "bpf")]
+    {
+        let _ = unsafe { WORKLOAD_UNITS.remove(&pid) };
+    }
+
+    #[cfg(any(test, feature = "fuzzing"))]
+    {
+        WORKLOAD_UNITS.remove(pid);
+    }
+}
+
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn refresh_current_unit() {
+    let pid = unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 };
+    let unit = workload_unit_for_pid(pid);
+    unsafe {
+        CURRENT_UNIT = unit;
+    }
 }
 
 #[cfg(any(test, feature = "fuzzing"))]
@@ -1346,7 +1318,6 @@ fn publish_event(event: &Event) {
             0,
         );
     }
-    increment_event_count();
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -1568,7 +1539,7 @@ mod tests {
     use std::ptr;
     use std::sync::Mutex;
 
-    static LAST_EVENT: Mutex<Option<Event>> = Mutex::new(None);
+    static EVENTS: Mutex<Vec<Event>> = Mutex::new(Vec::new());
     static TEST_LOCK: Mutex<()> = Mutex::new(());
     const TEST_PID: u32 = 1234;
     const TEST_TGID: u32 = 4321;
@@ -1601,6 +1572,23 @@ mod tests {
         ]
     }
 
+    fn reset_events() {
+        EVENTS.lock().unwrap().clear();
+        host_maps::clear_by_name("EVENTS");
+    }
+
+    fn record_event(event: Event) {
+        EVENTS.lock().unwrap().push(event);
+    }
+
+    fn event_count() -> usize {
+        EVENTS.lock().unwrap().len()
+    }
+
+    fn last_event() -> Option<Event> {
+        EVENTS.lock().unwrap().last().copied()
+    }
+
     #[unsafe(no_mangle)]
     extern "C" fn bpf_ringbuf_output(
         _ringbuf: *mut c_void,
@@ -1610,7 +1598,7 @@ mod tests {
     ) -> i64 {
         assert_eq!(len as usize, core::mem::size_of::<Event>());
         let event = unsafe { *(data as *const Event) };
-        *LAST_EVENT.lock().unwrap() = Some(event);
+        record_event(event);
         0
     }
 
@@ -1689,8 +1677,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let path = "/var/warden/allowed/file.txt";
         set_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
         let path_bytes = c_string(path);
@@ -1700,7 +1687,7 @@ mod tests {
         };
         let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
         assert_eq!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.pid, 1234);
         assert_eq!(event.tgid, 4321);
         assert_eq!(event.time_ns, 123_456_789);
@@ -1709,7 +1696,7 @@ mod tests {
         assert_eq!(event.verdict, 0);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
         assert!(bytes_to_string(&event.needed_perm).is_empty());
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = event_count();
         assert_eq!(count, 1);
     }
 
@@ -1718,8 +1705,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let rules = default_fs_rules();
         set_fs_rules(&rules);
         let allowed_path = format!("{}/README.md", workspace_root_string());
@@ -1735,15 +1721,14 @@ mod tests {
             ),
             0
         );
-        let allowed_event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let allowed_event = last_event().expect("event");
         assert_eq!(allowed_event.action, ACTION_OPEN);
         assert_eq!(allowed_event.verdict, 0);
         assert_eq!(bytes_to_string(&allowed_event.path_or_addr), allowed_path);
         assert!(bytes_to_string(&allowed_event.needed_perm).is_empty());
-        let allowed_count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let allowed_count = event_count();
         assert_eq!(allowed_count, 1);
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let path = "/etc/warden/forbidden.txt";
         let path_bytes = c_string(path);
         let mut file = TestFile {
@@ -1752,7 +1737,7 @@ mod tests {
         };
         let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
         assert_ne!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
@@ -1766,8 +1751,7 @@ mod tests {
         reset_fs_state();
         enable_observe_mode();
         assert!(is_observe_mode(), "observe mode should be enabled");
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let path = "/var/warden/forbidden.txt";
         let path_bytes = c_string(path);
         let mut file = TestFile {
@@ -1776,12 +1760,12 @@ mod tests {
         };
         let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
         assert_eq!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
         assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.read_extra");
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = event_count();
         assert_eq!(count, 1);
     }
 
@@ -1798,21 +1782,21 @@ mod tests {
             mode: FMODE_READ,
         };
         let file_ptr = (&mut file) as *mut _ as *mut c_void;
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         assert_eq!(file_permission(file_ptr, MAY_READ), 0);
-        assert!(LAST_EVENT.lock().unwrap().is_none());
+        assert!(last_event().is_none());
 
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         assert_ne!(file_permission(file_ptr, MAY_WRITE), 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
 
         set_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         assert_eq!(file_permission(file_ptr, MAY_WRITE), 0);
-        assert!(LAST_EVENT.lock().unwrap().is_none());
+        assert!(last_event().is_none());
     }
 
     #[test]
@@ -1830,10 +1814,10 @@ mod tests {
             mode: FMODE_READ,
         };
         let file_ptr = (&mut file) as *mut _ as *mut c_void;
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let result = file_permission(file_ptr, MAY_WRITE);
         assert_eq!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
@@ -1844,8 +1828,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let rules = default_fs_rules();
         set_fs_rules(&rules);
         let path = format!("{}/README.md", workspace_root_string());
@@ -1856,11 +1839,11 @@ mod tests {
         };
         let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
         assert_eq!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_OPEN);
         assert_eq!(event.verdict, 0);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = event_count();
         assert_eq!(count, 1);
     }
 
@@ -1869,16 +1852,15 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let mut file = TestFile {
             path: ptr::null(),
             mode: FMODE_READ,
         };
         let result = file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut());
         assert_ne!(result, 0);
-        assert!(LAST_EVENT.lock().unwrap().is_none());
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert!(last_event().is_none());
+        let count = event_count();
         assert_eq!(count, 0);
     }
 
@@ -2044,8 +2026,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let old_path = "/etc/warden/src.txt";
         let new_path = "/etc/warden/dst.txt";
         set_fs_rules(&[fs_rule_entry(0, new_path, FS_WRITE)]);
@@ -2065,13 +2046,11 @@ mod tests {
             0,
         );
         assert_ne!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_RENAME);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), old_path);
         assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.write_extra");
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
-        assert_eq!(count, 1);
     }
 
     #[test]
@@ -2079,8 +2058,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let old_path = "/etc/warden/allowed.txt";
         let new_path = "/etc/warden/blocked.txt";
         set_fs_rules(&[fs_rule_entry(0, old_path, FS_WRITE)]);
@@ -2100,12 +2078,12 @@ mod tests {
             0,
         );
         assert_ne!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_RENAME);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), new_path);
         assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.write_extra");
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = event_count();
         assert_eq!(count, 1);
     }
 
@@ -2114,8 +2092,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let old_path = "/workspace/dir/source.txt";
         let new_path = "/workspace/dir/dest.txt";
         set_fs_rules(&[fs_rule_entry(0, "/workspace/dir", FS_WRITE)]);
@@ -2135,8 +2112,8 @@ mod tests {
             0,
         );
         assert_eq!(result, 0);
-        assert!(LAST_EVENT.lock().unwrap().is_none());
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert!(last_event().is_none());
+        let count = event_count();
         assert_eq!(count, 0);
     }
 
@@ -2147,8 +2124,7 @@ mod tests {
         reset_fs_state();
         enable_observe_mode();
         assert!(is_observe_mode(), "observe mode should be enabled");
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let old_path = "/etc/warden/src.txt";
         let new_path = "/etc/warden/dst.txt";
         let old_bytes = c_string(old_path);
@@ -2167,11 +2143,11 @@ mod tests {
             0,
         );
         assert_eq!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_RENAME);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), new_path);
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = event_count();
         assert_eq!(count, 2);
     }
 
@@ -2180,8 +2156,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let old_path = "/etc/warden/src.txt";
         let new_path = "/etc/warden/dst.txt";
         let old_bytes = c_string(old_path);
@@ -2200,11 +2175,11 @@ mod tests {
             0,
         );
         assert_ne!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_RENAME);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), new_path);
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        let count = event_count();
         assert_eq!(count, 2);
     }
 
@@ -2213,8 +2188,7 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        host_maps::clear_by_name("EVENT_COUNTS");
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let mut old_dentry = TestDentry { name: ptr::null() };
         let mut new_dentry = TestDentry { name: ptr::null() };
         let result = inode_rename(
@@ -2225,8 +2199,8 @@ mod tests {
             0,
         );
         assert_ne!(result, 0);
-        assert!(LAST_EVENT.lock().unwrap().is_none());
-        let count = EVENT_COUNTS.get(0).unwrap_or(0);
+        assert!(last_event().is_none());
+        let count = event_count();
         assert_eq!(count, 0);
     }
 
@@ -2240,32 +2214,32 @@ mod tests {
         let mut dentry = TestDentry {
             name: path_bytes.as_ptr(),
         };
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         assert_ne!(
             inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void),
             0
         );
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_UNLINK);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
         assert_eq!(bytes_to_string(&event.needed_perm), "allow.fs.write_extra");
 
         set_fs_rules(&[fs_rule_entry(0, path, FS_READ | FS_WRITE)]);
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         assert_eq!(
             inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void),
             0
         );
-        assert!(LAST_EVENT.lock().unwrap().is_none());
+        assert!(last_event().is_none());
 
         set_fs_rules(&[fs_rule_entry(0, path, FS_READ)]);
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         assert_ne!(
             inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void),
             0
         );
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_UNLINK);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
@@ -2284,10 +2258,10 @@ mod tests {
         let mut dentry = TestDentry {
             name: path_bytes.as_ptr(),
         };
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let result = inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void);
         assert_eq!(result, 0);
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.action, ACTION_UNLINK);
         assert_eq!(event.verdict, 1);
         assert_eq!(bytes_to_string(&event.path_or_addr), path);
@@ -2299,11 +2273,11 @@ mod tests {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
         reset_fs_state();
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         let mut dentry = TestDentry { name: ptr::null() };
         let result = inode_unlink(ptr::null_mut(), (&mut dentry) as *mut _ as *mut c_void);
         assert_ne!(result, 0);
-        assert!(LAST_EVENT.lock().unwrap().is_none());
+        assert!(last_event().is_none());
     }
 
     #[test]
@@ -2371,12 +2345,12 @@ mod tests {
             mode: FMODE_READ,
         };
         assign_unit(5);
-        LAST_EVENT.lock().unwrap().take();
+        reset_events();
         assert_eq!(
             file_open((&mut file) as *mut _ as *mut c_void, ptr::null_mut()),
             0
         );
-        let event = LAST_EVENT.lock().unwrap().as_ref().copied().expect("event");
+        let event = last_event().expect("event");
         assert_eq!(event.unit, 5);
     }
 
