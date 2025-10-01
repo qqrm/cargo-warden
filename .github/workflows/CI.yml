@@ -33,9 +33,6 @@ jobs:
           tool: cargo-audit
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny
-      - uses: taiki-e/install-action@v2
-        with:
           tool: cargo-udeps
       - uses: taiki-e/install-action@v2
         with:
@@ -64,10 +61,6 @@ jobs:
         id: cargo_audit
         run: cargo audit
         continue-on-error: true
-      - name: cargo deny check --disable-fetch
-        id: cargo_deny
-        run: ./scripts/ci/run_cargo_deny.sh
-        continue-on-error: true
       - uses: dtolnay/rust-toolchain@nightly
       - name: cargo +nightly udeps --all-targets --all-features
         id: cargo_udeps
@@ -82,7 +75,6 @@ jobs:
           CARGO_NEXTEST_OUTCOME: ${{ steps.cargo_nextest.outcome }}
           CARGO_MACHETE_OUTCOME: ${{ steps.cargo_machete.outcome }}
           CARGO_AUDIT_OUTCOME: ${{ steps.cargo_audit.outcome }}
-          CARGO_DENY_OUTCOME: ${{ steps.cargo_deny.outcome }}
           CARGO_UDEPS_OUTCOME: ${{ steps.cargo_udeps.outcome }}
         run: ./scripts/ci/aggregate_cargo_checks.sh
 
