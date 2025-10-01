@@ -1,9 +1,9 @@
 use aya::maps::{MapData, ring_buf::RingBuf};
 use bpf_api::{Event, UNIT_BUILD_SCRIPT, UNIT_LINKER, UNIT_OTHER, UNIT_PROC_MACRO, UNIT_RUSTC};
-use cfg_if::cfg_if;
 use file_rotate::{ContentLimit, FileRotate, compression::Compression, suffix::AppendCount};
 use log::{info, warn};
 use prometheus::{Encoder, IntCounter, IntGaugeVec, Registry, TextEncoder};
+use std::collections::{HashMap, VecDeque};
 use std::convert::TryFrom;
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -13,11 +13,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
-
-use std::collections::HashMap;
-
-#[cfg(feature = "grpc")]
-use tokio::sync::broadcast;
 
 pub use event_reporting::{
     EventRecord, METRICS_SNAPSHOT_FILE, MetricsSnapshot, UnitMetricsSnapshot, export_sarif,
@@ -108,6 +103,10 @@ static UNIT_LABELS: LazyLock<Mutex<HashMap<u32, &'static str>>> =
 
 static METRICS_RECORDER: LazyLock<Mutex<MetricsRecorder>> =
     LazyLock::new(|| Mutex::new(MetricsRecorder::default()));
+
+const EVENT_BUFFER_CAPACITY: usize = 1024;
+static EVENT_BUFFER: LazyLock<Mutex<VecDeque<EventRecord>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::with_capacity(EVENT_BUFFER_CAPACITY)));
 
 #[derive(Default)]
 struct MetricsRecorder {
@@ -243,6 +242,23 @@ fn record_event_metrics(record: &EventRecord) -> Result<(), anyhow::Error> {
         .map_err(anyhow::Error::from)
 }
 
+fn remember_event(record: &EventRecord) {
+    let mut buffer = EVENT_BUFFER.lock().expect("event buffer mutex poisoned");
+    if buffer.len() == EVENT_BUFFER_CAPACITY {
+        buffer.pop_front();
+    }
+    buffer.push_back(record.clone());
+}
+
+fn snapshot_events() -> Vec<EventRecord> {
+    EVENT_BUFFER
+        .lock()
+        .expect("event buffer mutex poisoned")
+        .iter()
+        .cloned()
+        .collect()
+}
+
 pub fn update_unit_resource_metrics(
     unit: u32,
     read_bytes: u64,
@@ -291,17 +307,11 @@ fn reset_all_metrics() {
         .lock()
         .expect("metrics recorder mutex poisoned")
         .reset();
+    EVENT_BUFFER
+        .lock()
+        .expect("event buffer mutex poisoned")
+        .clear();
 }
-
-#[cfg(feature = "grpc")]
-pub mod proto {
-    tonic::include_proto!("agent");
-}
-
-#[cfg(feature = "grpc")]
-type EventSender<'a> = &'a broadcast::Sender<EventRecord>;
-#[cfg(not(feature = "grpc"))]
-type EventSender<'a> = &'a ();
 
 /// Log rotation settings.
 #[derive(Debug, Clone)]
@@ -353,8 +363,6 @@ impl Write for EventLogWriter {
 #[derive(Debug, Default, Clone)]
 pub struct Config {
     pub rotation: Option<RotationConfig>,
-    #[cfg(feature = "grpc")]
-    pub grpc_port: Option<u16>,
     pub metrics_port: Option<u16>,
 }
 
@@ -485,13 +493,6 @@ pub fn run_with_shutdown(
         start_metrics_server(port);
     }
 
-    #[cfg(feature = "grpc")]
-    let (tx, _) = broadcast::channel(64);
-    #[cfg(feature = "grpc")]
-    if let Some(port) = cfg.grpc_port {
-        grpc::start(port, tx.clone());
-    }
-
     loop {
         if shutdown.is_requested() {
             break;
@@ -514,13 +515,7 @@ pub fn run_with_shutdown(
             }
             let event = unsafe { *(item.as_ptr() as *const Event) };
             let record = event_record_from_event(event);
-            cfg_if! {
-                if #[cfg(feature = "grpc")] {
-                    write_outputs(&record, &mut writer, Some(&tx))?;
-                } else {
-                    write_outputs(&record, &mut writer, None)?;
-                }
-            }
+            write_outputs(&record, &mut writer)?;
         }
     }
     Ok(())
@@ -529,119 +524,88 @@ pub fn run_with_shutdown(
 fn start_metrics_server(port: u16) {
     use std::io::Cursor;
     use tiny_http::{Header, Method, Response, Server, StatusCode};
+
     std::thread::spawn(move || {
-        let server = Server::http(("0.0.0.0", port)).expect("start server");
+        let server = match Server::http(("0.0.0.0", port)) {
+            Ok(server) => server,
+            Err(error) => {
+                warn!("failed to bind metrics server on port {port}: {error}");
+                return;
+            }
+        };
+
         for req in server.incoming_requests() {
-            if req.method() != &Method::Get || req.url() != "/metrics" {
+            if req.method() != &Method::Get {
                 let _ = req.respond(Response::new_empty(StatusCode(404)));
                 continue;
             }
-            let metric_families = REGISTRY.gather();
-            let mut buffer = Vec::new();
-            let encoder = TextEncoder::new();
-            if encoder.encode(&metric_families, &mut buffer).is_ok() {
-                let len = buffer.len();
-                let response = Response::new(
-                    StatusCode(200),
-                    vec![
-                        Header::from_bytes("Content-Type", "text/plain; version=0.0.4").unwrap(),
-                        Header::from_bytes("Cache-Control", "no-cache").unwrap(),
-                    ],
-                    Cursor::new(buffer),
-                    Some(len),
-                    None,
-                );
-                let _ = req.respond(response);
-            } else {
-                let response = Response::new_empty(StatusCode(500));
-                let _ = req.respond(response);
+
+            match req.url() {
+                "/metrics" => {
+                    let metric_families = REGISTRY.gather();
+                    let mut buffer = Vec::new();
+                    let encoder = TextEncoder::new();
+                    if encoder.encode(&metric_families, &mut buffer).is_ok() {
+                        let len = buffer.len();
+                        let response = Response::new(
+                            StatusCode(200),
+                            vec![
+                                Header::from_bytes("Content-Type", "text/plain; version=0.0.4")
+                                    .unwrap(),
+                                Header::from_bytes("Cache-Control", "no-cache").unwrap(),
+                            ],
+                            Cursor::new(buffer),
+                            Some(len),
+                            None,
+                        );
+                        let _ = req.respond(response);
+                    } else {
+                        let response = Response::new_empty(StatusCode(500));
+                        let _ = req.respond(response);
+                    }
+                }
+                "/events" => {
+                    let events = snapshot_events();
+                    match serde_json::to_vec(&events) {
+                        Ok(body) => {
+                            let len = body.len();
+                            let response = Response::new(
+                                StatusCode(200),
+                                vec![
+                                    Header::from_bytes("Content-Type", "application/json").unwrap(),
+                                    Header::from_bytes("Cache-Control", "no-cache").unwrap(),
+                                ],
+                                Cursor::new(body),
+                                Some(len),
+                                None,
+                            );
+                            let _ = req.respond(response);
+                        }
+                        Err(_) => {
+                            let response = Response::new_empty(StatusCode(500));
+                            let _ = req.respond(response);
+                        }
+                    }
+                }
+                _ => {
+                    let _ = req.respond(Response::new_empty(StatusCode(404)));
+                }
             }
         }
     });
 }
 
-#[cfg_attr(not(feature = "grpc"), allow(unused_variables))]
-fn write_outputs(
-    record: &EventRecord,
-    writer: &mut EventLogWriter,
-    tx: Option<EventSender<'_>>,
-) -> Result<(), anyhow::Error> {
+fn write_outputs(record: &EventRecord, writer: &mut EventLogWriter) -> Result<(), anyhow::Error> {
     let json = serde_json::to_string(record)?;
     writeln!(writer, "{}", json)?;
     writer.flush()?;
     info!("{}", json);
     record_event_metrics(record)?;
+    remember_event(record);
     if let Some(msg) = diagnostic(record) {
         warn!("{}", msg);
     }
-    #[cfg(feature = "grpc")]
-    if let Some(sender) = tx {
-        let _ = sender.send(record.clone());
-    }
     Ok(())
-}
-
-#[cfg(feature = "grpc")]
-mod grpc {
-    use super::*;
-    use futures_core::Stream;
-    use futures_util::StreamExt;
-    use std::pin::Pin;
-    use std::thread;
-    use tokio::sync::broadcast;
-    use tokio_stream::wrappers::BroadcastStream;
-    use tonic::{Request, Response, Status, transport::Server};
-
-    pub fn start(port: u16, tx: broadcast::Sender<EventRecord>) {
-        thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("runtime");
-            rt.block_on(async move {
-                struct S {
-                    tx: broadcast::Sender<EventRecord>,
-                }
-
-                #[tonic::async_trait]
-                impl proto::agent_server::Agent for S {
-                    type WatchEventsStream =
-                        Pin<Box<dyn Stream<Item = Result<proto::EventRecord, Status>> + Send>>;
-
-                    async fn watch_events(
-                        &self,
-                        _req: Request<proto::Empty>,
-                    ) -> Result<Response<Self::WatchEventsStream>, Status> {
-                        let rx = self.tx.subscribe();
-                        let stream = BroadcastStream::new(rx)
-                            .filter_map(|e| async move { e.ok() })
-                            .map(|r| {
-                                Ok(proto::EventRecord {
-                                    pid: r.pid,
-                                    tgid: r.tgid,
-                                    time_ns: r.time_ns,
-                                    unit: r.unit as u32,
-                                    action: r.action as u32,
-                                    verdict: r.verdict as u32,
-                                    container_id: r.container_id,
-                                    caps: r.caps,
-                                    path_or_addr: r.path_or_addr,
-                                    needed_perm: r.needed_perm,
-                                })
-                            });
-                        Ok(Response::new(Box::pin(stream)))
-                    }
-                }
-
-                let addr = ([0, 0, 0, 0], port).into();
-                let svc = S { tx };
-                if let Err(e) = Server::builder()
-                    .add_service(proto::agent_server::AgentServer::new(svc))
-                    .serve(addr)
-                    .await
-                {
-                    eprintln!("gRPC server error: {e}");
-                }
-            });
-        });
-    }
 }
 
 #[cfg(test)]
@@ -771,15 +735,7 @@ mod tests {
                 .open(&path)
                 .unwrap(),
         );
-        cfg_if! {
-            if #[cfg(feature = "grpc")] {
-                use tokio::sync::broadcast;
-                let (tx, _) = broadcast::channel(1);
-                write_outputs(&record, &mut writer, Some(&tx)).unwrap();
-            } else {
-                write_outputs(&record, &mut writer, None).unwrap();
-            }
-        }
+        write_outputs(&record, &mut writer).unwrap();
         drop(writer);
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("\"pid\":1"));
@@ -836,15 +792,7 @@ mod tests {
                 .open(&path)
                 .unwrap(),
         );
-        cfg_if! {
-            if #[cfg(feature = "grpc")] {
-                use tokio::sync::broadcast;
-                let (tx, _) = broadcast::channel(1);
-                write_outputs(&record, &mut writer, Some(&tx)).unwrap();
-            } else {
-                write_outputs(&record, &mut writer, None).unwrap();
-            }
-        }
+        write_outputs(&record, &mut writer).unwrap();
         assert_eq!(EVENT_COUNTER.get(), 1);
         assert_eq!(DENIED_COUNTER.get(), 1);
         assert_eq!(VIOLATIONS_COUNTER.get(), 1);
@@ -903,7 +851,7 @@ mod tests {
             path_or_addr: "/bin/deny".into(),
             needed_perm: "allow.exec.allowed".into(),
         };
-        write_outputs(&denied_record, &mut writer, None).unwrap();
+        write_outputs(&denied_record, &mut writer).unwrap();
 
         let allowed_record = EventRecord {
             pid: 11,
@@ -917,7 +865,7 @@ mod tests {
             path_or_addr: "/bin/allow".into(),
             needed_perm: String::new(),
         };
-        write_outputs(&allowed_record, &mut writer, None).unwrap();
+        write_outputs(&allowed_record, &mut writer).unwrap();
 
         update_unit_resource_metrics(1, 1024, 2048, 500, 7);
         update_unit_resource_metrics(99, 1, 2, 3, 4);
@@ -942,6 +890,24 @@ mod tests {
         assert!(body.contains("cpu_time_ms_by_unit{unit=\"build_script\"} 500"));
         assert!(body.contains("page_faults_by_unit{unit=\"build_script\"} 7"));
         assert!(body.contains("io_read_bytes_by_unit{unit=\"99\"} 1"));
+
+        let mut events_stream = TcpStream::connect(("127.0.0.1", port)).expect("connect events");
+        events_stream
+            .write_all(b"GET /events HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        events_stream.shutdown(Shutdown::Write).unwrap();
+        let mut events_response = String::new();
+        events_stream.read_to_string(&mut events_response).unwrap();
+        let events_body = events_response
+            .split_once("\r\n\r\n")
+            .map(|(_, b)| b)
+            .unwrap_or(&events_response);
+        let events: Vec<EventRecord> = serde_json::from_str(events_body).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].pid, denied_record.pid);
+        assert_eq!(events[1].path_or_addr, allowed_record.path_or_addr);
+
+        reset_all_metrics();
     }
 
     #[test]
@@ -976,7 +942,7 @@ mod tests {
                 path_or_addr: payload.clone(),
                 needed_perm: format!("allow.exec.{idx}_{suffix}"),
             };
-            write_outputs(&record, &mut writer, None).unwrap();
+            write_outputs(&record, &mut writer).unwrap();
         }
 
         drop(writer);
