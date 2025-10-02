@@ -4,6 +4,7 @@ use policy_core::{FsDefault, Mode, Policy, WorkspacePolicy};
 use qqrm_policy_compiler::{self, CompiledPolicy, MapsLayout};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io;
@@ -69,8 +70,8 @@ pub(crate) fn setup_isolation(
     apply_manifest_permissions(&mut policy, metadata)?;
     apply_trust_permissions(&mut policy, metadata)?;
     for path in policy_paths {
-        let extra = Policy::from_toml_path(Path::new(path))?;
-        merge_policy(&mut policy, extra);
+        let extra = load_policy(Path::new(path))?;
+        policy.merge(extra);
     }
     policy.extend_exec_allowed(allow.iter().cloned());
     extend_fs_access(&mut policy, metadata)?;
@@ -122,7 +123,7 @@ fn load_workspace_policy_layer(ctx: &mut PolicyContext) -> io::Result<Option<Pol
     let Some(path) = find_workspace_file("workspace.warden.toml")? else {
         return Ok(None);
     };
-    let workspace = WorkspacePolicy::from_toml_path(&path)?;
+    let workspace: WorkspacePolicy = read_toml_file(&path)?;
     let member = determine_active_workspace_member(ctx)?;
     let policy = match member {
         Some(ref member) => workspace.policy_for(member),
@@ -154,15 +155,19 @@ fn find_workspace_file(name: &str) -> io::Result<Option<PathBuf>> {
     Ok(None)
 }
 
+fn load_policy(path: &Path) -> io::Result<Policy> {
+    read_toml_file(path)
+}
+
 fn load_local_policy_layer() -> io::Result<PolicyLayer> {
     let path = PathBuf::from("warden.toml");
-    match Policy::from_toml_path(&path) {
+    match read_toml_file(&path) {
         Ok(policy) => Ok(PolicyLayer {
             policy,
             source: PolicySourceKind::LocalFile { path },
         }),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(PolicyLayer {
-            policy: empty_policy(),
+            policy: Policy::new(Mode::Enforce),
             source: PolicySourceKind::DefaultEmpty,
         }),
         Err(err) => Err(err),
@@ -731,12 +736,17 @@ fn workspace_member_from_dir(metadata: &Metadata) -> io::Result<Option<String>> 
     Ok(best_match.map(|(name, _, _)| name))
 }
 
-fn merge_policy(base: &mut Policy, extra: Policy) {
-    base.merge(extra);
-}
-
-fn empty_policy() -> Policy {
-    Policy::new(Mode::Enforce)
+fn read_toml_file<T>(path: &Path) -> io::Result<T>
+where
+    T: DeserializeOwned,
+{
+    let text = std::fs::read_to_string(path)?;
+    toml::from_str(&text).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{}: {err}", path.display()),
+        )
+    })
 }
 
 #[derive(Debug)]
@@ -764,7 +774,7 @@ pub(crate) fn collect_policy_status(
 
     for path in policy_paths {
         let path_buf = PathBuf::from(path);
-        let extra = Policy::from_toml_path(path_buf.as_path())?;
+        let extra = load_policy(path_buf.as_path())?;
         effective_mode = extra.mode;
         sources.push(PolicySource {
             kind: PolicySourceKind::CliFile { path: path_buf },

@@ -4,9 +4,6 @@ use crate::raw::{
 };
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs;
-use std::io;
-use std::path::Path;
 
 #[derive(Debug, Clone, Default)]
 pub struct PolicyOverride {
@@ -49,20 +46,6 @@ impl WorkspacePolicy {
         }
         raw.into()
     }
-
-    pub fn from_toml_path(path: &Path) -> io::Result<Self> {
-        let text = fs::read_to_string(path)?;
-        Self::from_toml_str_with_path(path, &text)
-    }
-
-    pub fn from_toml_str_with_path(path: &Path, text: &str) -> io::Result<Self> {
-        toml::from_str(text).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("{}: {err}", path.display()),
-            )
-        })
-    }
 }
 
 impl<'de> Deserialize<'de> for WorkspacePolicy {
@@ -96,24 +79,6 @@ pub(crate) struct RawWorkspacePolicy {
 mod tests {
     use super::*;
     use crate::policy::ExecDefault;
-    use std::io;
-    use std::path::Path;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn temp_workspace_path(suffix: &str) -> std::path::PathBuf {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        path.push(format!(
-            "workspace_policy_test_{}_{}_{}.toml",
-            std::process::id(),
-            nanos,
-            suffix
-        ));
-        path
-    }
 
     #[test]
     fn workspace_member_overrides() {
@@ -140,33 +105,5 @@ allowed = ["bash"]
         let other = ws.policy_for("other");
         assert_eq!(other.exec_default(), ExecDefault::Allowlist);
         assert!(other.exec_allowed().any(|bin| bin == "rustc"));
-    }
-
-    #[test]
-    fn from_toml_path_loads_workspace() {
-        const CONTENT: &str = r#"
-[root]
-mode = "enforce"
-
-[members.pkg.exec]
-default = "allow"
-"#;
-        let path = temp_workspace_path("valid");
-        std::fs::write(&path, CONTENT).unwrap();
-        let ws = WorkspacePolicy::from_toml_path(&path).unwrap();
-        let policy = ws.policy_for("pkg");
-        assert_eq!(policy.exec_default(), ExecDefault::Allow);
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn from_toml_str_with_path_wraps_error() {
-        let err = WorkspacePolicy::from_toml_str_with_path(
-            Path::new("broken-workspace.toml"),
-            "not toml",
-        )
-        .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert!(err.to_string().contains("broken-workspace.toml"));
     }
 }
