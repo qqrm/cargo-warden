@@ -2,9 +2,7 @@ use crate::raw::RawPolicy;
 use crate::rules::{EnvRules, ExecRules, FsRules, NetRules, SyscallRules};
 use crate::validation::{ValidationError, ValidationReport, ValidationWarning};
 use serde::Deserialize;
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -74,20 +72,6 @@ impl Policy {
 
     pub fn from_toml_str(toml_str: &str) -> Result<Self, toml::de::Error> {
         toml::from_str(toml_str)
-    }
-
-    pub fn from_toml_path(path: &Path) -> io::Result<Self> {
-        let text = fs::read_to_string(path)?;
-        Self::from_toml_str_with_path(path, &text)
-    }
-
-    pub fn from_toml_str_with_path(path: &Path, toml_str: &str) -> io::Result<Self> {
-        Self::from_toml_str(toml_str).map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("{}: {err}", path.display()),
-            )
-        })
     }
 
     pub fn merge(&mut self, other: Policy) {
@@ -256,9 +240,7 @@ mod tests {
     };
     use proptest::prelude::*;
     use std::collections::HashSet;
-    use std::io;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn workspace_root_path() -> PathBuf {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -269,21 +251,6 @@ mod tests {
     fn default_target_path() -> PathBuf {
         let target = workspace_root_path().join("target");
         std::fs::canonicalize(&target).unwrap_or(target)
-    }
-
-    fn temp_policy_path(suffix: &str) -> PathBuf {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        path.push(format!(
-            "policy_core_test_{}_{}_{}.toml",
-            std::process::id(),
-            nanos,
-            suffix
-        ));
-        path
     }
 
     fn ensure_default_fs_paths(policy: &mut Policy) {
@@ -381,23 +348,6 @@ deny = ["clone"]
         assert!(policy.fs_read_paths().any(|path| path == &workspace_root));
         assert!(policy.net_hosts().any(|host| host == "127.0.0.1:1080"));
         assert!(policy.syscall_deny().any(|name| name == "clone"));
-    }
-
-    #[test]
-    fn from_toml_path_reads_file() {
-        let path = temp_policy_path("valid");
-        std::fs::write(&path, VALID).unwrap();
-        let policy = Policy::from_toml_path(&path).unwrap();
-        assert_eq!(policy.mode, Mode::Enforce);
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn from_toml_str_with_path_wraps_error() {
-        let err =
-            Policy::from_toml_str_with_path(Path::new("broken.toml"), "not = [toml").unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert!(err.to_string().contains("broken.toml"));
     }
 
     const SYSCALL_DUP: &str = r#"
