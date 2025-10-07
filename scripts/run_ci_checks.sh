@@ -119,7 +119,6 @@ main() {
   ensure_cargo_tool "${install_tools}" cargo-audit cargo-audit
   ensure_cargo_tool "${install_tools}" cargo-nextest cargo-nextest
   ensure_cargo_tool "${install_tools}" cargo-udeps cargo-udeps
-  ensure_cargo_tool "${install_tools}" cargo-fuzz cargo-fuzz
 
   log_step "Ensuring nightly toolchain"
   ensure_nightly "${install_tools}"
@@ -163,9 +162,6 @@ main() {
 
   log_step "Running run_examples.sh"
   ./run_examples.sh
-
-  log_step "Building fuzz target 'net' with cargo fuzz"
-  cargo +nightly fuzz build net
 
   log_step "CI parity checks completed successfully"
 }

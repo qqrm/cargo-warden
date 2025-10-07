@@ -350,8 +350,7 @@ Levels:
 * ✅ Integration tests in `cli` with fake sandbox harness.
 * ✅ Negative tests expect `EPERM` and precise hints (enforced in CLI and sandbox tests).
 * ✅ Property-based tests in `policy-core` cover rule deduplication and validation.
-* 🟡 Fuzzing in config parsers and event handling (harnesses exist under `fuzz/`, including policy parsing; additional targets
-  remain welcome).
+* ⬜ Fuzzing in config parsers and event handling (deferred until post-MVP; legacy `fuzz/` harness removed).
 
 Examples:
 
