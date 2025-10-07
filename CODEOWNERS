@@ -4,5 +4,4 @@
 # Core crates
 crates/ @qqrm
 examples/ @qqrm
-fuzz/ @qqrm
 scripts/ @qqrm
