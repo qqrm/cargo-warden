@@ -62,11 +62,25 @@ impl FsRules {
     }
 
     pub(crate) fn merge(&mut self, other: FsRules) {
-        self.default = other.default;
-        self.write.extend(other.write);
-        self.read.extend(other.read);
-        self.duplicate_write.extend(other.duplicate_write);
-        self.duplicate_read.extend(other.duplicate_read);
+        let FsRules {
+            default,
+            write,
+            read,
+            duplicate_write,
+            duplicate_read,
+        } = other;
+
+        self.default = default;
+
+        for path in write {
+            self.insert_write_raw(path);
+        }
+        for path in read {
+            self.insert_read_raw(path);
+        }
+
+        self.duplicate_write.extend(duplicate_write);
+        self.duplicate_read.extend(duplicate_read);
     }
 
     pub(crate) fn write_iter(&self) -> impl Iterator<Item = &PathBuf> {
@@ -114,8 +128,13 @@ where
     }
 
     pub(crate) fn merge(&mut self, other: Self) {
-        self.values.extend(other.values);
-        self.duplicates.extend(other.duplicates);
+        let DuplicateAwareSet { values, duplicates } = other;
+
+        for value in values {
+            self.insert(value);
+        }
+
+        self.duplicates.extend(duplicates);
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = &T> {

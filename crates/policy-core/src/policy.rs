@@ -471,6 +471,42 @@ hosts = ["127.0.0.1:1080"]
     }
 
     #[test]
+    fn merge_detects_duplicate_exec_entries() {
+        let mut base = Policy::new(Mode::Enforce);
+        base.extend_exec_allowed(vec!["/bin/bash".into()]);
+
+        let mut extra = Policy::new(Mode::Enforce);
+        extra.extend_exec_allowed(vec!["/bin/bash".into()]);
+
+        base.merge(extra);
+
+        let report = base.validate();
+        assert!(report.errors.iter().any(|error| matches!(
+            error,
+            ValidationError::DuplicateExec(dup) if dup == "/bin/bash"
+        )));
+    }
+
+    #[test]
+    fn merge_detects_duplicate_fs_write_entries() {
+        let mut base = Policy::new(Mode::Enforce);
+        let path = PathBuf::from("/tmp/logs");
+        let expected = path.to_string_lossy().into_owned();
+        base.extend_fs_writes(vec![path.clone()]);
+
+        let mut extra = Policy::new(Mode::Enforce);
+        extra.extend_fs_writes(vec![path]);
+
+        base.merge(extra);
+
+        let report = base.validate();
+        assert!(report.errors.iter().any(|error| matches!(
+            error,
+            ValidationError::DuplicateFsWrite(dup) if dup == &expected
+        )));
+    }
+
+    #[test]
     fn extend_exec_allowed_reports_duplicates() {
         let mut policy = Policy::new(Mode::Enforce);
         policy.extend_exec_allowed(vec!["/bin/bash".into(), "/bin/bash".into()]);
