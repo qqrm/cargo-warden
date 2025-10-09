@@ -11,12 +11,13 @@ const DENIED_UNIT: u8 = UNIT_RUSTC as u8;
 const RENAME_PATH: &str = "/var/warden/forbidden";
 const RENAME_ACTION: u8 = 1;
 
-fn assert_denial(event: &EventRecord, action: u8, path_or_addr: &str) {
+fn assert_denial(event: &EventRecord, action: u8, path_or_addr: &str, needed_perm: &str) {
     assert_eq!(event.pid, DENIED_PID);
     assert_eq!(event.action, action);
     assert_eq!(event.unit, DENIED_UNIT);
     assert_eq!(event.verdict, 1);
     assert_eq!(event.path_or_addr, path_or_addr);
+    assert_eq!(event.needed_perm, needed_perm);
 }
 
 #[test]
@@ -31,6 +32,7 @@ fn fake_sandbox_enforce_denial_fails_child() -> Result<(), Box<dyn std::error::E
         DENIED_ACTION,
         DENIED_UNIT,
         DENIED_ENDPOINT,
+        "allow.net.hosts",
     )?;
     let policy = project.write_exec_policy("enforce", Mode::Enforce, &[&script])?;
 
@@ -54,7 +56,12 @@ fn fake_sandbox_enforce_denial_fails_child() -> Result<(), Box<dyn std::error::E
         "expected single denial event: {:?}",
         events
     );
-    assert_denial(&events[0], DENIED_ACTION, DENIED_ENDPOINT);
+    assert_denial(
+        &events[0],
+        DENIED_ACTION,
+        DENIED_ENDPOINT,
+        "allow.net.hosts",
+    );
 
     let snapshot = sandbox.last_layout()?;
     assert_eq!(snapshot.mode(), "enforce");
@@ -71,8 +78,13 @@ fn fake_sandbox_enforce_rename_denial_reports_event() -> Result<(), Box<dyn std:
     let sandbox = project.fake_sandbox("rename")?;
     sandbox.touch_event_log()?;
 
-    let script =
-        project.write_violation_script("deny-rename", RENAME_ACTION, DENIED_UNIT, RENAME_PATH)?;
+    let script = project.write_violation_script(
+        "deny-rename",
+        RENAME_ACTION,
+        DENIED_UNIT,
+        RENAME_PATH,
+        "allow.fs.write_extra",
+    )?;
     let policy = project.write_exec_policy("rename", Mode::Enforce, &[&script])?;
 
     let mut cmd = Command::cargo_bin("cargo-warden")?;
@@ -95,7 +107,12 @@ fn fake_sandbox_enforce_rename_denial_reports_event() -> Result<(), Box<dyn std:
         "expected single rename event: {:?}",
         events
     );
-    assert_denial(&events[0], RENAME_ACTION, RENAME_PATH);
+    assert_denial(
+        &events[0],
+        RENAME_ACTION,
+        RENAME_PATH,
+        "allow.fs.write_extra",
+    );
 
     let snapshot = sandbox.last_layout()?;
     assert_eq!(snapshot.mode(), "enforce");
@@ -117,6 +134,7 @@ fn fake_sandbox_observe_denial_allows_child() -> Result<(), Box<dyn std::error::
         DENIED_ACTION,
         DENIED_UNIT,
         DENIED_ENDPOINT,
+        "allow.net.hosts",
     )?;
     let policy = project.write_exec_policy("observe", Mode::Observe, &[&script])?;
 
@@ -140,7 +158,18 @@ fn fake_sandbox_observe_denial_allows_child() -> Result<(), Box<dyn std::error::
         "expected single denial event: {:?}",
         events
     );
-    assert_denial(&events[0], DENIED_ACTION, DENIED_ENDPOINT);
+    assert_denial(
+        &events[0],
+        DENIED_ACTION,
+        DENIED_ENDPOINT,
+        "allow.net.hosts",
+    );
+
+    let display = sandbox.last_event()?.to_string();
+    assert!(
+        display.contains("hint=allow.net.hosts"),
+        "expected hint in observe mode display: {display}"
+    );
 
     let snapshot = sandbox.last_layout()?;
     assert_eq!(snapshot.mode(), "observe");
@@ -292,6 +321,81 @@ read_extra = ["/etc/ssl/certs"]
         "expected fake event marker in log: {}",
         events_log
     );
+    sandbox.assert_cgroup_removed()?;
+
+    Ok(())
+}
+
+#[test]
+fn cli_merges_multiple_policies_and_cli_allow() -> Result<(), Box<dyn std::error::Error>> {
+    let project = TestProject::new()?;
+    project.init_cargo_package("fixture")?;
+    let sandbox = project.fake_sandbox("merge-policies")?;
+    sandbox.touch_event_log()?;
+
+    let policy_a = project.child("policy-a.toml");
+    project.write(
+        &policy_a,
+        r#"
+mode = "observe"
+
+[fs]
+default = "strict"
+
+[net]
+default = "deny"
+
+[exec]
+default = "allowlist"
+
+[allow.exec]
+allowed = ["/usr/bin/policy-a"]
+"#,
+    )?;
+
+    let policy_b = project.child("policy-b.toml");
+    project.write(
+        &policy_b,
+        r#"
+mode = "enforce"
+
+[fs]
+default = "strict"
+
+[net]
+default = "deny"
+
+[exec]
+default = "allowlist"
+
+[allow.exec]
+allowed = ["/usr/bin/policy-b"]
+
+[allow.net]
+hosts = ["203.0.113.1:8080"]
+"#,
+    )?;
+
+    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    cmd.arg("run")
+        .arg("--policy")
+        .arg(&policy_a)
+        .arg("--policy")
+        .arg(&policy_b)
+        .arg("--allow")
+        .arg("/usr/bin/cli-override")
+        .arg("--")
+        .arg("true")
+        .current_dir(project.path());
+    sandbox.apply_assert(&mut cmd);
+    cmd.assert().success();
+
+    let snapshot = sandbox.last_layout()?;
+    assert_eq!(snapshot.mode(), "enforce");
+    assert!(snapshot.exec_contains("/usr/bin/policy-a"));
+    assert!(snapshot.exec_contains("/usr/bin/policy-b"));
+    assert!(snapshot.exec_contains("/usr/bin/cli-override"));
+    assert!(snapshot.net_contains("203.0.113.1", 8080));
     sandbox.assert_cgroup_removed()?;
 
     Ok(())

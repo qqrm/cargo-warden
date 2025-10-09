@@ -82,6 +82,12 @@ mod tests {
     use std::process::Command;
     use std::sync::{Mutex, OnceLock};
 
+    use crate::LayoutSnapshot;
+    use crate::layout::FAKE_LAYOUT_ENV;
+    use crate::util::{EVENTS_PATH_ENV, FAKE_CGROUP_DIR_ENV};
+    use bpf_api::{ExecAllowEntry, MODE_FLAG_ENFORCE};
+    use serde_json::from_str;
+
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     fn empty_layout() -> MapsLayout {
@@ -141,6 +147,64 @@ mod tests {
         let mut sandbox = Sandbox::new()?;
         sandbox.write_workload_units(&[(1, 2)])?;
         sandbox.shutdown()?;
+        Ok(())
+    }
+
+    #[test]
+    fn fake_runtime_records_compiled_layout() -> io::Result<()> {
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let _fake = ScopedEnv::set(OsStr::new(super::FAKE_SANDBOX_ENV), OsStr::new("1"));
+
+        let root = std::env::temp_dir().join(format!(
+            "sandbox-runtime-test-{}",
+            crate::util::unique_suffix()
+        ));
+        std::fs::create_dir_all(&root)?;
+        let layout_path = root.join("layout.jsonl");
+        let events_path = root.join("events.jsonl");
+        let cgroup_dir = root.join("cgroup");
+
+        let _layout_env = ScopedEnv::set(OsStr::new(FAKE_LAYOUT_ENV), layout_path.as_os_str());
+        let _events_env = ScopedEnv::set(OsStr::new(EVENTS_PATH_ENV), events_path.as_os_str());
+        let _cgroup_env = ScopedEnv::set(OsStr::new(FAKE_CGROUP_DIR_ENV), cgroup_dir.as_os_str());
+
+        let mut sandbox = Sandbox::new()?;
+        let mut command = Command::new("/bin/sh");
+        command.arg("-c").arg("exit 0");
+
+        let mut exec_entry = ExecAllowEntry { path: [0; 256] };
+        let exec_path = b"/usr/bin/compiled";
+        exec_entry.path[..exec_path.len()].copy_from_slice(exec_path);
+        let layout = MapsLayout {
+            mode_flags: vec![MODE_FLAG_ENFORCE],
+            exec_allowlist: vec![exec_entry],
+            net_rules: Vec::new(),
+            net_parents: Vec::new(),
+            fs_rules: Vec::new(),
+        };
+
+        let status = sandbox.run(command, Mode::Enforce, &[], &layout, &["PATH".into()])?;
+        assert!(status.success());
+        sandbox.shutdown()?;
+
+        let contents = std::fs::read_to_string(&layout_path)?;
+        let snapshot = contents
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .map(|line| from_str::<LayoutSnapshot>(line).unwrap())
+            .ok_or_else(|| io::Error::other("missing layout snapshot"))?;
+        assert_eq!(snapshot.mode, "enforce");
+        assert_eq!(snapshot.mode_flag, Some(MODE_FLAG_ENFORCE));
+        assert!(
+            snapshot
+                .exec
+                .iter()
+                .any(|entry| entry == "/usr/bin/compiled")
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+
         Ok(())
     }
 }

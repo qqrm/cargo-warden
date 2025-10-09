@@ -19,7 +19,13 @@
 //! let sandbox = project.fake_sandbox("demo")?;
 //! sandbox.touch_event_log()?;
 //!
-//! let script = project.write_violation_script("deny", 4, 1, "198.51.100.10:443")?;
+//! let script = project.write_violation_script(
+//!     "deny",
+//!     4,
+//!     1,
+//!     "198.51.100.10:443",
+//!     "allow.net.hosts",
+//! )?;
 //! let policy = project.write_exec_policy("demo", Mode::Enforce, &[&script])?;
 //!
 //! let mut cmd = Command::cargo_bin("cargo-warden")?;
@@ -145,6 +151,7 @@ impl TestProject {
         action: u8,
         unit: u8,
         path_or_addr: &str,
+        needed_perm: &str,
     ) -> io::Result<PathBuf> {
         let script_path = self.child(format!("{stem}.sh"));
         let deny_event = serde_json::json!({
@@ -157,7 +164,7 @@ impl TestProject {
             "container_id": 0,
             "caps": 0,
             "path_or_addr": path_or_addr,
-            "needed_perm": "allow.net.hosts",
+            "needed_perm": needed_perm,
         })
         .to_string();
 
@@ -299,6 +306,17 @@ impl FakeSandbox {
     /// Read all layout snapshots recorded by the fake sandbox.
     pub fn read_layouts(&self) -> Result<Vec<LayoutSnapshot>> {
         read_json_lines(&self.layout_path)
+    }
+
+    /// Convenience wrapper returning the most recent event emitted by the fake sandbox.
+    pub fn last_event(&self) -> Result<EventRecord> {
+        let mut events = self.read_events()?;
+        events.pop().ok_or_else(|| TestkitError::Assertion {
+            message: format!(
+                "expected at least one event in {}",
+                self.events_path.display()
+            ),
+        })
     }
 
     /// Convenience wrapper returning the most recent layout snapshot.
