@@ -180,7 +180,8 @@ MODE="$2"
 printf '%s\n' '{event}' >> "$EVENTS"
 
 if [ "$MODE" = "enforce" ]; then
-    exit 42
+    # Simulate kernel EPERM (13) when enforcement blocks the action.
+    exit 13
 fi
 
 exit 0
