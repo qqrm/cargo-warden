@@ -1,8 +1,13 @@
 use assert_cmd::Command;
 use bpf_api::{MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE, UNIT_RUSTC};
-use event_reporting::EventRecord;
+use event_reporting::{EventRecord, METRICS_SNAPSHOT_FILE};
 use policy_core::Mode;
 use qqrm_testkits::{LayoutSnapshotExt, TestProject};
+use serde_json::{Value, json};
+use std::env;
+use std::fs::File;
+use std::io::Write;
+use std::path::Path;
 
 const DENIED_ENDPOINT: &str = "198.51.100.10:443";
 const DENIED_PID: u32 = 7777;
@@ -10,6 +15,20 @@ const DENIED_ACTION: u8 = 4;
 const DENIED_UNIT: u8 = UNIT_RUSTC as u8;
 const RENAME_PATH: &str = "/var/warden/forbidden";
 const RENAME_ACTION: u8 = 1;
+
+#[cfg(unix)]
+fn set_executable(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(path)?.permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms)
+}
+
+#[cfg(not(unix))]
+fn set_executable(path: &Path) -> std::io::Result<()> {
+    let _ = path;
+    Ok(())
+}
 
 fn assert_denial(event: &EventRecord, action: u8, path_or_addr: &str, needed_perm: &str) {
     assert_eq!(event.pid, DENIED_PID);
@@ -47,7 +66,7 @@ fn fake_sandbox_enforce_denial_fails_child() -> Result<(), Box<dyn std::error::E
         .current_dir(project.path());
     sandbox.apply_assert(&mut cmd);
 
-    cmd.assert().failure().code(42);
+    cmd.assert().failure().code(13);
 
     let events = sandbox.read_events()?;
     assert_eq!(
@@ -98,7 +117,7 @@ fn fake_sandbox_enforce_rename_denial_reports_event() -> Result<(), Box<dyn std:
         .current_dir(project.path());
     sandbox.apply_assert(&mut cmd);
 
-    cmd.assert().failure().code(42);
+    cmd.assert().failure().code(13);
 
     let events = sandbox.read_events()?;
     assert_eq!(
@@ -402,6 +421,107 @@ hosts = ["203.0.113.1:8080"]
 }
 
 #[test]
+fn build_merges_multiple_policies_and_cli_allow() -> Result<(), Box<dyn std::error::Error>> {
+    let project = TestProject::new()?;
+    project.init_cargo_package("fixture")?;
+    let sandbox = project.fake_sandbox("build-merge")?;
+    sandbox.touch_event_log()?;
+
+    let policy_a = project.child("build-policy-a.toml");
+    project.write(
+        &policy_a,
+        r#"
+mode = "observe"
+
+[fs]
+default = "strict"
+
+[net]
+default = "deny"
+
+[exec]
+default = "allowlist"
+
+[allow.exec]
+allowed = ["/usr/bin/build-a"]
+
+[allow.env]
+read = ["PATH"]
+"#,
+    )?;
+
+    let policy_b = project.child("build-policy-b.toml");
+    project.write(
+        &policy_b,
+        r#"
+mode = "enforce"
+
+[fs]
+default = "strict"
+
+[net]
+default = "deny"
+
+[exec]
+default = "allowlist"
+
+[allow.exec]
+allowed = ["/usr/bin/build-b"]
+
+[allow.net]
+hosts = ["203.0.113.2:8081"]
+"#,
+    )?;
+
+    let cargo_stub = project.child("cargo");
+    project.write(
+        &cargo_stub,
+        r#"#!/bin/sh
+set -eu
+
+if [ "$1" = "build" ]; then
+    exit "${CARGO_WARDEN_EXIT:-0}"
+fi
+
+echo "unexpected cargo invocation" >&2
+exit 1
+"#,
+    )?;
+    set_executable(&cargo_stub)?;
+
+    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    cmd.arg("build")
+        .arg("--policy")
+        .arg(&policy_a)
+        .arg("--policy")
+        .arg(&policy_b)
+        .arg("--allow")
+        .arg("/usr/bin/build-cli")
+        .current_dir(project.path());
+    sandbox.apply_assert(&mut cmd);
+
+    let mut path_entries = vec![project.path().to_path_buf()];
+    if let Some(existing) = env::var_os("PATH") {
+        path_entries.extend(env::split_paths(&existing));
+    }
+    let joined = env::join_paths(path_entries)?;
+    cmd.env("PATH", joined);
+    cmd.env("CARGO_WARDEN_EXIT", "0");
+
+    cmd.assert().success();
+
+    let snapshot = sandbox.last_layout()?;
+    assert_eq!(snapshot.mode(), "enforce");
+    assert!(snapshot.exec_contains("/usr/bin/build-a"));
+    assert!(snapshot.exec_contains("/usr/bin/build-b"));
+    assert!(snapshot.exec_contains("/usr/bin/build-cli"));
+    assert!(snapshot.net_contains("203.0.113.2", 8081));
+    sandbox.assert_cgroup_removed()?;
+
+    Ok(())
+}
+
+#[test]
 fn strict_mode_auto_paths_allow_build() -> Result<(), Box<dyn std::error::Error>> {
     let project = TestProject::new()?;
     project.init_cargo_package("fixture")?;
@@ -572,6 +692,132 @@ hosts = ["10.0.0.1:1234"]
         beta_snapshot.net
     );
     sandbox_beta.assert_cgroup_removed()?;
+
+    Ok(())
+}
+
+#[test]
+fn status_reports_policy_sources_and_events() -> Result<(), Box<dyn std::error::Error>> {
+    let project = TestProject::new()?;
+    project.init_cargo_package("fixture")?;
+
+    project.write("warden.toml", "mode = \"observe\"\n")?;
+    let cli_policy = project.child("cli-policy.toml");
+    project.write(&cli_policy, "mode = \"enforce\"\n")?;
+
+    let events_path = project.child("warden-events.jsonl");
+    let mut events_file = File::create(&events_path)?;
+    writeln!(
+        events_file,
+        "{}",
+        json!({
+            "pid": 1,
+            "tgid": 10,
+            "time_ns": 100,
+            "unit": DENIED_UNIT,
+            "action": DENIED_ACTION,
+            "verdict": 1,
+            "container_id": 0,
+            "caps": 0,
+            "path_or_addr": DENIED_ENDPOINT,
+            "needed_perm": "allow.net.hosts"
+        })
+    )?;
+    writeln!(events_file, "{{ not json }}")?;
+
+    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    cmd.arg("status")
+        .arg("--policy")
+        .arg(&cli_policy)
+        .current_dir(project.path());
+
+    let assert = cmd.assert().success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
+
+    assert!(stdout.contains("local policy"));
+    assert!(stdout.contains("CLI policy"));
+    assert!(stdout.contains("effective mode: enforce"));
+    assert!(stdout.contains("recent events"));
+    assert!(stdout.contains("hint=allow.net.hosts"));
+
+    Ok(())
+}
+
+#[test]
+fn report_emits_json_with_metrics() -> Result<(), Box<dyn std::error::Error>> {
+    let project = TestProject::new()?;
+    project.init_cargo_package("fixture")?;
+
+    let events_path = project.child("warden-events.jsonl");
+    let mut events_file = File::create(&events_path)?;
+    writeln!(
+        events_file,
+        "{}",
+        json!({
+            "pid": 11,
+            "tgid": 20,
+            "time_ns": 200,
+            "unit": DENIED_UNIT,
+            "action": DENIED_ACTION,
+            "verdict": 1,
+            "container_id": 0,
+            "caps": 0,
+            "path_or_addr": DENIED_ENDPOINT,
+            "needed_perm": "allow.net.hosts"
+        })
+    )?;
+    writeln!(
+        events_file,
+        "{}",
+        json!({
+            "pid": 12,
+            "tgid": 22,
+            "time_ns": 220,
+            "unit": DENIED_UNIT,
+            "action": DENIED_ACTION,
+            "verdict": 0,
+            "container_id": 0,
+            "caps": 0,
+            "path_or_addr": "/bin/echo",
+            "needed_perm": ""
+        })
+    )?;
+    writeln!(events_file, "{{ invalid }}")?;
+
+    project.write(
+        METRICS_SNAPSHOT_FILE,
+        serde_json::to_string(&json!({
+            "allowed_total": 5,
+            "denied_total": 1,
+            "violations_total": 1,
+            "blocked_total": 1,
+            "per_unit": {
+                DENIED_UNIT.to_string(): {
+                    "allowed": 2,
+                    "denied": 1,
+                    "io_read_bytes": 32,
+                    "io_write_bytes": 16,
+                    "cpu_time_ms": 7,
+                    "page_faults": 3
+                }
+            }
+        }))?,
+    )?;
+
+    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    cmd.arg("report")
+        .arg("--format")
+        .arg("json")
+        .current_dir(project.path());
+
+    let assert = cmd.assert().success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone())?;
+    let payload: Value = serde_json::from_str(&stdout)?;
+
+    assert_eq!(payload["stats"]["denied"], 1);
+    assert_eq!(payload["stats"]["skipped_events"], 1);
+    assert_eq!(payload["stats"]["metrics"]["denied_total"], 1);
+    assert_eq!(payload["events"].as_array().map(|a| a.len()), Some(2));
 
     Ok(())
 }
