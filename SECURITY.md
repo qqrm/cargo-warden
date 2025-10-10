@@ -34,4 +34,19 @@ Cargo-warden is currently in active development. We respond to vulnerability rep
 - Avoid discussing vulnerabilities in public chats, issues, or pull requests before coordinated disclosure.
 - Credit reporters in the advisory when they consent to disclosure.
 
+## Operational Monitoring Guidance
+
+Proactive monitoring helps surface suspicious activity early:
+
+- Run sandboxed commands with `--metrics-port <PORT>` to expose the Prometheus
+  endpoint. Scrape counters such as `violations_total`, `blocked_total`, and the
+  per-unit gauges defined in `SPEC.md` to spot anomalous builds.
+- Persist the generated `warden-events.jsonl` (or `warden.log` symlink) and the
+  adjacent `warden-metrics.json` snapshot to your log pipeline. The JSONL stream
+  captures every verdict, while the snapshot records cumulative counters for
+  offline review.
+- Automate triage with the `cargo warden report --format json` command, which
+  combines the latest events and metrics. Alert when denied executions or
+  network connections increase unexpectedly.
+
 Thank you for helping us keep cargo-warden users safe.

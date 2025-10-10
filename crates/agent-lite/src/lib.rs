@@ -611,6 +611,7 @@ fn write_outputs(record: &EventRecord, writer: &mut EventLogWriter) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use serial_test::serial;
     use std::{
         fs::{self, File, OpenOptions},
@@ -882,6 +883,8 @@ mod tests {
             .split_once("\r\n\r\n")
             .map(|(_, b)| b)
             .unwrap_or(&response);
+        assert!(body.contains("warden_events_total"));
+        assert!(body.contains("warden_denied_events_total"));
         assert!(body.contains("violations_total 1"));
         assert!(body.contains("blocked_total 1"));
         assert!(body.contains("allowed_total 1"));
@@ -989,6 +992,35 @@ mod tests {
         assert_eq!(unit_metrics.denied, 1);
         assert_eq!(unit_metrics.io_write_bytes, 2048);
         assert_eq!(unit_metrics.page_faults, 6);
+        reset_all_metrics();
+    }
+
+    #[test]
+    #[serial]
+    fn metrics_recorder_accepts_legacy_snapshot() {
+        reset_all_metrics();
+        let dir = tempdir().unwrap();
+        let events_path = dir.path().join("warden-events.jsonl");
+        File::create(&events_path).unwrap();
+        let legacy = json!({
+            "allowed_total": 4
+        });
+        fs::write(
+            events_path.with_file_name(METRICS_SNAPSHOT_FILE),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        configure_metrics_storage(&events_path).unwrap();
+
+        let recorder = METRICS_RECORDER
+            .lock()
+            .expect("metrics recorder mutex poisoned");
+        assert_eq!(recorder.snapshot.allowed_total, 4);
+        assert_eq!(recorder.snapshot.denied_total, 0);
+        assert_eq!(recorder.snapshot.violations_total, 0);
+        assert_eq!(recorder.snapshot.blocked_total, 0);
+        drop(recorder);
         reset_all_metrics();
     }
 }

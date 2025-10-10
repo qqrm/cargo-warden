@@ -11,6 +11,7 @@ pub(crate) fn exec(
     allow: &[String],
     policy: &[String],
     mode_override: Option<Mode>,
+    agent_config: sandbox_runtime::AgentConfig,
 ) -> io::Result<()> {
     if cmd.is_empty() {
         return Err(io::Error::new(
@@ -19,7 +20,7 @@ pub(crate) fn exec(
         ));
     }
     let isolation = setup_isolation(allow, policy, mode_override)?;
-    let status = run_in_sandbox(run_command(&cmd), isolation.mode, &isolation)?;
+    let status = run_in_sandbox(run_command(&cmd), isolation.mode, &isolation, agent_config)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }

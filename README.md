@@ -170,14 +170,58 @@ fields for that specific crate.
 
 ## Logs and Reports
 
-The runtime writes JSONL events to `warden.log`. Tail the file to watch
-decisions in real time:
+The runtime writes JSONL events to `warden-events.jsonl`. Older tooling and
+examples may refer to the same file as `warden.log`; creating a symlink keeps
+existing scripts working:
 
 ```bash
-tail -f warden.log
+ln -sf warden-events.jsonl warden.log
+tail -f warden-events.jsonl
 ```
 
-The `report` subcommand exports aggregated summaries in text, JSON, or SARIF.
+The agent persists a rolling metrics snapshot to `warden-metrics.json` beside
+the event log. The `report` subcommand exports aggregated summaries in text,
+JSON, or SARIF.
+
+### Prometheus Metrics Export
+
+Expose the in-process Prometheus endpoint by passing `--metrics-port` to any
+command that launches the sandbox:
+
+```bash
+cargo warden build --metrics-port 9187 -- --release
+
+# scrape counters and gauges
+curl -s http://127.0.0.1:9187/metrics | grep '^violations_total'
+# fetch the last buffered events as JSON
+curl -s http://127.0.0.1:9187/events | jq '.[0]'
+```
+
+The HTTP endpoint publishes the metrics listed in [the specification](SPEC.md),
+including `violations_total`, `blocked_total`, `allowed_total`,
+`io_read_bytes_by_unit`, `io_write_bytes_by_unit`, `cpu_time_ms_by_unit`, and
+`page_faults_by_unit`. The metrics snapshot file mirrors the counters for
+offline analysis.
+
+### Sample `warden.log` Analysis Workflow
+
+Teams triaging violations can combine the JSONL log, metrics snapshot, and the
+`report` subcommand:
+
+```bash
+# summarize recent violations with human-readable hints
+cargo warden report --format text
+
+# focus on denied actions from the JSONL stream
+jq -r 'select(.verdict == 1) | "\(.time_ns) \(.path_or_addr) hint=\(.needed_perm)"' \
+  warden-events.jsonl | head
+
+# correlate with the persisted metrics snapshot
+jq '.denied_total as $denied | {denied: $denied, per_unit: .per_unit}' \
+  warden-metrics.json
+```
+
+The same workflow applies if the file is aliased to `warden.log`.
 
 ### Event Log ABI
 

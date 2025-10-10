@@ -11,9 +11,15 @@ pub(crate) fn exec(
     allow: &[String],
     policy: &[String],
     mode_override: Option<Mode>,
+    agent_config: sandbox_runtime::AgentConfig,
 ) -> io::Result<()> {
     let isolation = setup_isolation(allow, policy, mode_override)?;
-    let status = run_in_sandbox(build_command(&args), isolation.mode, &isolation)?;
+    let status = run_in_sandbox(
+        build_command(&args),
+        isolation.mode,
+        &isolation,
+        agent_config,
+    )?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
     }
