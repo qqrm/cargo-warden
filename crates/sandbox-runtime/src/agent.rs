@@ -34,12 +34,15 @@ impl Drop for AgentHandle {
     }
 }
 
-pub(crate) fn start_agent(ring: RingBuf<MapData>, events_path: PathBuf) -> io::Result<AgentHandle> {
-    let cfg = AgentConfig::default();
+pub(crate) fn start_agent(
+    ring: RingBuf<MapData>,
+    events_path: PathBuf,
+    config: AgentConfig,
+) -> io::Result<AgentHandle> {
     let (shutdown, signal) = Shutdown::new(Duration::from_millis(100));
     let thread = thread::Builder::new()
         .name("qqrm-agent-lite".into())
-        .spawn(move || qqrm_agent_lite::run_with_shutdown(ring, &events_path, cfg, signal))
+        .spawn(move || qqrm_agent_lite::run_with_shutdown(ring, &events_path, config, signal))
         .map_err(|err| io::Error::other(format!("failed to spawn agent thread: {err}")))?;
     Ok(AgentHandle {
         shutdown,

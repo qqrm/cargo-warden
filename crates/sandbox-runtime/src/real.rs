@@ -12,6 +12,7 @@ use aya::programs::{
 };
 use aya::{Btf, Ebpf};
 use policy_core::Mode;
+use qqrm_agent_lite::Config as AgentConfig;
 use qqrm_policy_compiler::MapsLayout;
 use std::cell::UnsafeCell;
 use std::io;
@@ -30,7 +31,7 @@ pub(crate) struct RealSandbox {
 }
 
 impl RealSandbox {
-    pub(crate) fn new() -> io::Result<Self> {
+    pub(crate) fn with_agent_config(agent_config: AgentConfig) -> io::Result<Self> {
         let events_path = events_path();
         if let Some(parent) = events_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -50,7 +51,11 @@ impl RealSandbox {
         sandbox.attach_cgroup()?;
         sandbox.attach_tracepoints()?;
         let ring = sandbox.with_bpf(take_events_ring)?;
-        sandbox.agent = Some(start_agent(ring, sandbox.events_path.clone())?);
+        sandbox.agent = Some(start_agent(
+            ring,
+            sandbox.events_path.clone(),
+            agent_config,
+        )?);
         Ok(sandbox)
     }
 
