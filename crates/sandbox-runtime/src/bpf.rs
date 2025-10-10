@@ -5,26 +5,26 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use qqrm_bpf_host::prebuilt::PrebuiltObject;
+
 pub(crate) fn load_bpf() -> io::Result<Ebpf> {
-    let path = bpf_object_path();
-    let data = fs::read(&path)?;
+    let (data, path) = if let Some(path) = env::var_os("QQRM_BPF_OBJECT") {
+        let path = PathBuf::from(path);
+        let data = fs::read(&path)?;
+        (data, path)
+    } else {
+        let object = PrebuiltObject::locate_default()?;
+        let path = object.path();
+        let data = object.into_bytes()?;
+        (data, path)
+    };
+
     EbpfLoader::new().load(&data).map_err(|err| {
         io::Error::other(format!(
             "failed to load BPF object {}: {err}",
             path.display()
         ))
     })
-}
-
-fn bpf_object_path() -> PathBuf {
-    if let Some(path) = env::var_os("QQRM_BPF_OBJECT") {
-        PathBuf::from(path)
-    } else {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../prebuilt")
-            .join(env::consts::ARCH)
-            .join("qqrm-bpf-core.o")
-    }
 }
 
 pub(crate) fn take_events_ring(bpf: &mut Ebpf) -> io::Result<RingBuf<MapData>> {

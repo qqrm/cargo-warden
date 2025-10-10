@@ -1,5 +1,7 @@
 //! Host-only shims for exercising qqrm-bpf-core programs outside the kernel.
 
+pub mod prebuilt;
+
 pub mod maps {
     use arrayvec::ArrayVec;
     use std::sync::{Mutex, MutexGuard};
@@ -198,6 +200,141 @@ pub mod fs {
         let old = dentry_path_ptr(old_dentry)?;
         let new = dentry_path_ptr(new_dentry)?;
         Some((old, new))
+    }
+}
+
+pub mod prebuilt {
+    use sha2::{Digest, Sha256};
+    use std::env;
+    use std::fmt;
+    use std::fs;
+    use std::io::{self, ErrorKind};
+    use std::path::{Path, PathBuf};
+
+    const OBJECT_NAME: &str = "qqrm-bpf-core.o";
+    const MANIFEST: &str = include_str!("../../../prebuilt/CHECKSUMS");
+
+    /// Errors produced when validating packaged BPF objects.
+    #[derive(Debug, PartialEq, Eq)]
+    pub enum VerificationError {
+        /// The manifest does not contain a checksum for the detected architecture.
+        MissingChecksum { arch: String },
+        /// The packaged bytes do not match the recorded checksum.
+        ChecksumMismatch {
+            arch: String,
+            expected: &'static str,
+            actual: String,
+        },
+    }
+
+    impl fmt::Display for VerificationError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                VerificationError::MissingChecksum { arch } => {
+                    write!(f, "no checksum recorded for architecture {arch}")
+                }
+                VerificationError::ChecksumMismatch {
+                    arch,
+                    expected,
+                    actual,
+                } => {
+                    write!(
+                        f,
+                        "checksum mismatch for {arch}: expected {expected}, computed {actual}"
+                    )
+                }
+            }
+        }
+    }
+
+    impl std::error::Error for VerificationError {}
+
+    /// Returns the on-disk path to the packaged BPF object for the current architecture.
+    pub fn packaged_object_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../prebuilt")
+            .join(env::consts::ARCH)
+            .join(OBJECT_NAME)
+    }
+
+    /// Reads the packaged object for the detected architecture and validates its checksum.
+    pub fn packaged_object_bytes() -> io::Result<Vec<u8>> {
+        let path = packaged_object_path();
+        read_and_verify(&path)
+    }
+
+    /// Reads a specific file, validating it against the recorded checksum for this architecture.
+    pub fn read_and_verify(path: &Path) -> io::Result<Vec<u8>> {
+        let bytes = fs::read(path)?;
+        verify_bytes(&bytes).map_err(|err| {
+            io::Error::new(
+                ErrorKind::InvalidData,
+                format!("{} ({})", err, path.display()),
+            )
+        })?;
+        Ok(bytes)
+    }
+
+    /// Verifies raw bytes against the checksum for the current architecture.
+    pub fn verify_bytes(bytes: &[u8]) -> Result<(), VerificationError> {
+        verify_bytes_for_arch(env::consts::ARCH, bytes)
+    }
+
+    /// Verifies raw bytes against the checksum recorded for `arch`.
+    pub fn verify_bytes_for_arch(arch: &str, bytes: &[u8]) -> Result<(), VerificationError> {
+        let expected =
+            expected_checksum(arch).ok_or_else(|| VerificationError::MissingChecksum {
+                arch: arch.to_owned(),
+            })?;
+        let actual = sha256_hex(bytes);
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(VerificationError::ChecksumMismatch {
+                arch: arch.to_owned(),
+                expected,
+                actual,
+            })
+        }
+    }
+
+    /// Exposes the raw checksum manifest for downstream tooling.
+    pub fn checksum_manifest() -> &'static str {
+        MANIFEST
+    }
+
+    fn expected_checksum(arch: &str) -> Option<&'static str> {
+        for line in MANIFEST.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut parts = line.split_whitespace();
+            let manifest_arch = parts.next()?;
+            let checksum = parts.next()?;
+            if manifest_arch == arch {
+                return Some(checksum);
+            }
+        }
+        None
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        let digest = Sha256::digest(bytes);
+        let mut out = String::with_capacity(digest.len() * 2);
+        for byte in digest.as_slice() {
+            out.push(nibble_to_hex(byte >> 4));
+            out.push(nibble_to_hex(byte & 0x0f));
+        }
+        out
+    }
+
+    fn nibble_to_hex(nibble: u8) -> char {
+        match nibble {
+            0..=9 => (b'0' + nibble) as char,
+            10..=15 => (b'a' + (nibble - 10)) as char,
+            _ => unreachable!("nibble out of range"),
+        }
     }
 }
 
