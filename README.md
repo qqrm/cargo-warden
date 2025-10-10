@@ -225,15 +225,27 @@ filesystem auditing) and richer telemetry pipelines to help tune policies.
 
 ## Building prebuilt BPF objects
 
-Generate the prebuilt BPF artifacts with:
+Generate the prebuilt BPF bundle with:
 
 ```bash
 scripts/build-bpf.sh
 ```
 
-The script installs the nightly toolchain, required components and the `bpf-linker` before placing the resulting object files under `prebuilt/<arch>`.
+The script verifies the host kernel is at least 5.13, warns when the `CAP_BPF`
+and `CAP_SYS_ADMIN` capabilities are missing, installs the nightly toolchain
+and `bpf-linker`, and emits the objects plus a checksum manifest under
+`prebuilt/`.
 
-Generated artifacts are excluded from version control; rerun the script to refresh them.
+Artifacts live outside version control. Developers can point the runtime at the
+fresh build with:
+
+```bash
+QQRM_BPF_DIST_DIR=$PWD/prebuilt cargo run --bin cargo-warden -- <args>
+```
+
+A GitHub Actions workflow (`Build BPF Artifacts`) rebuilds the bundle on every
+`main` push, uploading `prebuilt.tar.gz` and `manifest.json` as downloadable
+artifacts for downstream packagers.
 
 ## Sandbox Hardening
 

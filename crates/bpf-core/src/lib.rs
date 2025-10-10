@@ -862,19 +862,27 @@ fn classify_and_record_exec(ctx: &SysEnterExecveArgs) {
                     if read_ptr < 0 || arg_ptr_value == 0 {
                         break;
                     }
-                    let read_arg = unsafe {
-                        bpf_probe_read_user_str(
-                            arg_buffers[idx].as_mut_ptr(),
-                            MAX_ARG_LENGTH as u32,
-                            arg_ptr_value as *const u8,
-                        )
-                    };
-                    if read_arg >= 0 {
-                        let mut length = read_arg as usize;
-                        if length > 0 {
-                            length = length.saturating_sub(1).min(MAX_ARG_LENGTH - 1);
+                    let mut captured_slice: Option<(*const u8, usize)> = None;
+                    {
+                        let buffer = &mut arg_buffers[idx];
+                        let read_arg = unsafe {
+                            bpf_probe_read_user_str(
+                                buffer.as_mut_ptr(),
+                                MAX_ARG_LENGTH as u32,
+                                arg_ptr_value as *const u8,
+                            )
+                        };
+                        if read_arg >= 0 {
+                            let mut length = read_arg as usize;
+                            if length > 0 {
+                                length = length.saturating_sub(1).min(MAX_ARG_LENGTH - 1);
+                            }
+                            captured_slice = Some((buffer.as_ptr(), length));
                         }
-                        arg_refs[idx] = &arg_buffers[idx][..length];
+                    }
+                    if let Some((ptr, length)) = captured_slice {
+                        let slice = unsafe { core::slice::from_raw_parts(ptr, length) };
+                        arg_refs[idx] = slice;
                         captured = idx + 1;
                     }
                     idx += 1;
