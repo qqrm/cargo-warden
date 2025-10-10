@@ -11,7 +11,7 @@ use std::path::Path;
 pub const METRICS_SNAPSHOT_FILE: &str = "warden-metrics.json";
 
 /// User-facing representation of an event emitted by the sandbox.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventRecord {
     pub pid: u32,
     pub tgid: u32,
@@ -26,20 +26,31 @@ pub struct EventRecord {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UnitMetricsSnapshot {
+    #[serde(default)]
     pub allowed: u64,
+    #[serde(default)]
     pub denied: u64,
+    #[serde(default)]
     pub io_read_bytes: u64,
+    #[serde(default)]
     pub io_write_bytes: u64,
+    #[serde(default)]
     pub cpu_time_ms: u64,
+    #[serde(default)]
     pub page_faults: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MetricsSnapshot {
+    #[serde(default)]
     pub allowed_total: u64,
+    #[serde(default)]
     pub denied_total: u64,
+    #[serde(default)]
     pub violations_total: u64,
+    #[serde(default)]
     pub blocked_total: u64,
     #[serde(default)]
     pub per_unit: BTreeMap<u32, UnitMetricsSnapshot>,
@@ -281,5 +292,55 @@ mod tests {
         let json = serde_json::to_string(&snapshot).unwrap();
         assert!(json.contains("\"allowed_total\":3"));
         assert!(json.contains("\"42\""));
+    }
+
+    #[test]
+    fn metrics_snapshot_backwards_compatibility() {
+        let legacy_json = json!({
+            "allowed_total": 7,
+            "denied_total": 2
+        });
+        let snapshot: MetricsSnapshot = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(snapshot.allowed_total, 7);
+        assert_eq!(snapshot.denied_total, 2);
+        assert_eq!(snapshot.violations_total, 0);
+        assert_eq!(snapshot.blocked_total, 0);
+        assert!(snapshot.per_unit.is_empty());
+    }
+
+    #[test]
+    fn event_record_json_roundtrip() {
+        let record = EventRecord {
+            pid: 9,
+            tgid: 90,
+            time_ns: 1_000,
+            unit: 3,
+            action: 4,
+            verdict: 1,
+            container_id: 11,
+            caps: 2,
+            path_or_addr: "1.2.3.4:80".into(),
+            needed_perm: "allow.net.hosts".into(),
+        };
+        let value = serde_json::to_value(&record).unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "pid": 9,
+                "tgid": 90,
+                "time_ns": 1000,
+                "unit": 3,
+                "action": 4,
+                "verdict": 1,
+                "container_id": 11,
+                "caps": 2,
+                "path_or_addr": "1.2.3.4:80",
+                "needed_perm": "allow.net.hosts"
+            })
+        );
+        let decoded: EventRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded, record);
+        let text = record.to_string();
+        assert!(text.contains("hint=allow.net.hosts"));
     }
 }

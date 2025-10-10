@@ -1,3 +1,4 @@
+use crate::AgentConfig;
 use crate::fake::FakeSandbox;
 use crate::real::RealSandbox;
 use crate::workload::detect_program_unit;
@@ -23,13 +24,18 @@ pub struct Sandbox {
 impl Sandbox {
     /// Constructs a new sandbox runtime based on the configured environment.
     pub fn new() -> io::Result<Self> {
+        Self::new_with_agent_config(AgentConfig::default())
+    }
+
+    /// Constructs a sandbox runtime using a custom agent configuration.
+    pub fn new_with_agent_config(agent_config: AgentConfig) -> io::Result<Self> {
         if env::var_os(FAKE_SANDBOX_ENV).is_some() {
             Ok(Self {
                 inner: SandboxImpl::Fake(FakeSandbox::new()?),
             })
         } else {
             Ok(Self {
-                inner: SandboxImpl::Real(RealSandbox::new()?),
+                inner: SandboxImpl::Real(RealSandbox::with_agent_config(agent_config)?),
             })
         }
     }

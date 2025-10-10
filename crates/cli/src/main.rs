@@ -60,6 +60,9 @@ struct Cli {
     /// Override sandbox mode declared in policies.
     #[arg(long = "mode", value_enum, global = true)]
     mode: Option<CliMode>,
+    /// Expose the Prometheus metrics endpoint on the given port.
+    #[arg(long = "metrics-port", value_name = "PORT", global = true)]
+    metrics_port: Option<u16>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -99,10 +102,22 @@ fn main() {
         args.remove(1);
     }
     let cli = Cli::parse_from(args);
-    match cli.command {
+    let Cli {
+        allow,
+        policy,
+        mode,
+        metrics_port,
+        command,
+    } = cli;
+    let mode_override = mode.map(Mode::from);
+    let agent_config = sandbox_runtime::AgentConfig {
+        metrics_port,
+        ..Default::default()
+    };
+    match command {
         Commands::Build { args } => {
             if let Err(e) =
-                commands::build::exec(args, &cli.allow, &cli.policy, cli.mode.map(Mode::from))
+                commands::build::exec(args, &allow, &policy, mode_override, agent_config.clone())
             {
                 eprintln!("build failed: {e}");
                 exit(1);
@@ -110,7 +125,7 @@ fn main() {
         }
         Commands::Run { cmd } => {
             if let Err(e) =
-                commands::run::exec(cmd, &cli.allow, &cli.policy, cli.mode.map(Mode::from))
+                commands::run::exec(cmd, &allow, &policy, mode_override, agent_config.clone())
             {
                 eprintln!("run failed: {e}");
                 exit(1);
@@ -123,7 +138,7 @@ fn main() {
             }
         }
         Commands::Status => {
-            if let Err(e) = commands::status::exec(&cli.policy, cli.mode.map(Mode::from)) {
+            if let Err(e) = commands::status::exec(&policy, mode_override) {
                 eprintln!("status failed: {e}");
                 exit(1);
             }
@@ -203,6 +218,16 @@ mod tests {
             Commands::Build { args } => {
                 assert!(args.is_empty());
             }
+            _ => panic!("expected build command"),
+        }
+    }
+
+    #[test]
+    fn parse_metrics_port_flag() {
+        let cli = Cli::parse_from(["cargo-warden", "build", "--metrics-port", "9898"]);
+        assert_eq!(cli.metrics_port, Some(9898));
+        match cli.command {
+            Commands::Build { .. } => {}
             _ => panic!("expected build command"),
         }
     }

@@ -12,4 +12,5 @@ mod util;
 mod workload;
 
 pub use layout::{FsRuleSnapshot, LayoutSnapshot, NetParentSnapshot, NetRuleSnapshot};
+pub use qqrm_agent_lite::Config as AgentConfig;
 pub use runtime::Sandbox;
