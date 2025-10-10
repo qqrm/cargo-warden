@@ -1,0 +1,32 @@
+name: Build BPF Artifacts
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Build prebuilt objects
+        run: ./scripts/build-bpf.sh
+
+      - name: Archive artifacts
+        run: |
+          tar -czf prebuilt.tar.gz -C prebuilt .
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqrm-bpf-core-${{ github.sha }}
+          path: |
+            prebuilt.tar.gz
+            prebuilt/manifest.json
+          retention-days: 7
