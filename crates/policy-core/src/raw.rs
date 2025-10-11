@@ -94,7 +94,25 @@ impl RawPolicy {
             self.syscall = syscall.clone();
         }
         if let Some(allow) = &override_policy.allow {
-            self.allow = allow.clone();
+            if let Some(exec) = &allow.exec {
+                self.allow.exec.allowed.extend(exec.allowed.iter().cloned());
+            }
+            if let Some(net) = &allow.net {
+                self.allow.net.hosts.extend(net.hosts.iter().cloned());
+            }
+            if let Some(fs) = &allow.fs {
+                self.allow
+                    .fs
+                    .write_extra
+                    .extend(fs.write_extra.iter().cloned());
+                self.allow
+                    .fs
+                    .read_extra
+                    .extend(fs.read_extra.iter().cloned());
+            }
+            if let Some(env) = &allow.env {
+                self.allow.env.read.extend(env.read.iter().cloned());
+            }
         }
     }
 }
@@ -119,6 +137,18 @@ pub(crate) struct RawAllowSection {
     pub(crate) fs: RawFsAllow,
     #[serde(default)]
     pub(crate) env: RawEnvAllow,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub(crate) struct RawAllowOverrideSection {
+    #[serde(default)]
+    pub(crate) exec: Option<RawExecAllow>,
+    #[serde(default)]
+    pub(crate) net: Option<RawNetAllow>,
+    #[serde(default)]
+    pub(crate) fs: Option<RawFsAllow>,
+    #[serde(default)]
+    pub(crate) env: Option<RawEnvAllow>,
 }
 
 raw_wrapper!(RawExecAllow, allowed, Vec<String>);
