@@ -2,12 +2,12 @@ use assert_cmd::Command;
 use bpf_api::{MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE, UNIT_RUSTC};
 use event_reporting::{EventRecord, METRICS_SNAPSHOT_FILE};
 use policy_core::Mode;
-use qqrm_testkits::{LayoutSnapshotExt, TestProject};
 use serde_json::{Value, json};
 use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use warden_testkits::{LayoutSnapshotExt, TestProject};
 
 const DENIED_ENDPOINT: &str = "198.51.100.10:443";
 const DENIED_PID: u32 = 7777;

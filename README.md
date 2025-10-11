@@ -284,7 +284,7 @@ Artifacts live outside version control. Developers can point the runtime at the
 fresh build with:
 
 ```bash
-QQRM_BPF_DIST_DIR=$PWD/prebuilt cargo run --bin cargo-warden -- <args>
+WARDEN_BPF_DIST_DIR=$PWD/prebuilt cargo run --bin cargo-warden -- <args>
 ```
 
 A GitHub Actions workflow (`Build BPF Artifacts`) rebuilds the bundle on every

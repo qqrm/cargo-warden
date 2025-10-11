@@ -4,9 +4,9 @@ use bpf_api::{
     ExecAllowEntry, FsRuleEntry, MODE_FLAG_ENFORCE, MODE_FLAG_OBSERVE, NetParentEntry, NetRuleEntry,
 };
 use policy_core::Mode;
-use qqrm_policy_compiler::MapsLayout;
 use std::convert::TryFrom;
 use std::io;
+use warden_policy_compiler::MapsLayout;
 
 pub(crate) fn populate_maps(bpf: &mut Ebpf, layout: &MapsLayout) -> io::Result<()> {
     update_array(

@@ -1,17 +1,17 @@
 [package]
-name = "qqrm-agent-lite"
+name = "warden-agent-lite"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "User-space agent streaming cargo-warden sandbox telemetry."
-repository = "https://github.com/qqrm/cargo-warden"
-homepage = "https://github.com/qqrm/cargo-warden"
-documentation = "https://docs.rs/qqrm-agent-lite"
+repository = "https://github.com/warden/cargo-warden"
+homepage = "https://github.com/warden/cargo-warden"
+documentation = "https://docs.rs/warden-agent-lite"
 readme = "../../README.md"
 
 [dependencies]
 aya = { version = "0.13" }
-bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
+bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
 serde_json = "1"
 event-reporting = { version = "0.1.0", path = "../event-reporting" }
 

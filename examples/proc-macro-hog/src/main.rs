@@ -1,4 +1,4 @@
-use qqrm_proc_macro_hog_macro::ex_proc_macro_hog;
+use warden_proc_macro_hog_macro::ex_proc_macro_hog;
 
 ex_proc_macro_hog!();
 

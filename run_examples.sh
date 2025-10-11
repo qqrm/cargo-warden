@@ -52,23 +52,23 @@ else
 fi
 
 run_network_build() {
-    cargo build -p qqrm-network-build
+    cargo build -p warden-network-build
 }
 
 run_spawn_bash() {
-    cargo build -p qqrm-spawn-bash
+    cargo build -p warden-spawn-bash
 }
 
 run_fs_outside_workspace() {
-    cargo build -p qqrm-fs-outside-workspace
+    cargo build -p warden-fs-outside-workspace
 }
 
 run_git_clone_https() {
     local output
     if [[ ${WARDEN_EXAMPLE_REMOTE+x} ]]; then
-        output=$(WARDEN_EXAMPLE_REMOTE="$WARDEN_EXAMPLE_REMOTE" cargo build -p qqrm-git-clone-https 2>&1)
+        output=$(WARDEN_EXAMPLE_REMOTE="$WARDEN_EXAMPLE_REMOTE" cargo build -p warden-git-clone-https 2>&1)
     else
-        output=$(cargo build -p qqrm-git-clone-https 2>&1)
+        output=$(cargo build -p warden-git-clone-https 2>&1)
     fi
     printf '%s\n' "$output"
     if ! grep -q "git clone blocked as expected" <<<"$output"; then

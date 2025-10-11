@@ -3,13 +3,13 @@ use crate::fake::FakeSandbox;
 use crate::real::RealSandbox;
 use crate::workload::detect_program_unit;
 use policy_core::Mode;
-use qqrm_policy_compiler::MapsLayout;
 use std::env;
 use std::ffi::OsString;
 use std::io;
 use std::process::{Command, ExitStatus};
+use warden_policy_compiler::MapsLayout;
 
-const FAKE_SANDBOX_ENV: &str = "QQRM_WARDEN_FAKE_SANDBOX";
+const FAKE_SANDBOX_ENV: &str = "WARDEN_FAKE_SANDBOX";
 
 enum SandboxImpl {
     Real(RealSandbox),

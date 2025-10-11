@@ -1,14 +1,14 @@
 use bpf_api::{FS_READ, FS_WRITE, FsRuleEntry, NetParentEntry, NetRuleEntry};
 use policy_core::Mode;
-use qqrm_policy_compiler::MapsLayout;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
+use warden_policy_compiler::MapsLayout;
 
-pub(crate) const FAKE_LAYOUT_ENV: &str = "QQRM_WARDEN_FAKE_LAYOUT_PATH";
+pub(crate) const FAKE_LAYOUT_ENV: &str = "WARDEN_FAKE_LAYOUT_PATH";
 
 pub(crate) struct LayoutRecorder {
     writer: BufWriter<File>,

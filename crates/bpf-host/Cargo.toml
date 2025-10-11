@@ -1,12 +1,12 @@
 [package]
-name = "qqrm-bpf-host"
+name = "warden-bpf-host"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "Host-side adapters and map shims for qqrm-bpf-core testing and fuzzing."
-repository = "https://github.com/qqrm/cargo-warden"
-homepage = "https://github.com/qqrm/cargo-warden"
-documentation = "https://docs.rs/qqrm-bpf-host"
+description = "Host-side adapters and map shims for warden-bpf-core testing and fuzzing."
+repository = "https://github.com/warden/cargo-warden"
+homepage = "https://github.com/warden/cargo-warden"
+documentation = "https://docs.rs/warden-bpf-host"
 readme = "../../README.md"
 
 [dependencies]

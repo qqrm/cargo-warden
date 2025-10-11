@@ -37,8 +37,8 @@ running the command.
 Install the object files under the data directory of your package. The runtime
 searches in the following order:
 
-1. `QQRM_BPF_OBJECT` (full path to a single object file)
-2. `QQRM_BPF_DIST_DIR` (directory containing `manifest.json`)
+1. `WARDEN_BPF_OBJECT` (full path to a single object file)
+2. `WARDEN_BPF_DIST_DIR` (directory containing `manifest.json`)
 3. `${XDG_DATA_HOME:-$HOME/.local/share}/cargo-warden/bpf`
 4. `/usr/share/cargo-warden/bpf`
 5. The workspace `prebuilt/` directory (for local development only)
@@ -54,5 +54,5 @@ Downstream packagers can rebuild the bundle directly from source:
 The script validates the kernel version, checks for the required capabilities,
 installs tooling, and emits a fresh manifest and object files under `prebuilt/`.
 Copy the directory into the package payload and ship the `manifest.json` file
-alongside the architecture directories. Point `QQRM_BPF_DIST_DIR` at the
+alongside the architecture directories. Point `WARDEN_BPF_DIST_DIR` at the
 installation prefix when testing the packaged build.

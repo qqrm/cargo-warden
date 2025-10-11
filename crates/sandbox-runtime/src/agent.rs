@@ -1,10 +1,10 @@
 use anyhow::Error as AnyhowError;
 use aya::maps::{MapData, ring_buf::RingBuf};
-use qqrm_agent_lite::{self, Config as AgentConfig, Shutdown, ShutdownHandle};
 use std::io;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
+use warden_agent_lite::{self, Config as AgentConfig, Shutdown, ShutdownHandle};
 
 pub(crate) struct AgentHandle {
     shutdown: ShutdownHandle,
@@ -41,8 +41,8 @@ pub(crate) fn start_agent(
 ) -> io::Result<AgentHandle> {
     let (shutdown, signal) = Shutdown::new(Duration::from_millis(100));
     let thread = thread::Builder::new()
-        .name("qqrm-agent-lite".into())
-        .spawn(move || qqrm_agent_lite::run_with_shutdown(ring, &events_path, config, signal))
+        .name("warden-agent-lite".into())
+        .spawn(move || warden_agent_lite::run_with_shutdown(ring, &events_path, config, signal))
         .map_err(|err| io::Error::other(format!("failed to spawn agent thread: {err}")))?;
     Ok(AgentHandle {
         shutdown,
