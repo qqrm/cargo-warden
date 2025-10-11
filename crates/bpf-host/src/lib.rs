@@ -1,4 +1,4 @@
-//! Host-only shims for exercising qqrm-bpf-core programs outside the kernel.
+//! Host-only shims for exercising warden-bpf-core programs outside the kernel.
 
 pub mod prebuilt;
 

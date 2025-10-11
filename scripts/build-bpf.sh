@@ -51,18 +51,18 @@ declare -A CHECKSUMS
 
 for arch in "${ARCHES[@]}"; do
     RUSTFLAGS="-C link-arg=--llvm-args=-bpf-stack-size=$STACK_SIZE" \
-        cargo +nightly rustc -p qqrm-bpf-core --release --target "$TARGET" -Z build-std=core -- --emit=obj
+        cargo +nightly rustc -p warden-bpf-core --release --target "$TARGET" -Z build-std=core -- --emit=obj
     mkdir -p "prebuilt/$arch"
-    cp "target/$TARGET/release/deps/qqrm_bpf_core.o" "prebuilt/$arch/qqrm-bpf-core.o"
-    CHECKSUMS["$arch"]="$(sha256sum "prebuilt/$arch/qqrm-bpf-core.o" | awk '{print $1}')"
+    cp "target/$TARGET/release/deps/warden_bpf_core.o" "prebuilt/$arch/warden-bpf-core.o"
+    CHECKSUMS["$arch"]="$(sha256sum "prebuilt/$arch/warden-bpf-core.o" | awk '{print $1}')"
 done
 
-pkg_version="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name=="qqrm-bpf-core") | .version')"
+pkg_version="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name=="warden-bpf-core") | .version')"
 generated_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 cat >"prebuilt/$MANIFEST_NAME" <<MANIFEST
 {
-  "package": "qqrm-bpf-core",
+  "package": "warden-bpf-core",
   "version": "$pkg_version",
   "kernel_min": "5.13",
   "generated_at": "$generated_at",
@@ -70,12 +70,12 @@ cat >"prebuilt/$MANIFEST_NAME" <<MANIFEST
   "artifacts": [
     {
       "architecture": "x86_64",
-      "file": "x86_64/qqrm-bpf-core.o",
+      "file": "x86_64/warden-bpf-core.o",
       "sha256": "${CHECKSUMS[x86_64]}"
     },
     {
       "architecture": "aarch64",
-      "file": "aarch64/qqrm-bpf-core.o",
+      "file": "aarch64/warden-bpf-core.o",
       "sha256": "${CHECKSUMS[aarch64]}"
     }
   ]

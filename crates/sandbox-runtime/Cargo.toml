@@ -1,24 +1,24 @@
 [package]
-name = "qqrm-sandbox-runtime"
+name = "warden-sandbox-runtime"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Runtime for cargo-warden sandbox execution."
-repository = "https://github.com/qqrm/cargo-warden"
-homepage = "https://github.com/qqrm/cargo-warden"
-documentation = "https://docs.rs/qqrm-sandbox-runtime"
+repository = "https://github.com/warden/cargo-warden"
+homepage = "https://github.com/warden/cargo-warden"
+documentation = "https://docs.rs/warden-sandbox-runtime"
 
 [dependencies]
 anyhow = "1"
 aya = "0.13"
-bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
-qqrm_bpf_host = { package = "qqrm-bpf-host", version = "0.1.0", path = "../bpf-host" }
+bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
+warden_bpf_host = { package = "warden-bpf-host", version = "0.1.0", path = "../bpf-host" }
 libc = "0.2"
 libseccomp = "0.3"
-qqrm-agent-lite = { version = "0.1.0", path = "../agent-lite" }
-qqrm-policy-compiler = { version = "0.1.0", path = "../policy-compiler" }
-policy-core = { package = "qqrm-policy-core", version = "0.1.0", path = "../policy-core" }
-qqrm-bpf-host = { version = "0.1.0", path = "../bpf-host" }
+warden-agent-lite = { version = "0.1.0", path = "../agent-lite" }
+warden-policy-compiler = { version = "0.1.0", path = "../policy-compiler" }
+policy-core = { package = "warden-policy-core", version = "0.1.0", path = "../policy-core" }
+warden-bpf-host = { version = "0.1.0", path = "../bpf-host" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 unicase = "2.8"

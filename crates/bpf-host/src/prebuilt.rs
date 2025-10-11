@@ -1,4 +1,4 @@
-//! Utilities for locating and verifying prebuilt qqrm-bpf-core objects.
+//! Utilities for locating and verifying prebuilt warden-bpf-core objects.
 
 use sha2::{Digest, Sha256};
 use std::env;
@@ -13,7 +13,7 @@ const MANIFEST_NAME: &str = "manifest.json";
 const DEFAULT_RELATIVE_DIR: &str = "../../prebuilt";
 const SHARE_DIR: &str = "/usr/share/cargo-warden/bpf";
 const XDG_SUBDIR: &str = "cargo-warden/bpf";
-const EXPECTED_PACKAGE: &str = "qqrm-bpf-core";
+const EXPECTED_PACKAGE: &str = "warden-bpf-core";
 const EXPECTED_TARGET: &str = "bpfel-unknown-none";
 
 /// Description of a prebuilt artifact bundle.
@@ -207,7 +207,7 @@ impl PrebuiltObject {
 fn candidate_directories() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    if let Some(dir) = env::var_os("QQRM_BPF_DIST_DIR") {
+    if let Some(dir) = env::var_os("WARDEN_BPF_DIST_DIR") {
         candidates.push(PathBuf::from(dir));
     }
 
@@ -280,13 +280,13 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let base = dir.path();
         let arch = env::consts::ARCH;
-        let rel_path = PathBuf::from(arch).join("qqrm-bpf-core.o");
+        let rel_path = PathBuf::from(arch).join("warden-bpf-core.o");
         fs::create_dir_all(base.join(rel_path.parent().unwrap())).unwrap();
         fs::write(base.join(&rel_path), b"test-bytes").unwrap();
 
         let checksum = hex_digest(b"test-bytes");
         let manifest = format!(
-            "{{\n  \"package\": \"qqrm-bpf-core\",\n  \"version\": \"0.1.0\",\n  \"artifacts\": [\n    {{\n      \"architecture\": \"{arch}\",\n      \"file\": \"{path}\",\n      \"sha256\": \"{checksum}\"\n    }}\n  ]\n}}\n",
+            "{{\n  \"package\": \"warden-bpf-core\",\n  \"version\": \"0.1.0\",\n  \"artifacts\": [\n    {{\n      \"architecture\": \"{arch}\",\n      \"file\": \"{path}\",\n      \"sha256\": \"{checksum}\"\n    }}\n  ]\n}}\n",
             arch = arch,
             path = rel_path.to_string_lossy(),
             checksum = checksum,
@@ -303,12 +303,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let base = dir.path();
         let arch = env::consts::ARCH;
-        let rel_path = PathBuf::from(arch).join("qqrm-bpf-core.o");
+        let rel_path = PathBuf::from(arch).join("warden-bpf-core.o");
         fs::create_dir_all(base.join(rel_path.parent().unwrap())).unwrap();
         fs::write(base.join(&rel_path), b"actual").unwrap();
 
         let manifest = format!(
-            "{{\n  \"package\": \"qqrm-bpf-core\",\n  \"version\": \"0.1.0\",\n  \"artifacts\": [\n    {{\n      \"architecture\": \"{arch}\",\n      \"file\": \"{path}\",\n      \"sha256\": \"deadbeef\"\n    }}\n  ]\n}}\n",
+            "{{\n  \"package\": \"warden-bpf-core\",\n  \"version\": \"0.1.0\",\n  \"artifacts\": [\n    {{\n      \"architecture\": \"{arch}\",\n      \"file\": \"{path}\",\n      \"sha256\": \"deadbeef\"\n    }}\n  ]\n}}\n",
             arch = arch,
             path = rel_path.to_string_lossy(),
         );
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn candidate_search_order() {
         unsafe {
-            env::remove_var("QQRM_BPF_DIST_DIR");
+            env::remove_var("WARDEN_BPF_DIST_DIR");
             env::remove_var("XDG_DATA_HOME");
             env::set_var("HOME", "/tmp/home");
         }

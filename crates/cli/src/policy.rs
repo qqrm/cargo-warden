@@ -1,7 +1,6 @@
 use cargo_metadata::{Metadata, MetadataCommand, PackageId};
 use directories::ProjectDirs;
 use policy_core::{FsDefault, Mode, Policy, WorkspacePolicy};
-use qqrm_policy_compiler::{self, CompiledPolicy, MapsLayout};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -9,6 +8,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
+use warden_policy_compiler::{self, CompiledPolicy, MapsLayout};
 
 pub(crate) struct IsolationConfig {
     pub(crate) mode: Mode,
@@ -93,7 +93,7 @@ pub(crate) fn setup_isolation(
         eprintln!("warning: {warn}");
     }
 
-    let compiled = qqrm_policy_compiler::compile(&policy)
+    let compiled = warden_policy_compiler::compile(&policy)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
     let CompiledPolicy {
         maps_layout,

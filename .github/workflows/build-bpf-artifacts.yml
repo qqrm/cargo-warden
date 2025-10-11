@@ -25,7 +25,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: qqrm-bpf-core-${{ github.sha }}
+          name: warden-bpf-core-${{ github.sha }}
           path: |
             prebuilt.tar.gz
             prebuilt/manifest.json

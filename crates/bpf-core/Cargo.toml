@@ -1,12 +1,12 @@
 [package]
-name = "qqrm-bpf-core"
+name = "warden-bpf-core"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "eBPF enforcement programs for the cargo-warden sandbox."
-repository = "https://github.com/qqrm/cargo-warden"
-homepage = "https://github.com/qqrm/cargo-warden"
-documentation = "https://docs.rs/qqrm-bpf-core"
+repository = "https://github.com/warden/cargo-warden"
+homepage = "https://github.com/warden/cargo-warden"
+documentation = "https://docs.rs/warden-bpf-core"
 readme = "../../README.md"
 
 [lib]
@@ -15,18 +15,18 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aya-bpf = { package = "aya-ebpf", version = "0.1.1" }
-bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api", optional = true }
-bpf-host = { package = "qqrm-bpf-host", version = "0.1.0", path = "../bpf-host", optional = true }
+bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api", optional = true }
+bpf-host = { package = "warden-bpf-host", version = "0.1.0", path = "../bpf-host", optional = true }
 
 [features]
 fuzzing = ["bpf-api", "bpf-host"]
 
 [target.'cfg(target_arch = "bpf")'.dependencies]
-bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
+bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
 
 [dev-dependencies]
-bpf-api = { package = "qqrm-bpf-api", version = "0.1.0", path = "../bpf-api" }
-bpf-host = { package = "qqrm-bpf-host", version = "0.1.0", path = "../bpf-host" }
+bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
+bpf-host = { package = "warden-bpf-host", version = "0.1.0", path = "../bpf-host" }
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["aya-bpf"]

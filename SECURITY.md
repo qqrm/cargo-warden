@@ -7,7 +7,7 @@ Cargo-warden is currently in active development. We respond to vulnerability rep
 ## Reporting a Vulnerability
 
 1. **Do not** open a public GitHub issue for security vulnerabilities.
-2. Submit a private advisory through the GitHub Security Advisory workflow for `qqrm/cargo-warden` or email the maintainers at `security@cargo-warden.dev`.
+2. Submit a private advisory through the GitHub Security Advisory workflow for `warden/cargo-warden` or email the maintainers at `security@cargo-warden.dev`.
 3. Include as much detail as possible:
    - Affected components or crates
    - Steps to reproduce the issue

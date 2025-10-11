@@ -11,7 +11,7 @@
 //! ```rust,no_run
 //! use assert_cmd::Command;
 //! use policy_core::Mode;
-//! use qqrm_testkits::{LayoutSnapshotExt, TestProject};
+//! use warden_testkits::{LayoutSnapshotExt, TestProject};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let project = TestProject::new()?;
@@ -66,10 +66,10 @@ use tempfile::TempDir;
 /// Convenient alias for results produced by the testkits helpers.
 pub type Result<T> = std::result::Result<T, TestkitError>;
 
-const FAKE_SANDBOX_ENV: &str = "QQRM_WARDEN_FAKE_SANDBOX";
-const EVENTS_PATH_ENV: &str = "QQRM_WARDEN_EVENTS_PATH";
-const FAKE_CGROUP_DIR_ENV: &str = "QQRM_WARDEN_FAKE_CGROUP_DIR";
-const FAKE_LAYOUT_PATH_ENV: &str = "QQRM_WARDEN_FAKE_LAYOUT_PATH";
+const FAKE_SANDBOX_ENV: &str = "WARDEN_FAKE_SANDBOX";
+const EVENTS_PATH_ENV: &str = "WARDEN_EVENTS_PATH";
+const FAKE_CGROUP_DIR_ENV: &str = "WARDEN_FAKE_CGROUP_DIR";
+const FAKE_LAYOUT_PATH_ENV: &str = "WARDEN_FAKE_LAYOUT_PATH";
 
 const MAX_ATTEMPTS: usize = 50;
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
