@@ -5,10 +5,10 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-use qqrm_bpf_host::prebuilt::PrebuiltObject;
+use warden_bpf_host::prebuilt::PrebuiltObject;
 
 pub(crate) fn load_bpf() -> io::Result<Ebpf> {
-    let (data, path) = if let Some(path) = env::var_os("QQRM_BPF_OBJECT") {
+    let (data, path) = if let Some(path) = env::var_os("WARDEN_BPF_OBJECT") {
         let path = PathBuf::from(path);
         let data = fs::read(&path)?;
         (data, path)

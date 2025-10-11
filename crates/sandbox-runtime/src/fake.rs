@@ -2,7 +2,6 @@ use crate::command_env::restrict_command_environment;
 use crate::layout::LayoutRecorder;
 use crate::util::{events_path, fake_cgroup_dir};
 use policy_core::Mode;
-use qqrm_policy_compiler::MapsLayout;
 use std::fs;
 use std::io;
 use std::io::Write;
@@ -12,6 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+use warden_policy_compiler::MapsLayout;
 
 pub(crate) struct FakeSandbox {
     cgroup_dir: PathBuf,

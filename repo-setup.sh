@@ -71,7 +71,7 @@ if [[ -z "$FETCH_URL" ]]; then
   elif [[ -n "${GITHUB_SERVER_URL:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
     FETCH_URL="${GITHUB_SERVER_URL%/}/${GITHUB_REPOSITORY}.git"
   else
-    FETCH_URL="https://github.com/qqrm/cargo-warden.git"
+    FETCH_URL="https://github.com/warden/cargo-warden.git"
   fi
 fi
 

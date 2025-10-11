@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build release binaries for CLI and agent
-cargo build --release -p qqrm-cargo-warden -p qqrm-agent-lite
+cargo build --release -p warden-cargo-warden -p warden-agent-lite
 
 # Determine version from CLI crate
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/cli/Cargo.toml)
@@ -11,9 +11,9 @@ OUTDIR=dist
 mkdir -p "$OUTDIR"
 
 # Choose agent artifact: binary if available, otherwise library
-AGENT_PATH="target/release/qqrm-agent-lite"
+AGENT_PATH="target/release/warden-agent-lite"
 if [[ ! -f "$AGENT_PATH" ]]; then
-    AGENT_PATH="target/release/libqqrm_agent_lite.rlib"
+    AGENT_PATH="target/release/libwarden_agent_lite.rlib"
 fi
 
 TARFILE="$OUTDIR/cargo-warden-$VERSION-$ARCH.tar.gz"

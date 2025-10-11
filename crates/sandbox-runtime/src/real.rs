@@ -12,13 +12,13 @@ use aya::programs::{
 };
 use aya::{Btf, Ebpf};
 use policy_core::Mode;
-use qqrm_agent_lite::Config as AgentConfig;
-use qqrm_policy_compiler::MapsLayout;
 use std::cell::UnsafeCell;
 use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::process::CommandExt;
 use std::process::{Command, ExitStatus};
+use warden_agent_lite::Config as AgentConfig;
+use warden_policy_compiler::MapsLayout;
 
 pub(crate) struct RealSandbox {
     bpf: UnsafeCell<Ebpf>,

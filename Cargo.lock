@@ -1496,154 +1496,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "qqrm-agent-lite"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "aya",
- "event-reporting",
- "file-rotate",
- "libc",
- "log",
- "prometheus",
- "qqrm-bpf-api",
- "serde_json",
- "serial_test",
- "systemd-journal-logger",
- "tempfile",
- "tiny_http",
-]
-
-[[package]]
-name = "qqrm-bpf-api"
-version = "0.1.0"
-
-[[package]]
-name = "qqrm-bpf-core"
-version = "0.1.0"
-dependencies = [
- "aya-ebpf",
- "qqrm-bpf-api",
- "qqrm-bpf-host",
-]
-
-[[package]]
-name = "qqrm-bpf-host"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
-]
-
-[[package]]
-name = "qqrm-cargo-warden"
-version = "0.1.0"
-dependencies = [
- "assert_cmd",
- "cargo_metadata",
- "clap",
- "directories",
- "event-reporting",
- "itertools",
- "qqrm-bpf-api",
- "qqrm-policy-compiler",
- "qqrm-policy-core",
- "qqrm-sandbox-runtime",
- "qqrm-testkits",
- "scoped-env",
- "semver",
- "serde",
- "serde-jsonlines",
- "serde_json",
- "serial_test",
- "tempfile",
- "toml",
-]
-
-[[package]]
-name = "qqrm-fs-outside-workspace"
-version = "0.1.0"
-
-[[package]]
-name = "qqrm-git-clone-https"
-version = "0.1.0"
-
-[[package]]
-name = "qqrm-network-build"
-version = "0.1.0"
-
-[[package]]
-name = "qqrm-policy-compiler"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
- "qqrm-bpf-api",
- "qqrm-policy-core",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "qqrm-policy-core"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "serde",
- "thiserror 1.0.69",
- "toml",
-]
-
-[[package]]
-name = "qqrm-proc-macro-hog"
-version = "0.1.0"
-dependencies = [
- "qqrm-proc-macro-hog-macro",
-]
-
-[[package]]
-name = "qqrm-proc-macro-hog-macro"
-version = "0.1.0"
-
-[[package]]
-name = "qqrm-sandbox-runtime"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "aya",
- "libc",
- "libseccomp",
- "qqrm-agent-lite",
- "qqrm-bpf-api",
- "qqrm-bpf-host",
- "qqrm-policy-compiler",
- "qqrm-policy-core",
- "scoped-env",
- "serde",
- "serde_json",
- "unicase",
-]
-
-[[package]]
-name = "qqrm-spawn-bash"
-version = "0.1.0"
-
-[[package]]
-name = "qqrm-testkits"
-version = "0.1.0"
-dependencies = [
- "assert_cmd",
- "event-reporting",
- "qqrm-policy-core",
- "qqrm-sandbox-runtime",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2393,6 +2245,154 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e"
 dependencies = [
  "try-lock",
+]
+
+[[package]]
+name = "warden-agent-lite"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aya",
+ "event-reporting",
+ "file-rotate",
+ "libc",
+ "log",
+ "prometheus",
+ "serde_json",
+ "serial_test",
+ "systemd-journal-logger",
+ "tempfile",
+ "tiny_http",
+ "warden-bpf-api",
+]
+
+[[package]]
+name = "warden-bpf-api"
+version = "0.1.0"
+
+[[package]]
+name = "warden-bpf-core"
+version = "0.1.0"
+dependencies = [
+ "aya-ebpf",
+ "warden-bpf-api",
+ "warden-bpf-host",
+]
+
+[[package]]
+name = "warden-bpf-host"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
+name = "warden-cargo-warden"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "cargo_metadata",
+ "clap",
+ "directories",
+ "event-reporting",
+ "itertools",
+ "scoped-env",
+ "semver",
+ "serde",
+ "serde-jsonlines",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "toml",
+ "warden-bpf-api",
+ "warden-policy-compiler",
+ "warden-policy-core",
+ "warden-sandbox-runtime",
+ "warden-testkits",
+]
+
+[[package]]
+name = "warden-fs-outside-workspace"
+version = "0.1.0"
+
+[[package]]
+name = "warden-git-clone-https"
+version = "0.1.0"
+
+[[package]]
+name = "warden-network-build"
+version = "0.1.0"
+
+[[package]]
+name = "warden-policy-compiler"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "thiserror 1.0.69",
+ "warden-bpf-api",
+ "warden-policy-core",
+]
+
+[[package]]
+name = "warden-policy-core"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "thiserror 1.0.69",
+ "toml",
+]
+
+[[package]]
+name = "warden-proc-macro-hog"
+version = "0.1.0"
+dependencies = [
+ "warden-proc-macro-hog-macro",
+]
+
+[[package]]
+name = "warden-proc-macro-hog-macro"
+version = "0.1.0"
+
+[[package]]
+name = "warden-sandbox-runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aya",
+ "libc",
+ "libseccomp",
+ "scoped-env",
+ "serde",
+ "serde_json",
+ "unicase",
+ "warden-agent-lite",
+ "warden-bpf-api",
+ "warden-bpf-host",
+ "warden-policy-compiler",
+ "warden-policy-core",
+]
+
+[[package]]
+name = "warden-spawn-bash"
+version = "0.1.0"
+
+[[package]]
+name = "warden-testkits"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "event-reporting",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "warden-policy-core",
+ "warden-sandbox-runtime",
 ]
 
 [[package]]

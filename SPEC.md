@@ -93,32 +93,32 @@ The goal of cargo-warden is to provide Rust developers with a secure sandbox for
 
 Components:
 
-* **qqrm-bpf-core** – eBPF programs (LSM and cgroup) for exec, filesystem, and network.
-* **qqrm-bpf-api** – shared structures and map layouts with stable ABI.
-* **qqrm-policy-core** – permission model and config parsing.
-* **qqrm-policy-compiler** – compiles policies into compact structures for eBPF maps.
-* **qqrm-agent-lite** – userspace daemon for events, logs, and basic telemetry.
+* **warden-bpf-core** – eBPF programs (LSM and cgroup) for exec, filesystem, and network.
+* **warden-bpf-api** – shared structures and map layouts with stable ABI.
+* **warden-policy-core** – permission model and config parsing.
+* **warden-policy-compiler** – compiles policies into compact structures for eBPF maps.
+* **warden-agent-lite** – userspace daemon for events, logs, and basic telemetry.
 * **cli** – `cargo-warden` subcommand and wrapper: creates cgroup, loads BPF, handles UX.
-* **qqrm-testkits** – utilities for integration testing.
+* **warden-testkits** – utilities for integration testing.
 * **examples** – demonstration projects with benign and malicious cases.
 
 Boundaries:
 
-* `qqrm-bpf-core` imports only types from `qqrm-bpf-api`.
-* `cli` and `qqrm-agent-lite` contain no business logic—only wiring and output.
-* `qqrm-policy-core` knows nothing about eBPF, `qqrm-policy-compiler` knows nothing about the CLI.
+* `warden-bpf-core` imports only types from `warden-bpf-api`.
+* `cli` and `warden-agent-lite` contain no business logic—only wiring and output.
+* `warden-policy-core` knows nothing about eBPF, `warden-policy-compiler` knows nothing about the CLI.
 
 ## 7. Workspace Layout and Features
 
 Workspace crates:
 
-* ✅ `crates/bpf-api` (spec: `qqrm-bpf-api`)
-* ✅ `crates/bpf-core` (spec: `qqrm-bpf-core`)
-* ✅ `crates/policy-core` (spec: `qqrm-policy-core`)
-* ✅ `crates/policy-compiler` (spec: `qqrm-policy-compiler`)
-* ✅ `crates/agent-lite` (spec: `qqrm-agent-lite`)
+* ✅ `crates/bpf-api` (spec: `warden-bpf-api`)
+* ✅ `crates/bpf-core` (spec: `warden-bpf-core`)
+* ✅ `crates/policy-core` (spec: `warden-policy-core`)
+* ✅ `crates/policy-compiler` (spec: `warden-policy-compiler`)
+* ✅ `crates/agent-lite` (spec: `warden-agent-lite`)
 * ✅ `crates/cli`
-* ✅ `crates/testkits` (spec: `qqrm-testkits`)
+* ✅ `crates/testkits` (spec: `warden-testkits`)
 * ✅ `examples/*` – `network-build`, `spawn-bash`, `fs-outside-workspace`, `proc-macro-hog`, and `git-clone-https`
 
 Feature flags:
@@ -130,7 +130,7 @@ Feature flags:
 
 ## 8. Module Contracts
 
-`qqrm-bpf-api`
+`warden-bpf-api`
 
 ```rust
 #[repr(C)]
@@ -149,7 +149,7 @@ pub struct Event {
 }
 ```
 
-`qqrm-policy-core`
+`warden-policy-core`
 
 ```rust
 pub enum Mode {
@@ -179,7 +179,7 @@ impl Policy {
 }
 ```
 
-`qqrm-policy-compiler`
+`warden-policy-compiler`
 
 ```rust
 pub struct MapsLayout { /* descriptions for eBPF maps */ }
@@ -187,7 +187,7 @@ pub struct MapsLayout { /* descriptions for eBPF maps */ }
 pub fn compile(policy: &Policy) -> Result<MapsLayout, Error>;
 ```
 
-`qqrm-agent-lite`
+`warden-agent-lite`
 
 ```rust
 pub fn run(layout: &MapsLayout) -> anyhow::Result<Report>;
@@ -293,7 +293,7 @@ User’s local trust database:
 * Launches `cargo` as a child process; the entire process tree inherits the cgroup.
 * Tracepoints classify commands, populate `WORKLOAD_UNITS`, and keep unit hierarchy in sync.
 * On risky operations eBPF returns Allow or `EPERM`.
-* `qqrm-agent-lite` reads events from a ring buffer and writes a report.
+* `warden-agent-lite` reads events from a ring buffer and writes a report.
 
 ## 12. User Experience and Commands
 
@@ -354,11 +354,11 @@ Levels:
 
 Examples:
 
-* `qqrm-network-build` (`examples/network-build`) – network call in `build.rs`.
-* `qqrm-spawn-bash` (`examples/spawn-bash`) – attempt to run `bash`.
-* `qqrm-fs-outside-workspace` (`examples/fs-outside-workspace`) – write to `$HOME` and `/tmp`.
-* `qqrm-proc-macro-hog` (`examples/proc-macro-hog`) – heavy proc macro stress test.
-* `qqrm-git-clone-https` (`examples/git-clone-https`) – `git clone` in `build.rs`.
+* `warden-network-build` (`examples/network-build`) – network call in `build.rs`.
+* `warden-spawn-bash` (`examples/spawn-bash`) – attempt to run `bash`.
+* `warden-fs-outside-workspace` (`examples/fs-outside-workspace`) – write to `$HOME` and `/tmp`.
+* `warden-proc-macro-hog` (`examples/proc-macro-hog`) – heavy proc macro stress test.
+* `warden-git-clone-https` (`examples/git-clone-https`) – `git clone` in `build.rs`.
 
 CI:
 
@@ -420,7 +420,7 @@ jobs:
 
 * Rust 2024, `clippy` strict, deny warnings
 * Format with stable `rustfmt`
-* Public API only in `qqrm-bpf-api` and `qqrm-policy-core`; everything else `pub(crate)`
+* Public API only in `warden-bpf-api` and `warden-policy-core`; everything else `pub(crate)`
 
 ### D. Glossary
 
