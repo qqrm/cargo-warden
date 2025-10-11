@@ -1,6 +1,6 @@
 use crate::policy::Policy;
 use crate::raw::{
-    RawAllowSection, RawExecPolicy, RawFsPolicy, RawNetPolicy, RawPolicy, RawSyscallPolicy,
+    RawAllowOverrideSection, RawExecPolicy, RawFsPolicy, RawNetPolicy, RawPolicy, RawSyscallPolicy,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -28,7 +28,7 @@ pub(crate) struct RawPolicyOverride {
     pub(crate) net: Option<RawNetPolicy>,
     pub(crate) exec: Option<RawExecPolicy>,
     pub(crate) syscall: Option<RawSyscallPolicy>,
-    pub(crate) allow: Option<RawAllowSection>,
+    pub(crate) allow: Option<RawAllowOverrideSection>,
 }
 
 #[derive(Debug, Clone)]
@@ -105,5 +105,31 @@ allowed = ["bash"]
         let other = ws.policy_for("other");
         assert_eq!(other.exec_default(), ExecDefault::Allowlist);
         assert!(other.exec_allowed().any(|bin| bin == "rustc"));
+    }
+
+    #[test]
+    fn workspace_override_retains_unmodified_allow_sections() {
+        const WORKSPACE: &str = r#"
+[root]
+mode = "enforce"
+
+[root.allow.exec]
+allowed = ["rustc"]
+
+[root.allow.net]
+hosts = ["10.0.0.1:1234"]
+
+[members.pkg.allow.exec]
+allowed = ["bash"]
+"#;
+        let ws: WorkspacePolicy = toml::from_str(WORKSPACE).unwrap();
+        let pkg = ws.policy_for("pkg");
+        assert!(pkg.exec_allowed().any(|bin| bin == "rustc"));
+        assert!(pkg.exec_allowed().any(|bin| bin == "bash"));
+        assert!(pkg.net_hosts().any(|host| host == "10.0.0.1:1234"));
+
+        let other = ws.policy_for("other");
+        assert!(other.exec_allowed().any(|bin| bin == "rustc"));
+        assert!(other.net_hosts().any(|host| host == "10.0.0.1:1234"));
     }
 }
