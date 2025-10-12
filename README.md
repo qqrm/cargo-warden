@@ -7,6 +7,13 @@ filesystem access, process launches, and outbound network traffic. The CLI wraps
 `cargo` commands, enforces declarative policies, and emits actionable event
 logs.
 
+## Documentation
+
+- [Installation Guide](docs/INSTALLATION.md)
+- [Release Process](docs/RELEASING.md)
+- [Project Specification](docs/SPEC.md)
+- [Contributing Guide](docs/CONTRIBUTING.md)
+
 ## Quickstart
 
 1. Install the published CLI.
