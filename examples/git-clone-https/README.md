@@ -11,7 +11,7 @@ warning: git clone blocked as expected: fatal: unable to access 'https://127.0.0
 To run the example through the helper script:
 
 ```bash
-bash ./run_examples.sh ex_git_clone_https
+bash ./scripts/run_examples.sh ex_git_clone_https
 ```
 
 Set `WARDEN_EXAMPLE_REMOTE` to point at a real repository if you want to
