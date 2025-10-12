@@ -1,6 +1,6 @@
 use cargo_metadata::{Metadata, MetadataCommand, PackageId};
 use directories::ProjectDirs;
-use policy_core::{FsDefault, Mode, Policy, WorkspacePolicy};
+use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy, WorkspacePolicy};
 use semver::{Version, VersionReq};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -55,7 +55,7 @@ pub(crate) enum PolicySourceKind {
     CliFile {
         path: PathBuf,
     },
-    DefaultEmpty,
+    BuiltinDefault,
     ModeOverride,
 }
 
@@ -166,11 +166,21 @@ fn load_local_policy_layer() -> io::Result<PolicyLayer> {
             policy,
             source: PolicySourceKind::LocalFile { path },
         }),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(PolicyLayer {
-            policy: Policy::new(Mode::Enforce),
-            source: PolicySourceKind::DefaultEmpty,
-        }),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(builtin_default_policy_layer()),
         Err(err) => Err(err),
+    }
+}
+
+fn builtin_default_policy_layer() -> PolicyLayer {
+    let policy = Policy::with_defaults(
+        Mode::Observe,
+        FsDefault::Strict,
+        NetDefault::Deny,
+        ExecDefault::Allowlist,
+    );
+    PolicyLayer {
+        policy,
+        source: PolicySourceKind::BuiltinDefault,
     }
 }
 
@@ -1012,13 +1022,13 @@ mod tests {
         init_cargo_package(dir.path());
 
         let status = collect_policy_status(&[], None).unwrap();
-        assert_eq!(status.effective_mode, Mode::Enforce);
+        assert_eq!(status.effective_mode, Mode::Observe);
         assert_eq!(status.sources.len(), 1);
         assert!(matches!(
             status.sources[0].kind,
-            PolicySourceKind::DefaultEmpty
+            PolicySourceKind::BuiltinDefault
         ));
-        assert_eq!(status.sources[0].mode, Mode::Enforce);
+        assert_eq!(status.sources[0].mode, Mode::Observe);
     }
 
     #[test]
@@ -1113,7 +1123,7 @@ deny = ["execve"]
 
         let isolation = setup_isolation(&[], &[], None).unwrap();
 
-        assert_eq!(isolation.mode, Mode::Enforce);
+        assert_eq!(isolation.mode, Mode::Observe);
         assert!(isolation.syscall_deny.is_empty());
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
         assert!(isolation.maps_layout.net_rules.is_empty());
@@ -1144,7 +1154,7 @@ deny = ["execve"]
         let allow = vec!["/bin/bash".to_string()];
         let isolation = setup_isolation(&allow, &[], None).unwrap();
 
-        assert_eq!(isolation.mode, Mode::Enforce);
+        assert_eq!(isolation.mode, Mode::Observe);
         let exec = exec_paths(&isolation.maps_layout);
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
 
