@@ -3,7 +3,7 @@
 Run the examples under `cargo warden` using the helper script:
 
 ```bash
-./run_examples.sh
+./scripts/run_examples.sh
 ```
 
 Expected output includes messages such as:

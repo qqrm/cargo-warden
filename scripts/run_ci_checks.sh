@@ -126,7 +126,7 @@ main() {
   log_step "Ensuring actionlint"
   if ! command -v actionlint >/dev/null 2>&1; then
     echo "error: actionlint is required but not found on PATH" >&2
-    echo "hint: run './repo-setup.sh' or install actionlint manually" >&2
+    echo "hint: run './scripts/repo-setup.sh' or install actionlint manually" >&2
     exit 1
   fi
 
@@ -160,8 +160,8 @@ main() {
   log_step "Running cargo +nightly udeps --all-targets --all-features"
   cargo +nightly udeps --all-targets --all-features
 
-  log_step "Running run_examples.sh"
-  ./run_examples.sh
+  log_step "Running scripts/run_examples.sh"
+  ./scripts/run_examples.sh
 
   log_step "CI parity checks completed successfully"
 }
