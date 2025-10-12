@@ -321,6 +321,18 @@ wrkflw validate
 wrkflw run .github/workflows/CI.yml
 ```
 
+## Releasing to crates.io
+
+Follow [RELEASING.md](RELEASING.md) when cutting a new version. The document covers:
+
+- preparing the workspace with aligned version numbers and changelog updates,
+- running the validation suite before packaging,
+- publishing crates to crates.io in dependency order,
+- verifying the release by installing it with `cargo install` and running smoke tests,
+- tagging the release and updating downstream distribution artifacts.
+
+Keep the release checklist under version control so every maintainer can repeat the process without tribal knowledge.
+
 ## Repository Maintenance
 
 Use `scripts/prune_branches.sh` to list feature branches that have been inactive for more than 48 hours. Pass `--prune` to
