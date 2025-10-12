@@ -30,6 +30,7 @@ jobs:
     env:
       PUBLISH_INTERVAL: ${{ inputs.publish_interval || '60' }}
       RELEASE_PREFIX: ${{ inputs.release_prefix || '' }}
+      PUBLISH_PLAN_PATH: target/publish-plan.log
 
     steps:
       - name: Checkout
@@ -99,7 +100,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: publish-plan
-          path: publish-plan.log
+          path: ${{ steps.publish_plan.outputs['plan-path'] }}
           retention-days: 7
 
       - name: Determine release tag
