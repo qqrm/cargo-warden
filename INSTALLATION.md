@@ -19,6 +19,16 @@ capsh --print | grep CapEff
 The capability set must include both `cap_bpf` and `cap_sys_admin`. When the
 binary runs under a unit file or container, add the capabilities explicitly.
 
+## Installing from crates.io
+
+After publishing a release, install the CLI directly with `cargo install`:
+
+```bash
+cargo install cargo-warden --version <published-version>
+```
+
+Run `cargo warden --help` to confirm the binary is on the PATH. Follow the next sections to download or rebuild the BPF artifact bundle before running the sandbox.
+
 ## Fetching prebuilt BPF artifacts
 
 Every push to `main` triggers the `Build BPF Artifacts` workflow. Download the

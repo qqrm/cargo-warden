@@ -26,7 +26,6 @@ fi
 if [[ -n "${CARGO_REGISTRY_TOKEN:-}" ]]; then
   set -- "$@" --token "${CARGO_REGISTRY_TOKEN}"
 fi
-
 cargo workspaces publish "$@"
 
 echo "::notice::Publish completed at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
