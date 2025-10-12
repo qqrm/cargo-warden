@@ -68,8 +68,11 @@ fn print_policy_sources(sources: &[PolicySource]) {
                     mode_to_str(source.mode)
                 );
             }
-            PolicySourceKind::DefaultEmpty => {
-                println!("- built-in defaults [mode: {}]", mode_to_str(source.mode));
+            PolicySourceKind::BuiltinDefault => {
+                println!(
+                    "- built-in starter policy [mode: {}]",
+                    mode_to_str(source.mode)
+                );
             }
             PolicySourceKind::ModeOverride => {
                 println!("- CLI mode override [mode: {}]", mode_to_str(source.mode));

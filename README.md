@@ -9,60 +9,43 @@ logs.
 
 ## Quickstart
 
-1. Install the required toolchains and scripts.
+1. Install the published CLI.
 
    ```bash
-   ./repo-setup.sh
+   cargo install cargo-warden --locked
    ```
 
-2. Generate a starter policy.
+   Prebuilt binaries for the eBPF programs are produced by the "Build BPF
+   Artifacts" GitHub workflow. Download the latest `prebuilt.tar.gz` bundle (or
+   reuse the copy from a release package) and place it under
+   `${XDG_DATA_HOME:-$HOME/.local/share}/cargo-warden/bpf`.
+
+2. Run any command in observe mode with the built-in starter policy (no
+   `warden.toml` required):
 
    ```bash
-   cargo warden init
+   cargo warden run -- cargo test
    ```
 
-3. Edit `warden.toml` to reflect the permissions your build needs.
+   The default policy records violations without blocking execution. Switch to
+   `cargo warden build -- --release` to wrap `cargo build` directly.
 
-   ```toml
-   mode = "enforce"
-   fs.default = "strict"
-   net.default = "deny"
-   exec.default = "allowlist"
-
-   [allow.exec]
-   allowed = ["rustc", "rustdoc", "rustfmt"]
-
-   [allow.net]
-   hosts = ["127.0.0.1:8080"]
-
-   [allow.fs]
-   # Strict mode implicitly allows writing to Cargo's target directory (including OUT_DIR).
-   write_extra = ["/tmp/warden-scratch"]
-   # Strict mode implicitly allows reading from the workspace root.
-   read_extra = ["/usr/include"]
-   ```
-
-4. Enforce the policy when building.
-
-   ```bash
-   cargo warden build -- --release
-   ```
-
-   Pass `--policy path/to/file` to load additional policy files and forward
-   build arguments after `--`.
-
-5. Observe other commands before promoting new rules to enforcement.
-
-   ```bash
-   cargo warden run --mode observe -- cargo test
-   ```
-
-6. Inspect the active configuration and export reports.
+3. Review the active configuration and the collected audit trail.
 
    ```bash
    cargo warden status
    cargo warden report --format sarif --output warden.sarif
    ```
+
+4. When you are ready to enforce, bootstrap a policy file and tailor the
+   defaults.
+
+   ```bash
+   cargo warden init
+   ```
+
+   Edit the generated `warden.toml` to promote specific permissions to enforce
+   mode.
 
 ## Setup Requirements
 
