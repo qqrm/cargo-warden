@@ -4,8 +4,9 @@ set -euo pipefail
 dry_run="${DRY_RUN:-true}"
 interval="${PUBLISH_INTERVAL:-60}"
 release_tag="${RELEASE_TAG:-}"
+plan_path="${PUBLISH_PLAN_PATH:-target/publish-plan.log}"
 
-if [[ -f publish-plan.log && -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+if [[ -f "${plan_path}" && -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   mkdir -p "$(dirname "${GITHUB_STEP_SUMMARY}")"
   {
     echo

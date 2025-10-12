@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+plan_path="${PUBLISH_PLAN_PATH:-target/publish-plan.log}"
 plan_tmp="$(mktemp)"
+
 if cargo workspaces publish \
   --from-git \
   --skip-published \
@@ -14,7 +16,10 @@ else
   exit 1
 fi
 
-mv "${plan_tmp}" publish-plan.log
+mkdir -p "$(dirname "${plan_path}")"
+mv "${plan_tmp}" "${plan_path}"
+
+echo "Publish plan written to ${plan_path}" >&2
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   mkdir -p "$(dirname "${GITHUB_STEP_SUMMARY}")"
@@ -22,12 +27,12 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     echo "## Publish plan"
     echo
     echo '```text'
-    cat publish-plan.log
+    cat "${plan_path}"
     echo '```'
   } >> "${GITHUB_STEP_SUMMARY}"
 fi
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   mkdir -p "$(dirname "${GITHUB_OUTPUT}")"
-  echo "plan-path=publish-plan.log" >> "${GITHUB_OUTPUT}"
+  echo "plan-path=${plan_path}" >> "${GITHUB_OUTPUT}"
 fi
