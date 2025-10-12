@@ -3,18 +3,16 @@ name: Publish crates to crates.io
 on:
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: "Dry run without publishing"
-        required: false
-        default: "false"
       publish_interval:
         description: "Seconds to wait between crate publishes (0 disables the wait)"
         required: false
         default: "60"
+        type: string
       release_prefix:
         description: "Optional <major>.<minor> override for the release tag"
         required: false
         default: ""
+        type: string
 
 concurrency:
   group: publish-crates
@@ -30,8 +28,6 @@ jobs:
     permissions:
       contents: write
     env:
-      CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-      DRY_RUN: ${{ inputs.dry_run || 'false' }}
       PUBLISH_INTERVAL: ${{ inputs.publish_interval || '60' }}
       RELEASE_PREFIX: ${{ inputs.release_prefix || '' }}
 
@@ -60,12 +56,35 @@ jobs:
         with:
           tool: cargo-workspaces
 
+      - name: Configure crates.io token
+        shell: bash
+        env:
+          PRIMARY: ${{ secrets.CRATES_IO_TOKEN }}
+          FALLBACK: ${{ secrets.CRATES_IO_API_KEY }}
+          LEGACY: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          token=""
+          for candidate in "${PRIMARY}" "${FALLBACK}" "${LEGACY}"; do
+            if [[ -n "${candidate}" ]]; then
+              token="${candidate}"
+              break
+            fi
+          done
+          if [[ -z "${token}" ]]; then
+            echo "::error::No crates.io token found in secrets CRATES_IO_TOKEN, CRATES_IO_API_KEY, or CARGO_REGISTRY_TOKEN." >&2
+            exit 1
+          fi
+          echo "::add-mask::${token}"
+          {
+            echo "CARGO_REGISTRY_TOKEN=${token}"
+          } >> "${GITHUB_ENV}"
+
       - name: Sanity checks
         shell: bash
         run: |
           cargo --version
           cargo workspaces --version
-          if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
             echo "CRATES_IO_TOKEN is not set"
             exit 1
           fi
@@ -75,19 +94,25 @@ jobs:
         shell: bash
         run: bash scripts/ci/resolve_publish_plan.sh
 
+      - name: Upload publish plan
+        if: ${{ steps.publish_plan.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-plan
+          path: publish-plan.log
+          retention-days: 7
+
       - name: Determine release tag
         id: release_tag
         shell: bash
         run: bash scripts/ci/determine_release_tag.sh
 
       - name: Publish
-        if: ${{ env.DRY_RUN == 'false' }}
         shell: bash
         timeout-minutes: 45
         run: bash scripts/ci/run_publish.sh
 
       - name: Create release tag
-        if: ${{ success() && env.DRY_RUN == 'false' }}
         shell: bash
         run: bash scripts/ci/create_release_tag.sh
 
