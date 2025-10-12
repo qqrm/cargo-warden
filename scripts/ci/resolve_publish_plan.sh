@@ -1,6 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -z "${CARGO_HTTP_CAINFO:-}" ]]; then
+  default_cainfo="${SSL_CERT_FILE:-}"
+  if [[ -z "$default_cainfo" ]]; then
+    for candidate in \
+      /etc/ssl/certs/ca-certificates.crt \
+      /etc/pki/tls/certs/ca-bundle.crt \
+      /etc/ssl/ca-bundle.pem; do
+      if [[ -f "$candidate" ]]; then
+        default_cainfo="$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [[ -n "$default_cainfo" ]]; then
+    export CARGO_HTTP_CAINFO="$default_cainfo"
+  else
+    echo "::warning::No CA bundle detected; crates.io access may fail" >&2
+  fi
+fi
+
 plan_tmp="$(mktemp)"
 if cargo workspaces publish \
   --from-git \
