@@ -2018,6 +2018,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91e7d9e3bb61134e77bde20dd4825b97c010155709965fedf0f49bb138e52a9d"
 dependencies = [
  "deranged",
+ "itoa",
  "num-conv",
  "powerfmt",
  "serde",
@@ -2275,6 +2276,9 @@ name = "warden-bpf-core"
 version = "0.1.0"
 dependencies = [
  "aya-ebpf",
+ "serde_json",
+ "sha2",
+ "time",
  "warden-bpf-api",
  "warden-bpf-host",
 ]
