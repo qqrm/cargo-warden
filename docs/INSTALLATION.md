@@ -58,11 +58,13 @@ searches in the following order:
 Downstream packagers can rebuild the bundle directly from source:
 
 ```bash
-./scripts/build-bpf.sh
+cargo build -p warden-bpf-core --release
 ```
 
-The script validates the kernel version, checks for the required capabilities,
-installs tooling, and emits a fresh manifest and object files under `prebuilt/`.
-Copy the directory into the package payload and ship the `manifest.json` file
-alongside the architecture directories. Point `WARDEN_BPF_DIST_DIR` at the
-installation prefix when testing the packaged build.
+The crate's build script invokes the nightly toolchain, emits a fresh manifest,
+and copies the object into each architecture directory under `prebuilt/`.
+Export `WARDEN_BPF_USE_PREBUILT=1` to skip the rebuild step when packaging
+existing artifacts. Copy the directory into the package payload and ship the
+`manifest.json` file alongside the architecture directories. Point
+`WARDEN_BPF_DIST_DIR` at the installation prefix when testing the packaged
+build.

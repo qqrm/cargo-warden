@@ -262,13 +262,13 @@ filesystem auditing) and richer telemetry pipelines to help tune policies.
 Generate the prebuilt BPF bundle with:
 
 ```bash
-scripts/build-bpf.sh
+cargo build -p warden-bpf-core --release
 ```
 
-The script verifies the host kernel is at least 5.13, warns when the `CAP_BPF`
-and `CAP_SYS_ADMIN` capabilities are missing, installs the nightly toolchain
-and `bpf-linker`, and emits the objects plus a checksum manifest under
-`prebuilt/`.
+The crate's build script invokes the nightly toolchain to cross-compile the
+eBPF program, writes architecture-specific copies, and emits a checksum
+manifest under `prebuilt/`. Set `WARDEN_BPF_USE_PREBUILT=1` to skip the compile
+step when you only want to consume existing artifacts.
 
 Artifacts live outside version control. Developers can point the runtime at the
 fresh build with:
