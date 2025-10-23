@@ -88,5 +88,5 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pkg-config libseccomp-dev protobuf-compiler
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
-      - run: ./run_examples.sh
+      - run: ./scripts/run_examples.sh
 
