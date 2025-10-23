@@ -111,17 +111,17 @@ main() {
   log_step "Ensuring required apt packages"
   ensure_apt_packages "${install_tools}" pkg-config libseccomp-dev protobuf-compiler jq xxhash
 
-  log_step "Ensuring Rust components"
-  rustup component add rustfmt clippy llvm-tools-preview >/dev/null
+  log_step "Ensuring nightly toolchain"
+  ensure_nightly "${install_tools}"
+
+  log_step "Ensuring nightly components"
+  rustup component add --toolchain nightly rustfmt clippy rust-src llvm-tools-preview >/dev/null
 
   log_step "Ensuring cargo subcommands"
   ensure_cargo_tool "${install_tools}" cargo-machete cargo-machete
   ensure_cargo_tool "${install_tools}" cargo-audit cargo-audit
   ensure_cargo_tool "${install_tools}" cargo-nextest cargo-nextest
   ensure_cargo_tool "${install_tools}" cargo-udeps cargo-udeps
-
-  log_step "Ensuring nightly toolchain"
-  ensure_nightly "${install_tools}"
 
   log_step "Ensuring actionlint"
   if ! command -v actionlint >/dev/null 2>&1; then

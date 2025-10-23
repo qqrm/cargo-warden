@@ -295,7 +295,7 @@ Use `scripts/run_ci_checks.sh` to reproduce the pull request GitHub Actions chec
 
 - installs missing Debian packages (`pkg-config`, `libseccomp-dev`, `protobuf-compiler`, `jq`, `xxhash`),
 - installs the cargo subcommands required by the pipeline (`cargo-machete`, `cargo-audit`, `cargo-nextest`, `cargo-udeps`),
-- ensures the stable toolchain has the `rustfmt`, `clippy`, and `llvm-tools-preview` components, plus a nightly toolchain for `cargo udeps`,
+- ensures the nightly toolchain has the `rustfmt`, `clippy`, `rust-src`, and `llvm-tools-preview` components,
 - runs the same validation commands as the CI jobs, including formatting, linting, tests, supply-chain checks, and example runs.
 
 Run it from the repository root:

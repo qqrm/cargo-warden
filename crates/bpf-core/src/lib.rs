@@ -63,6 +63,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 struct ArrayDescriptor<T, const CAPACITY: usize> {
+    #[cfg(any(test, feature = "fuzzing"))]
     name: &'static str,
     _marker: PhantomData<T>,
 }
@@ -70,7 +71,10 @@ struct ArrayDescriptor<T, const CAPACITY: usize> {
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 impl<T: Copy, const CAPACITY: usize> ArrayDescriptor<T, CAPACITY> {
     const fn new(name: &'static str) -> Self {
+        #[cfg(not(any(test, feature = "fuzzing")))]
+        let _ = name;
         Self {
+            #[cfg(any(test, feature = "fuzzing"))]
             name,
             _marker: PhantomData,
         }
@@ -101,6 +105,7 @@ impl<T: Copy, const CAPACITY: usize> ArrayDescriptor<T, CAPACITY> {
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 struct HashMapDescriptor<K, V, const CAPACITY: usize> {
+    #[cfg(any(test, feature = "fuzzing"))]
     name: &'static str,
     _marker: PhantomData<(K, V)>,
 }
@@ -108,7 +113,10 @@ struct HashMapDescriptor<K, V, const CAPACITY: usize> {
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 impl<K: Copy + PartialEq, V: Copy, const CAPACITY: usize> HashMapDescriptor<K, V, CAPACITY> {
     const fn new(name: &'static str) -> Self {
+        #[cfg(not(any(test, feature = "fuzzing")))]
+        let _ = name;
         Self {
+            #[cfg(any(test, feature = "fuzzing"))]
             name,
             _marker: PhantomData,
         }
@@ -140,13 +148,19 @@ impl<K: Copy + PartialEq, V: Copy, const CAPACITY: usize> HashMapDescriptor<K, V
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 struct RingBufDescriptor<const BYTE_SIZE: usize> {
+    #[cfg(any(test, feature = "fuzzing"))]
     name: &'static str,
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 impl<const BYTE_SIZE: usize> RingBufDescriptor<BYTE_SIZE> {
     const fn new(name: &'static str) -> Self {
-        Self { name }
+        #[cfg(not(any(test, feature = "fuzzing")))]
+        let _ = name;
+        Self {
+            #[cfg(any(test, feature = "fuzzing"))]
+            name,
+        }
     }
 
     #[cfg(target_arch = "bpf")]
@@ -260,7 +274,6 @@ type FsRulesMap = Array<bpf_api::FsRuleEntry>;
 #[cfg(any(test, feature = "fuzzing"))]
 type FsRulesMap = TestArray<bpf_api::FsRuleEntry, { bpf_api::FS_RULES_CAPACITY as usize }>;
 
-#[cfg(target_arch = "bpf")]
 #[cfg(target_arch = "bpf")]
 type ModeFlagsMap = Array<u32>;
 #[cfg(any(test, feature = "fuzzing"))]

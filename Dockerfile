@@ -1,4 +1,4 @@
-FROM rust:1 AS build
+FROM rust:nightly AS build
 WORKDIR /src
 COPY . .
 RUN cargo build --release -p warden-cargo-warden -p warden-agent-lite
