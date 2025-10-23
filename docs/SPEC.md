@@ -400,7 +400,7 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
-          toolchain: stable
+          toolchain: nightly
           override: true
       - name: Install cargo-warden
         run: cargo install --path crates/cli
@@ -419,7 +419,7 @@ jobs:
 ### C. Code Conventions
 
 * Rust 2024, `clippy` strict, deny warnings
-* Format with stable `rustfmt`
+* Format with nightly `rustfmt`
 * Public API only in `warden-bpf-api` and `warden-policy-core`; everything else `pub(crate)`
 
 ### D. Glossary

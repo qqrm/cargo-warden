@@ -12,7 +12,7 @@ This guide outlines how to publish the `cargo-warden` workspace to [crates.io](h
    ```
 
 3. **Clean checkout** – start from a clean tree that is up to date with the `main` branch.
-4. **Toolchain** – use the stable toolchain unless the release notes require otherwise.
+4. **Toolchain** – use the nightly toolchain with the `rustfmt`, `clippy`, `rust-src`, and `llvm-tools-preview` components.
 
 ## 1. Select the release version
 
