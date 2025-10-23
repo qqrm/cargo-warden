@@ -19,6 +19,20 @@ capsh --print | grep CapEff
 The capability set must include both `cap_bpf` and `cap_sys_admin`. When the
 binary runs under a unit file or container, add the capabilities explicitly.
 
+## System dependencies
+
+Install the userland dependencies required to compile and run the sandbox.
+On Debian-based distributions:
+
+```bash
+sudo apt-get update
+sudo apt-get install libseccomp-dev pkg-config
+```
+
+The development package pulls in the shared library (`libseccomp2`) used at
+runtime. Package maintainers targeting minimal images should ensure the
+runtime environment includes `libseccomp2` alongside the CLI binary.
+
 ## Installing from crates.io
 
 After publishing a release, install the CLI directly with `cargo install`:
