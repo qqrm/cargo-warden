@@ -1,7 +1,0 @@
-# Default owners for the cargo-warden repository
-* @warden
-
-# Core crates
-crates/ @warden
-examples/ @warden
-scripts/ @warden
