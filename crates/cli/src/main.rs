@@ -3,6 +3,59 @@ pub(crate) mod policy;
 mod sandbox;
 #[cfg(test)]
 pub(crate) mod test_support;
+#[cfg(test)]
+mod allocation_tracker {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    pub struct CountingAllocator;
+
+    static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe impl GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(ptr, layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+    }
+
+    pub fn allocation_count() -> usize {
+        ALLOCATIONS.load(Ordering::Relaxed)
+    }
+
+    pub fn reset() {
+        ALLOCATIONS.store(0, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: allocation_tracker::CountingAllocator =
+    allocation_tracker::CountingAllocator;
+
+#[cfg(test)]
+pub(crate) fn allocation_count() -> usize {
+    allocation_tracker::allocation_count()
+}
+
+#[cfg(test)]
+pub(crate) fn reset_allocation_count() {
+    allocation_tracker::reset();
+}
 
 use clap::{Parser, Subcommand, ValueEnum};
 use policy_core::Mode;
