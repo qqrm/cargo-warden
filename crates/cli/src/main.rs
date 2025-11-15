@@ -1,5 +1,5 @@
 mod commands;
-pub(crate) mod policy;
+mod metadata;
 mod sandbox;
 #[cfg(test)]
 pub(crate) mod test_support;

@@ -2,8 +2,9 @@ use std::io;
 use std::process::{Command, exit};
 
 use policy_core::Mode;
+use policy_orchestrator::configure_isolation;
 
-use crate::policy::setup_isolation;
+use crate::metadata::fetch_metadata;
 use crate::sandbox::run_in_sandbox;
 
 pub(crate) fn exec(
@@ -13,7 +14,8 @@ pub(crate) fn exec(
     mode_override: Option<Mode>,
     agent_config: sandbox_runtime::AgentConfig,
 ) -> io::Result<()> {
-    let isolation = setup_isolation(allow, policy, mode_override)?;
+    let metadata = fetch_metadata()?;
+    let isolation = configure_isolation(&metadata, allow, policy, mode_override)?;
     let status = run_in_sandbox(
         build_command(&args),
         isolation.mode,

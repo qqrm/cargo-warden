@@ -4,7 +4,7 @@ use std::process::ExitStatus;
 use policy_core::Mode;
 use sandbox_runtime::{AgentConfig, Sandbox};
 
-use crate::policy::IsolationConfig;
+use policy_orchestrator::IsolationConfig;
 
 pub(crate) fn run_in_sandbox(
     command: std::process::Command,

@@ -1,4 +1,4 @@
-use cargo_metadata::{Metadata, MetadataCommand, PackageId};
+use cargo_metadata::{Metadata, PackageId};
 use directories::ProjectDirs;
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy, WorkspacePolicy};
 use semver::{Version, VersionReq};
@@ -10,41 +10,27 @@ use std::io;
 use std::path::{Path, PathBuf};
 use warden_policy_compiler::{self, CompiledPolicy, MapsLayout};
 
-pub(crate) struct IsolationConfig {
-    pub(crate) mode: Mode,
-    pub(crate) syscall_deny: Vec<String>,
-    pub(crate) maps_layout: MapsLayout,
-    pub(crate) allowed_env_vars: Vec<String>,
-}
-
-#[derive(Default)]
-struct PolicyContext {
-    metadata: Option<Metadata>,
-}
-
-impl PolicyContext {
-    fn metadata(&mut self) -> io::Result<&Metadata> {
-        if self.metadata.is_none() {
-            self.metadata = Some(fetch_cargo_metadata()?);
-        }
-        Ok(self.metadata.as_ref().unwrap())
-    }
+pub struct IsolationConfig {
+    pub mode: Mode,
+    pub syscall_deny: Vec<String>,
+    pub maps_layout: MapsLayout,
+    pub allowed_env_vars: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PolicyStatus {
-    pub(crate) sources: Vec<PolicySource>,
-    pub(crate) effective_mode: Mode,
+pub struct PolicyStatus {
+    pub sources: Vec<PolicySource>,
+    pub effective_mode: Mode,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PolicySource {
-    pub(crate) kind: PolicySourceKind,
-    pub(crate) mode: Mode,
+pub struct PolicySource {
+    pub kind: PolicySourceKind,
+    pub mode: Mode,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum PolicySourceKind {
+pub enum PolicySourceKind {
     Workspace {
         path: PathBuf,
         member: Option<String>,
@@ -59,14 +45,13 @@ pub(crate) enum PolicySourceKind {
     ModeOverride,
 }
 
-pub(crate) fn setup_isolation(
+pub fn configure_isolation(
+    metadata: &Metadata,
     allow: &[String],
     policy_paths: &[String],
     mode_override: Option<Mode>,
 ) -> io::Result<IsolationConfig> {
-    let mut ctx = PolicyContext::default();
-    let mut policy = load_default_policy(&mut ctx)?;
-    let metadata = ctx.metadata()?;
+    let mut policy = load_default_policy(metadata)?;
     apply_manifest_permissions(&mut policy, metadata)?;
     apply_trust_permissions(&mut policy, metadata)?;
     for path in policy_paths {
@@ -108,23 +93,23 @@ pub(crate) fn setup_isolation(
     })
 }
 
-fn load_default_policy(ctx: &mut PolicyContext) -> io::Result<Policy> {
-    load_default_policy_layer(ctx).map(|layer| layer.policy)
+fn load_default_policy(metadata: &Metadata) -> io::Result<Policy> {
+    load_default_policy_layer(metadata).map(|layer| layer.policy)
 }
 
-fn load_default_policy_layer(ctx: &mut PolicyContext) -> io::Result<PolicyLayer> {
-    if let Some(layer) = load_workspace_policy_layer(ctx)? {
+fn load_default_policy_layer(metadata: &Metadata) -> io::Result<PolicyLayer> {
+    if let Some(layer) = load_workspace_policy_layer(metadata)? {
         return Ok(layer);
     }
     load_local_policy_layer()
 }
 
-fn load_workspace_policy_layer(ctx: &mut PolicyContext) -> io::Result<Option<PolicyLayer>> {
+fn load_workspace_policy_layer(metadata: &Metadata) -> io::Result<Option<PolicyLayer>> {
     let Some(path) = find_workspace_file("workspace.warden.toml")? else {
         return Ok(None);
     };
     let workspace: WorkspacePolicy = read_toml_file(&path)?;
-    let member = determine_active_workspace_member(ctx)?;
+    let member = determine_active_workspace_member(metadata)?;
     let policy = match member {
         Some(ref member) => workspace.policy_for(member),
         None => workspace.root.clone(),
@@ -184,11 +169,10 @@ fn builtin_default_policy_layer() -> PolicyLayer {
     }
 }
 
-fn determine_active_workspace_member(ctx: &mut PolicyContext) -> io::Result<Option<String>> {
+fn determine_active_workspace_member(metadata: &Metadata) -> io::Result<Option<String>> {
     if let Some(from_env) = workspace_member_from_env() {
         return Ok(Some(from_env));
     }
-    let metadata = ctx.metadata()?;
     workspace_member_from_dir(metadata)
 }
 
@@ -221,15 +205,6 @@ fn parse_workspace_member_value(value: &str) -> Option<String> {
         }
     }
     Some(candidate.to_string())
-}
-
-fn fetch_cargo_metadata() -> io::Result<Metadata> {
-    let mut command = MetadataCommand::new();
-    if let Some(cargo) = std::env::var_os("CARGO").filter(|value| !value.is_empty()) {
-        command.cargo_path(cargo);
-    }
-    command.no_deps();
-    command.exec().map_err(io::Error::other)
 }
 
 fn extend_fs_access(policy: &mut Policy, metadata: &Metadata) -> io::Result<()> {
@@ -765,15 +740,15 @@ struct PolicyLayer {
     source: PolicySourceKind,
 }
 
-pub(crate) fn collect_policy_status(
+pub fn collect_policy_status(
+    metadata: &Metadata,
     policy_paths: &[String],
     mode_override: Option<Mode>,
 ) -> io::Result<PolicyStatus> {
-    let mut ctx = PolicyContext::default();
     let PolicyLayer {
         policy: default_policy,
         source: default_source,
-    } = load_default_policy_layer(&mut ctx)?;
+    } = load_default_policy_layer(metadata)?;
     let mut sources = Vec::new();
     sources.push(PolicySource {
         kind: default_source,
@@ -854,13 +829,14 @@ fn dedup_paths(paths: &mut Vec<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{DirGuard, ScopedEnv};
     use bpf_api::{FS_READ, FS_WRITE};
+    use cargo_metadata::{Metadata, MetadataCommand};
+    use scoped_env::ScopedEnv;
     use serial_test::serial;
     use std::ffi::{OsStr, OsString};
     use std::fs::{self, write};
     use std::net::{Ipv4Addr, Ipv6Addr};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     fn exec_paths(layout: &MapsLayout) -> Vec<String> {
         layout
@@ -916,6 +892,32 @@ mod tests {
             .collect()
     }
 
+    fn metadata() -> Metadata {
+        let mut command = MetadataCommand::new();
+        if let Some(cargo) = std::env::var_os("CARGO").filter(|value| !value.is_empty()) {
+            command.cargo_path(cargo);
+        }
+        command.no_deps();
+        command.exec().unwrap()
+    }
+
+    fn run_configure_isolation(
+        allow: &[String],
+        policy_paths: &[String],
+        mode_override: Option<Mode>,
+    ) -> io::Result<IsolationConfig> {
+        let metadata = metadata();
+        configure_isolation(&metadata, allow, policy_paths, mode_override)
+    }
+
+    fn run_collect_policy_status(
+        policy_paths: &[String],
+        mode_override: Option<Mode>,
+    ) -> io::Result<PolicyStatus> {
+        let metadata = metadata();
+        collect_policy_status(&metadata, policy_paths, mode_override)
+    }
+
     fn init_cargo_package(dir: &Path) {
         write(
             dir.join("Cargo.toml"),
@@ -936,6 +938,24 @@ mod tests {
             ScopedEnv::remove(OsStr::new("CARGO_TARGET_DIR")),
             ScopedEnv::remove(OsStr::new("CARGO_TARGET_TMPDIR")),
         )
+    }
+
+    struct DirGuard {
+        original: PathBuf,
+    }
+
+    impl DirGuard {
+        fn change_to(path: &Path) -> Self {
+            let original = std::env::current_dir().unwrap();
+            std::env::set_current_dir(path).unwrap();
+            Self { original }
+        }
+    }
+
+    impl Drop for DirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.original);
+        }
     }
 
     #[test]
@@ -960,7 +980,7 @@ mod tests {
         let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
         let _dir_guard = DirGuard::change_to(member_dir.as_path());
 
-        let status = collect_policy_status(&[], None).unwrap();
+        let status = run_collect_policy_status(&[], None).unwrap();
         assert_eq!(status.effective_mode, Mode::Observe);
         assert_eq!(status.sources.len(), 1);
         match &status.sources[0].kind {
@@ -990,7 +1010,7 @@ mod tests {
         write(&cli_policy, "mode = \"observe\"\n").unwrap();
 
         let cli_arg = cli_policy.to_str().unwrap().to_string();
-        let status = collect_policy_status(&[cli_arg], Some(Mode::Enforce)).unwrap();
+        let status = run_collect_policy_status(&[cli_arg], Some(Mode::Enforce)).unwrap();
 
         assert_eq!(status.effective_mode, Mode::Enforce);
         assert_eq!(status.sources.len(), 3);
@@ -1021,7 +1041,7 @@ mod tests {
         let _dir_guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
-        let status = collect_policy_status(&[], None).unwrap();
+        let status = run_collect_policy_status(&[], None).unwrap();
         assert_eq!(status.effective_mode, Mode::Observe);
         assert_eq!(status.sources.len(), 1);
         assert!(matches!(
@@ -1033,7 +1053,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn setup_isolation_merges_syscalls_and_allow_entries() {
+    fn configure_isolation_merges_syscalls_and_allow_entries() {
         let dir = tempfile::tempdir().unwrap();
         let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
         let _guard = DirGuard::change_to(dir.path());
@@ -1085,7 +1105,7 @@ deny = ["execve"]
 
         let paths = [p1.to_str().unwrap().into(), p2.to_str().unwrap().into()];
         let allow = vec!["/usr/bin/git".to_string()];
-        let isolation = setup_isolation(&allow, &paths, None).unwrap();
+        let isolation = run_configure_isolation(&allow, &paths, None).unwrap();
 
         assert_eq!(isolation.mode, Mode::Enforce);
         assert!(isolation.syscall_deny.contains(&"clone".to_string()));
@@ -1098,7 +1118,7 @@ deny = ["execve"]
         assert!(exec.contains(&"/usr/bin/git".to_string()));
         assert_eq!(exec.len(), 3);
 
-        let metadata = super::fetch_cargo_metadata().unwrap();
+        let metadata = metadata();
         let workspace = super::normalize_path(metadata.workspace_root.clone().into_std_path_buf());
         let target = super::normalize_path(metadata.target_directory.clone().into_std_path_buf());
         let fs_rules = fs_entries(&isolation.maps_layout);
@@ -1115,20 +1135,20 @@ deny = ["execve"]
 
     #[test]
     #[serial]
-    fn setup_isolation_defaults_to_empty_policy() {
+    fn configure_isolation_defaults_to_empty_policy() {
         let dir = tempfile::tempdir().unwrap();
         let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
         let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
-        let isolation = setup_isolation(&[], &[], None).unwrap();
+        let isolation = run_configure_isolation(&[], &[], None).unwrap();
 
         assert_eq!(isolation.mode, Mode::Observe);
         assert!(isolation.syscall_deny.is_empty());
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
         assert!(isolation.maps_layout.net_rules.is_empty());
 
-        let metadata = super::fetch_cargo_metadata().unwrap();
+        let metadata = metadata();
         let workspace = super::normalize_path(metadata.workspace_root.clone().into_std_path_buf());
         let target = super::normalize_path(metadata.target_directory.clone().into_std_path_buf());
         let fs_rules = fs_entries(&isolation.maps_layout);
@@ -1145,20 +1165,20 @@ deny = ["execve"]
 
     #[test]
     #[serial]
-    fn setup_isolation_uses_cli_allow_when_no_file() {
+    fn configure_isolation_uses_cli_allow_when_no_file() {
         let dir = tempfile::tempdir().unwrap();
         let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
         let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
         let allow = vec!["/bin/bash".to_string()];
-        let isolation = setup_isolation(&allow, &[], None).unwrap();
+        let isolation = run_configure_isolation(&allow, &[], None).unwrap();
 
         assert_eq!(isolation.mode, Mode::Observe);
         let exec = exec_paths(&isolation.maps_layout);
         assert_eq!(exec, vec!["/bin/bash".to_string()]);
 
-        let metadata = super::fetch_cargo_metadata().unwrap();
+        let metadata = metadata();
         let workspace = super::normalize_path(metadata.workspace_root.clone().into_std_path_buf());
         let target = super::normalize_path(metadata.target_directory.clone().into_std_path_buf());
         let fs_rules = fs_entries(&isolation.maps_layout);
@@ -1175,7 +1195,7 @@ deny = ["execve"]
 
     #[test]
     #[serial]
-    fn setup_isolation_applies_mode_override() {
+    fn configure_isolation_applies_mode_override() {
         let dir = tempfile::tempdir().unwrap();
         let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
         let _guard = DirGuard::change_to(dir.path());
@@ -1191,7 +1211,7 @@ exec.default = "allow"
         )
         .unwrap();
 
-        let isolation = setup_isolation(&[], &[], Some(Mode::Observe)).unwrap();
+        let isolation = run_configure_isolation(&[], &[], Some(Mode::Observe)).unwrap();
 
         assert_eq!(isolation.mode, Mode::Observe);
         assert!(isolation.maps_layout.exec_allowlist.is_empty());
@@ -1201,14 +1221,14 @@ exec.default = "allow"
 
     #[test]
     #[serial]
-    fn setup_isolation_reports_duplicate_cli_allow() {
+    fn configure_isolation_reports_duplicate_cli_allow() {
         let dir = tempfile::tempdir().unwrap();
         let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
         let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
         let allow = vec!["/bin/bash".to_string(), "/bin/bash".to_string()];
-        let err = match setup_isolation(&allow, &[], None) {
+        let err = match run_configure_isolation(&allow, &[], None) {
             Ok(_) => panic!("expected duplicate error"),
             Err(err) => err,
         };
@@ -1220,13 +1240,13 @@ exec.default = "allow"
 
     #[test]
     #[serial]
-    fn setup_isolation_skips_duplicate_fs_rules() {
+    fn configure_isolation_skips_duplicate_fs_rules() {
         let dir = tempfile::tempdir().unwrap();
         let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
         let _guard = DirGuard::change_to(dir.path());
         init_cargo_package(dir.path());
 
-        let metadata = super::fetch_cargo_metadata().unwrap();
+        let metadata = metadata();
         let workspace = metadata.workspace_root.as_str().to_string();
         let target = metadata.target_directory.as_str().to_string();
 
@@ -1238,7 +1258,7 @@ exec.default = "allow"
         )
         .unwrap();
 
-        let isolation = setup_isolation(&[], &[], None).unwrap();
+        let isolation = run_configure_isolation(&[], &[], None).unwrap();
         let fs_rules = fs_entries(&isolation.maps_layout);
 
         assert_eq!(fs_rules.len(), 2);
@@ -1256,7 +1276,7 @@ exec.default = "allow"
 
     #[test]
     #[serial]
-    fn setup_isolation_includes_out_dir_from_env() {
+    fn configure_isolation_includes_out_dir_from_env() {
         let dir = tempfile::tempdir().unwrap();
         let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
         let _guard = DirGuard::change_to(dir.path());
@@ -1269,10 +1289,10 @@ exec.default = "allow"
             out_dir_path.as_os_str().to_os_string(),
         );
 
-        let isolation = setup_isolation(&[], &[], None).unwrap();
+        let isolation = run_configure_isolation(&[], &[], None).unwrap();
         drop(out_guard);
 
-        let metadata = super::fetch_cargo_metadata().unwrap();
+        let metadata = metadata();
         let workspace = super::normalize_path(metadata.workspace_root.clone().into_std_path_buf());
         let target = super::normalize_path(metadata.target_directory.clone().into_std_path_buf());
         let out_dir = super::normalize_path(&out_dir_path);
@@ -1294,7 +1314,7 @@ exec.default = "allow"
 
     #[test]
     #[serial]
-    fn setup_isolation_applies_manifest_permissions() {
+    fn configure_isolation_applies_manifest_permissions() {
         let dir = tempfile::tempdir().unwrap();
         let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
         let _guard = DirGuard::change_to(dir.path());
@@ -1326,7 +1346,7 @@ permissions = ["env:read:PROTOC"]
         )
         .unwrap();
 
-        let isolation = setup_isolation(&[], &[], None).unwrap();
+        let isolation = run_configure_isolation(&[], &[], None).unwrap();
 
         assert!(isolation.syscall_deny.contains(&"clone".to_string()));
 
@@ -1336,7 +1356,7 @@ permissions = ["env:read:PROTOC"]
         let fs_rules = fs_entries(&isolation.maps_layout);
         let include_path = super::normalize_path(&include_dir);
         let workspace = super::normalize_path(dir.path());
-        let metadata = super::fetch_cargo_metadata().unwrap();
+        let metadata = metadata();
         let target = super::normalize_path(metadata.target_directory.clone().into_std_path_buf());
 
         assert!(fs_rules.iter().any(|(path, access)| {
@@ -1364,7 +1384,7 @@ permissions = ["env:read:PROTOC"]
 
     #[test]
     #[serial]
-    fn setup_isolation_handles_metadata_table_arrays() {
+    fn configure_isolation_handles_metadata_table_arrays() {
         let dir = tempfile::tempdir().unwrap();
         let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
         let _guard = DirGuard::change_to(dir.path());
@@ -1405,7 +1425,7 @@ permissions = ["env:read:PLUGIN_SETTINGS"]
         )
         .unwrap();
 
-        let isolation = setup_isolation(&[], &[], None).unwrap();
+        let isolation = run_configure_isolation(&[], &[], None).unwrap();
 
         let exec = exec_paths(&isolation.maps_layout);
         let tool_string = tool_path.to_string_lossy().into_owned();
@@ -1429,7 +1449,7 @@ permissions = ["env:read:PLUGIN_SETTINGS"]
 
     #[test]
     #[serial]
-    fn setup_isolation_applies_trust_permissions() {
+    fn configure_isolation_applies_trust_permissions() {
         let dir = tempfile::tempdir().unwrap();
         let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
         let _guard = DirGuard::change_to(dir.path());
@@ -1458,7 +1478,7 @@ permissions = ["env:read:PLUGIN_SETTINGS"]
         )
         .unwrap();
 
-        let isolation = setup_isolation(&[], &[], None).unwrap();
+        let isolation = run_configure_isolation(&[], &[], None).unwrap();
 
         let exec = exec_paths(&isolation.maps_layout);
         assert!(exec.contains(&"/usr/local/bin/custom".to_string()));

@@ -2301,11 +2301,9 @@ dependencies = [
  "assert_cmd",
  "cargo_metadata",
  "clap",
- "directories",
  "event-reporting",
  "itertools",
  "scoped-env",
- "semver",
  "serde",
  "serde-jsonlines",
  "serde_json",
@@ -2313,8 +2311,8 @@ dependencies = [
  "tempfile",
  "toml",
  "warden-bpf-api",
- "warden-policy-compiler",
  "warden-policy-core",
+ "warden-policy-orchestrator",
  "warden-sandbox-runtime",
  "warden-testkits",
 ]
@@ -2349,6 +2347,24 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
  "toml",
+]
+
+[[package]]
+name = "warden-policy-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+ "directories",
+ "scoped-env",
+ "semver",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "toml",
+ "warden-bpf-api",
+ "warden-policy-compiler",
+ "warden-policy-core",
 ]
 
 [[package]]

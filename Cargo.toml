@@ -16,6 +16,7 @@ members = [
     "examples/proc-macro-hog/proc-macro-hog-macro",
     "examples/git-clone-https",
     "crates/event-reporting",
+    "crates/policy-orchestrator",
 ]
 resolver = "2"
 

@@ -1,0 +1,26 @@
+[package]
+name = "warden-policy-orchestrator"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Policy assembly and compilation orchestration for the cargo-warden sandbox."
+repository = "https://github.com/warden/cargo-warden"
+homepage = "https://github.com/warden/cargo-warden"
+documentation = "https://docs.rs/warden-policy-orchestrator"
+readme = "../../README.md"
+
+[dependencies]
+cargo_metadata = { workspace = true }
+directories = "5"
+policy-core = { package = "warden-policy-core", version = "0.1.0", path = "../policy-core" }
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+warden-policy-compiler = { version = "0.1.0", path = "../policy-compiler" }
+
+[dev-dependencies]
+bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
+scoped-env = "2.1.0"
+serial_test = "3"
+tempfile = "3"

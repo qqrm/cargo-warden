@@ -97,6 +97,7 @@ Components:
 * **warden-bpf-api** – shared structures and map layouts with stable ABI.
 * **warden-policy-core** – permission model and config parsing.
 * **warden-policy-compiler** – compiles policies into compact structures for eBPF maps.
+* **warden-policy-orchestrator** – assembles workspace/local policies, trust DB permissions, and CLI overrides into compiled isolation configs for the sandbox.
 * **warden-agent-lite** – userspace daemon for events, logs, and basic telemetry.
 * **cli** – `cargo-warden` subcommand and wrapper: creates cgroup, loads BPF, handles UX.
 * **warden-testkits** – utilities for integration testing.
@@ -106,6 +107,7 @@ Boundaries:
 
 * `warden-bpf-core` imports only types from `warden-bpf-api`.
 * `cli` and `warden-agent-lite` contain no business logic—only wiring and output.
+* `warden-policy-orchestrator` is the sole consumer of policy metadata and trust DB state; the CLI passes metadata/flags and receives `IsolationConfig` outputs.
 * `warden-policy-core` knows nothing about eBPF, `warden-policy-compiler` knows nothing about the CLI.
 
 ## 7. Workspace Layout and Features
@@ -116,6 +118,7 @@ Workspace crates:
 * ✅ `crates/bpf-core` (spec: `warden-bpf-core`)
 * ✅ `crates/policy-core` (spec: `warden-policy-core`)
 * ✅ `crates/policy-compiler` (spec: `warden-policy-compiler`)
+* ✅ `crates/policy-orchestrator` (spec: `warden-policy-orchestrator`)
 * ✅ `crates/agent-lite` (spec: `warden-agent-lite`)
 * ✅ `crates/cli`
 * ✅ `crates/testkits` (spec: `warden-testkits`)

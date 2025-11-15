@@ -1,10 +1,10 @@
 # CLI Architecture Notes
 
 ## Policy Loading Flow
-- `commands::build::exec` and `commands::run::exec` forward shared CLI flags (`--policy`, `--allow`, `--mode`) to `policy::setup_isolation`.
-- `setup_isolation` layers workspace policies (`workspace.warden.toml`), local overrides (`warden.toml`), and any CLI `--policy` files by calling `Policy::merge` in order.
+- `commands::build::exec` and `commands::run::exec` forward shared CLI flags (`--policy`, `--allow`, `--mode`) plus the resolved metadata to `policy_orchestrator::configure_isolation`.
+- `configure_isolation` (in `crates/policy-orchestrator`) layers workspace policies (`workspace.warden.toml`), local overrides (`warden.toml`), and any CLI `--policy` files by calling `Policy::merge` in order.
 - Manifest metadata and trust database entries extend the base policy before CLI overrides are applied. CLI `--allow` paths are added last to the exec allowlist so they always win.
-- Every assembled policy is validated and compiled via `warden_policy_compiler::compile`, yielding the `IsolationConfig` used by the sandbox: `mode`, syscall deny list, compiled BPF map layout (`MapsLayout`), and the list of environment variables allowed to leak through.
+- Every assembled policy is validated and compiled via `warden_policy_compiler::compile` inside the orchestrator, yielding the `IsolationConfig` used by the sandbox: `mode`, syscall deny list, compiled BPF map layout (`MapsLayout`), and the list of environment variables allowed to leak through.
 
 ## Sandbox Wiring
 - `sandbox::run_in_sandbox` constructs a new `sandbox_runtime::Sandbox`, launches the requested command, and always calls `shutdown`, propagating any run errors.
