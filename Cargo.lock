@@ -2275,12 +2275,12 @@ version = "0.1.0"
 name = "warden-bpf-core"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "aya-ebpf",
  "serde_json",
  "sha2",
  "time",
  "warden-bpf-api",
- "warden-bpf-host",
 ]
 
 [[package]]

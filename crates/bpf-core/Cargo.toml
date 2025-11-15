@@ -17,17 +17,18 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 aya-bpf = { package = "aya-ebpf", version = "0.1.1" }
 bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api", optional = true }
-bpf-host = { package = "warden-bpf-host", version = "0.1.0", path = "../bpf-host", optional = true }
 
 [features]
-fuzzing = ["bpf-api", "bpf-host"]
+fuzzing = ["bpf-api"]
 
 [target.'cfg(target_arch = "bpf")'.dependencies]
 bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
 
 [dev-dependencies]
 bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
-bpf-host = { package = "warden-bpf-host", version = "0.1.0", path = "../bpf-host" }
+
+[target.'cfg(not(target_arch = "bpf"))'.dependencies]
+arrayvec = "0.7"
 
 [build-dependencies]
 serde_json = "1"
