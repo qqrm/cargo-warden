@@ -2,11 +2,12 @@ use std::io;
 use std::path::Path;
 
 use crate::commands::read_recent_events;
-use crate::policy::{PolicySource, PolicySourceKind, collect_policy_status};
+use crate::policy::{PolicyMetadata, PolicySource, PolicySourceKind};
 use policy_core::Mode;
 
 pub(crate) fn exec(policy_paths: &[String], mode_override: Option<Mode>) -> io::Result<()> {
-    let policy_status = collect_policy_status(policy_paths, mode_override)?;
+    let mut metadata = PolicyMetadata::default();
+    let policy_status = metadata.collect_policy_status(policy_paths, mode_override)?;
     print_policy_sources(&policy_status.sources);
     println!(
         "effective mode: {}",

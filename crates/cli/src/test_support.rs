@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-pub(crate) use scoped_env::ScopedEnv;
-
 pub(crate) struct DirGuard {
     original: PathBuf,
 }
