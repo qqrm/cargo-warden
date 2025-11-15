@@ -1,4 +1,4 @@
-use cargo_metadata::{Metadata, MetadataCommand, PackageId};
+use cargo_metadata::{Metadata, MetadataCommand, Package, PackageId};
 use directories::ProjectDirs;
 use policy_core::{ExecDefault, FsDefault, Mode, NetDefault, Policy, WorkspacePolicy};
 use semver::{Version, VersionReq};
@@ -308,18 +308,8 @@ fn contains_path<'a>(paths: impl Iterator<Item = &'a PathBuf>, candidate: &Path)
 }
 
 fn apply_manifest_permissions(policy: &mut Policy, metadata: &Metadata) -> io::Result<()> {
-    let member_ids: HashSet<&PackageId> = metadata.workspace_members.iter().collect();
-
-    for package in &metadata.packages {
-        if !member_ids.contains(&package.id) {
-            continue;
-        }
-        let Some(manifest_dir) = package.manifest_path.parent() else {
-            continue;
-        };
-        let manifest_dir = normalize_path(manifest_dir.to_path_buf());
-
-        let Some(warden) = package.metadata.get("cargo-warden") else {
+    for member in workspace_members(metadata) {
+        let Some(warden) = member.package.metadata.get("cargo-warden") else {
             continue;
         };
         if warden.is_null() {
@@ -327,7 +317,7 @@ fn apply_manifest_permissions(policy: &mut Policy, metadata: &Metadata) -> io::R
         }
 
         let source = PermissionSource::Manifest {
-            package: package.name.as_str(),
+            package: member.package.name.as_str(),
         };
         let mut permissions = Vec::new();
         collect_permission_strings(warden, &source, &mut permissions)?;
@@ -337,7 +327,7 @@ fn apply_manifest_permissions(policy: &mut Policy, metadata: &Metadata) -> io::R
         apply_permission_list(
             policy,
             permissions.iter().map(String::as_str),
-            manifest_dir.as_path(),
+            member.manifest_dir.as_path(),
             metadata,
             &source,
         )?;
@@ -354,20 +344,10 @@ fn apply_trust_permissions(policy: &mut Policy, metadata: &Metadata) -> io::Resu
         return Ok(());
     }
 
-    let member_ids: HashSet<&PackageId> = metadata.workspace_members.iter().collect();
-
-    for package in &metadata.packages {
-        if !member_ids.contains(&package.id) {
-            continue;
-        }
-        let Some(manifest_dir) = package.manifest_path.parent() else {
-            continue;
-        };
-        let manifest_dir = normalize_path(manifest_dir.to_path_buf());
-        let version = package.version.clone();
-
+    for member in workspace_members(metadata) {
+        let version = member.package.version.clone();
         for entry in &db.entries {
-            if entry.package != package.name {
+            if entry.package != member.package.name {
                 continue;
             }
             if !entry.matches(&version)? {
@@ -377,7 +357,7 @@ fn apply_trust_permissions(policy: &mut Policy, metadata: &Metadata) -> io::Resu
                 continue;
             }
             let source = PermissionSource::Trust {
-                package: package.name.as_str(),
+                package: member.package.name.as_str(),
                 version_range: entry
                     .version_range
                     .as_deref()
@@ -387,7 +367,7 @@ fn apply_trust_permissions(policy: &mut Policy, metadata: &Metadata) -> io::Resu
             apply_permission_list(
                 policy,
                 entry.permissions.iter().map(String::as_str),
-                manifest_dir.as_path(),
+                member.manifest_dir.as_path(),
                 metadata,
                 &source,
             )?;
@@ -395,6 +375,50 @@ fn apply_trust_permissions(policy: &mut Policy, metadata: &Metadata) -> io::Resu
     }
 
     Ok(())
+}
+
+struct WorkspaceMember<'a> {
+    package: &'a Package,
+    manifest_dir: PathBuf,
+}
+
+struct WorkspaceMembers<'a> {
+    member_ids: HashSet<PackageId>,
+    packages: std::slice::Iter<'a, Package>,
+}
+
+impl<'a> WorkspaceMembers<'a> {
+    fn new(metadata: &'a Metadata) -> Self {
+        Self {
+            member_ids: metadata.workspace_members.iter().cloned().collect(),
+            packages: metadata.packages.iter(),
+        }
+    }
+}
+
+impl<'a> Iterator for WorkspaceMembers<'a> {
+    type Item = WorkspaceMember<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        for package in self.packages.by_ref() {
+            if !self.member_ids.contains(&package.id) {
+                continue;
+            }
+            let Some(manifest_dir) = package.manifest_path.parent() else {
+                continue;
+            };
+            let manifest_dir = normalize_path(manifest_dir.to_path_buf());
+            return Some(WorkspaceMember {
+                package,
+                manifest_dir,
+            });
+        }
+        None
+    }
+}
+
+fn workspace_members(metadata: &Metadata) -> WorkspaceMembers<'_> {
+    WorkspaceMembers::new(metadata)
 }
 
 enum PermissionSource<'a> {
@@ -495,13 +519,6 @@ fn apply_permission_list<'a, I>(
 where
     I: IntoIterator<Item = &'a str>,
 {
-    let mut exec_paths = Vec::new();
-    let mut net_hosts = Vec::new();
-    let mut fs_reads = Vec::new();
-    let mut fs_writes = Vec::new();
-    let mut env_reads = Vec::new();
-    let mut syscall_denies = Vec::new();
-
     for permission in permissions {
         let trimmed = permission.trim();
         if trimmed.is_empty() {
@@ -520,14 +537,14 @@ where
 
         match kind {
             "exec" => {
-                exec_paths.push(value.to_string());
+                policy.extend_exec_allowed(std::iter::once(value.to_string()));
             }
             "net" => {
                 let host = value.strip_prefix("host:").unwrap_or(value).trim();
                 if host.is_empty() {
                     return Err(permission_error(source, trimmed, "missing host value"));
                 }
-                net_hosts.push(host.to_string());
+                policy.extend_net_hosts(std::iter::once(host.to_string()));
             }
             "fs" => {
                 let (mode, path_value) = value.split_once(':').ok_or_else(|| {
@@ -540,8 +557,8 @@ where
                 }
                 let resolved = resolve_fs_path(path_value, manifest_dir, metadata);
                 match mode {
-                    "read" => fs_reads.push(resolved),
-                    "write" => fs_writes.push(resolved),
+                    "read" => policy.extend_fs_reads(std::iter::once(resolved)),
+                    "write" => policy.extend_fs_writes(std::iter::once(resolved)),
                     _ => {
                         return Err(permission_error(
                             source,
@@ -565,7 +582,7 @@ where
                     ));
                 }
                 match action {
-                    "read" => env_reads.push(name.to_string()),
+                    "read" => policy.extend_env_read_vars(std::iter::once(name.to_string())),
                     _ => {
                         return Err(permission_error(
                             source,
@@ -585,7 +602,7 @@ where
                     return Err(permission_error(source, trimmed, "missing syscall name"));
                 }
                 match action {
-                    "deny" => syscall_denies.push(name.to_string()),
+                    "deny" => policy.extend_syscall_deny(std::iter::once(name.to_string())),
                     _ => {
                         return Err(permission_error(
                             source,
@@ -603,25 +620,6 @@ where
                 ));
             }
         }
-    }
-
-    if !exec_paths.is_empty() {
-        policy.extend_exec_allowed(exec_paths);
-    }
-    if !net_hosts.is_empty() {
-        policy.extend_net_hosts(net_hosts);
-    }
-    if !fs_reads.is_empty() {
-        policy.extend_fs_reads(fs_reads);
-    }
-    if !fs_writes.is_empty() {
-        policy.extend_fs_writes(fs_writes);
-    }
-    if !env_reads.is_empty() {
-        policy.extend_env_read_vars(env_reads);
-    }
-    if !syscall_denies.is_empty() {
-        policy.extend_syscall_deny(syscall_denies);
     }
 
     Ok(())
@@ -1465,6 +1463,134 @@ permissions = ["env:read:PLUGIN_SETTINGS"]
             fs_rules
                 .iter()
                 .any(|(path, access)| { path == "/opt/data" && *access == FS_READ })
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn setup_isolation_merges_manifest_and_trust_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_out_guard, _target_guard, _tmp_guard) = guard_build_env();
+        let _guard = DirGuard::change_to(dir.path());
+        init_cargo_package(dir.path());
+
+        let include_dir = dir.path().join("include");
+        fs::create_dir_all(&include_dir).unwrap();
+        let tool_path = dir.path().join("bin/tool.sh");
+        fs::create_dir_all(tool_path.parent().unwrap()).unwrap();
+        write(&tool_path, "#!/bin/sh\nexit 0\n").unwrap();
+
+        write(
+            dir.path().join("Cargo.toml"),
+            format!(
+                r#"[package]
+name = "fixture"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.cargo-warden]
+permissions = [
+  "exec:{tool}",
+  "fs:read:include",
+  "env:read:PROTO_INCLUDE",
+  "net:host:127.0.0.1:8080"
+]
+"#,
+                tool = tool_path.display(),
+            ),
+        )
+        .unwrap();
+
+        let config_dir = dir.path().join("config");
+        let trust_path = config_dir.join("cargo-warden").join("trust.json");
+        fs::create_dir_all(trust_path.parent().unwrap()).unwrap();
+        let _config_guard = ScopedEnv::set(
+            OsString::from("XDG_CONFIG_HOME"),
+            OsString::from(config_dir.as_os_str()),
+        );
+
+        write(
+            &trust_path,
+            r#"{
+  "entries": [
+    {
+      "package": "fixture",
+      "version_range": "*",
+      "permissions": [
+        "exec:/usr/local/bin/custom",
+        "fs:read:/opt/data",
+        "net:host:10.0.0.1:9000",
+        "syscall:deny:clone"
+      ]
+    }
+  ]
+}
+"#,
+        )
+        .unwrap();
+
+        let isolation = setup_isolation(&[], &[], None).unwrap();
+
+        let exec = exec_paths(&isolation.maps_layout);
+        assert!(exec.contains(&tool_path.to_string_lossy().into_owned()));
+        assert!(exec.contains(&"/usr/local/bin/custom".to_string()));
+
+        let net = net_hosts(&isolation.maps_layout);
+        assert!(net.contains(&"127.0.0.1:8080".to_string()));
+        assert!(net.contains(&"10.0.0.1:9000".to_string()));
+
+        assert!(
+            isolation
+                .allowed_env_vars
+                .contains(&"PROTO_INCLUDE".to_string())
+        );
+        assert!(isolation.syscall_deny.contains(&"clone".to_string()));
+
+        let fs_rules = fs_entries(&isolation.maps_layout);
+        let include_path = super::normalize_path(&include_dir);
+        assert!(fs_rules.iter().any(|(path, access)| {
+            path == &include_path.to_string_lossy() && *access == FS_READ
+        }));
+        assert!(
+            fs_rules
+                .iter()
+                .any(|(path, access)| { path == "/opt/data" && *access == FS_READ })
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn apply_permission_list_limits_allocations() {
+        let metadata = super::fetch_cargo_metadata().unwrap();
+        let manifest_dir = metadata.workspace_root.clone().into_std_path_buf();
+        let mut policy = Policy::new(Mode::Observe);
+        let source = super::PermissionSource::Manifest { package: "fixture" };
+        let permissions = [
+            "exec:/bin/true",
+            "net:host:127.0.0.1:7000",
+            "fs:read:workspace",
+            "fs:write:target",
+            "env:read:EXAMPLE",
+            "syscall:deny:clone",
+        ];
+
+        crate::reset_allocation_count();
+        let before = crate::allocation_count();
+
+        super::apply_permission_list(
+            &mut policy,
+            permissions.into_iter(),
+            manifest_dir.as_path(),
+            &metadata,
+            &source,
+        )
+        .unwrap();
+
+        let after = crate::allocation_count();
+        let delta = after.saturating_sub(before);
+        assert!(
+            delta <= 40,
+            "apply_permission_list performed {delta} allocations"
         );
     }
 
