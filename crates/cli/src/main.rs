@@ -6,20 +6,27 @@ pub(crate) mod test_support;
 #[cfg(test)]
 mod allocation_tracker {
     use std::alloc::{GlobalAlloc, Layout, System};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::cell::Cell;
 
     pub struct CountingAllocator;
 
-    static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+    thread_local! {
+        static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    #[inline]
+    fn record_allocation() {
+        ALLOCATIONS.with(|cell| cell.set(cell.get().saturating_add(1)));
+    }
 
     unsafe impl GlobalAlloc for CountingAllocator {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            record_allocation();
             unsafe { System.alloc(layout) }
         }
 
         unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            record_allocation();
             unsafe { System.alloc_zeroed(layout) }
         }
 
@@ -28,17 +35,17 @@ mod allocation_tracker {
         }
 
         unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            record_allocation();
             unsafe { System.realloc(ptr, layout, new_size) }
         }
     }
 
     pub fn allocation_count() -> usize {
-        ALLOCATIONS.load(Ordering::Relaxed)
+        ALLOCATIONS.with(|cell| cell.get())
     }
 
     pub fn reset() {
-        ALLOCATIONS.store(0, Ordering::Relaxed);
+        ALLOCATIONS.with(|cell| cell.set(0));
     }
 }
 
