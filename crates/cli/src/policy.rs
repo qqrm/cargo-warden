@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::io;
 use std::path::{Path, PathBuf};
 use warden_policy_compiler::{self, CompiledPolicy, MapsLayout};
@@ -81,12 +82,13 @@ pub(crate) fn setup_isolation(
 
     let report = policy.validate();
     if !report.errors.is_empty() {
-        let message = report
-            .errors
-            .into_iter()
-            .map(|err| err.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
+        let mut message = String::new();
+        for (idx, err) in report.errors.into_iter().enumerate() {
+            if idx > 0 {
+                message.push_str(", ");
+            }
+            let _ = write!(&mut message, "{err}");
+        }
         return Err(io::Error::new(io::ErrorKind::InvalidInput, message));
     }
     for warn in report.warnings {
@@ -963,16 +965,14 @@ mod tests {
         let status = collect_policy_status(&[], None).unwrap();
         assert_eq!(status.effective_mode, Mode::Observe);
         assert_eq!(status.sources.len(), 1);
-        match &status.sources[0].kind {
-            PolicySourceKind::Workspace { path, member } => {
-                assert_eq!(
-                    path.file_name().unwrap().to_str().unwrap(),
-                    "workspace.warden.toml"
-                );
-                assert_eq!(member.as_deref(), Some("fixture"));
-            }
-            other => panic!("expected workspace policy, found {other:?}"),
-        }
+        let PolicySourceKind::Workspace { path, member } = &status.sources[0].kind else {
+            panic!("expected workspace policy");
+        };
+        assert_eq!(
+            path.file_name().unwrap().to_str().unwrap(),
+            "workspace.warden.toml"
+        );
+        assert_eq!(member.as_deref(), Some("fixture"));
         assert_eq!(status.sources[0].mode, Mode::Observe);
     }
 
@@ -999,12 +999,10 @@ mod tests {
             PolicySourceKind::LocalFile { .. }
         ));
         assert_eq!(status.sources[0].mode, Mode::Enforce);
-        match &status.sources[1].kind {
-            PolicySourceKind::CliFile { path } => {
-                assert_eq!(path.file_name().unwrap().to_str().unwrap(), "cli.toml");
-            }
-            other => panic!("expected CLI policy, found {other:?}"),
-        }
+        let PolicySourceKind::CliFile { path } = &status.sources[1].kind else {
+            panic!("expected CLI policy");
+        };
+        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "cli.toml");
         assert_eq!(status.sources[1].mode, Mode::Observe);
         assert!(matches!(
             status.sources[2].kind,
@@ -1208,9 +1206,8 @@ exec.default = "allow"
         init_cargo_package(dir.path());
 
         let allow = vec!["/bin/bash".to_string(), "/bin/bash".to_string()];
-        let err = match setup_isolation(&allow, &[], None) {
-            Ok(_) => panic!("expected duplicate error"),
-            Err(err) => err,
+        let Err(err) = setup_isolation(&allow, &[], None) else {
+            panic!("expected duplicate error");
         };
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
