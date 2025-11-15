@@ -174,12 +174,10 @@ mod tests {
         ]);
         assert_eq!(cli.allow, vec!["/bin/bash".to_string()]);
         assert!(cli.mode.is_none());
-        match cli.command {
-            Commands::Build { args } => {
-                assert_eq!(args, vec!["--release".to_string()]);
-            }
-            _ => panic!("expected build command"),
-        }
+        let Commands::Build { args } = cli.command else {
+            panic!("expected build command");
+        };
+        assert_eq!(args, vec!["--release".to_string()]);
     }
 
     #[test]
@@ -194,12 +192,10 @@ mod tests {
         ]);
         assert_eq!(cli.policy, vec!["policy.toml".to_string()]);
         assert!(cli.mode.is_none());
-        match cli.command {
-            Commands::Build { args } => {
-                assert_eq!(args, vec!["--verbose".to_string()]);
-            }
-            _ => panic!("expected build command"),
-        }
+        let Commands::Build { args } = cli.command else {
+            panic!("expected build command");
+        };
+        assert_eq!(args, vec!["--verbose".to_string()]);
     }
 
     #[test]
@@ -214,64 +210,49 @@ mod tests {
         ]);
         assert_eq!(cli.policy, vec!["a.toml".to_string(), "b.toml".to_string()]);
         assert!(cli.mode.is_none());
-        match cli.command {
-            Commands::Build { args } => {
-                assert!(args.is_empty());
-            }
-            _ => panic!("expected build command"),
-        }
+        let Commands::Build { args } = cli.command else {
+            panic!("expected build command");
+        };
+        assert!(args.is_empty());
     }
 
     #[test]
     fn parse_metrics_port_flag() {
         let cli = Cli::parse_from(["cargo-warden", "build", "--metrics-port", "9898"]);
         assert_eq!(cli.metrics_port, Some(9898));
-        match cli.command {
-            Commands::Build { .. } => {}
-            _ => panic!("expected build command"),
-        }
+        assert!(matches!(cli.command, Commands::Build { .. }));
     }
 
     #[test]
     fn parse_mode_for_build() {
         let cli = Cli::parse_from(["cargo-warden", "--mode", "observe", "build"]);
         assert!(matches!(cli.mode, Some(CliMode::Observe)));
-        match cli.command {
-            Commands::Build { args } => {
-                assert!(args.is_empty());
-            }
-            _ => panic!("expected build command"),
-        }
+        let Commands::Build { args } = cli.command else {
+            panic!("expected build command");
+        };
+        assert!(args.is_empty());
     }
 
     #[test]
     fn parse_status_command() {
         let cli = Cli::parse_from(["cargo-warden", "status"]);
-        match cli.command {
-            Commands::Status => {}
-            _ => panic!("expected status command"),
-        }
+        assert!(matches!(cli.command, Commands::Status));
     }
 
     #[test]
     fn parse_report_command() {
         let cli = Cli::parse_from(["cargo-warden", "report"]);
-        match cli.command {
-            Commands::Report { .. } => {}
-            _ => panic!("expected report command"),
-        }
+        assert!(matches!(cli.command, Commands::Report { .. }));
     }
 
     #[test]
     fn parse_report_defaults_to_text() {
         let cli = Cli::parse_from(["cargo-warden", "report"]);
-        match cli.command {
-            Commands::Report { format, output } => {
-                assert!(matches!(format, CliReportFormat::Text));
-                assert!(output.is_none());
-            }
-            _ => panic!("expected report command"),
-        }
+        let Commands::Report { format, output } = cli.command else {
+            panic!("expected report command");
+        };
+        assert!(matches!(format, CliReportFormat::Text));
+        assert!(output.is_none());
     }
 
     #[test]
@@ -284,21 +265,16 @@ mod tests {
             "--output",
             "custom.sarif",
         ]);
-        match cli.command {
-            Commands::Report { format, output } => {
-                assert!(matches!(format, CliReportFormat::Sarif));
-                assert_eq!(output.as_deref(), Some("custom.sarif"));
-            }
-            _ => panic!("expected report command"),
-        }
+        let Commands::Report { format, output } = cli.command else {
+            panic!("expected report command");
+        };
+        assert!(matches!(format, CliReportFormat::Sarif));
+        assert_eq!(output.as_deref(), Some("custom.sarif"));
     }
 
     #[test]
     fn parse_init_command() {
         let cli = Cli::parse_from(["cargo-warden", "init"]);
-        match cli.command {
-            Commands::Init => {}
-            _ => panic!("expected init command"),
-        }
+        assert!(matches!(cli.command, Commands::Init));
     }
 }
