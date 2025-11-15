@@ -2,6 +2,7 @@
 name = "event-reporting"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.91"
 license = "MIT OR Apache-2.0"
 description = "Shared event reporting utilities for the cargo-warden workspace."
 repository = "https://github.com/warden/cargo-warden"

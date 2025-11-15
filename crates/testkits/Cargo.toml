@@ -2,6 +2,7 @@
 name = "warden-testkits"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.91"
 license = "MIT OR Apache-2.0"
 description = "Testing utilities for cargo-warden sandbox components."
 repository = "https://github.com/warden/cargo-warden"
