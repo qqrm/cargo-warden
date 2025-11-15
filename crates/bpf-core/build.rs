@@ -109,11 +109,10 @@ fn build_prebuilt_bundle() -> Result<(), Box<dyn std::error::Error>> {
 
 fn compile_bpf_object(workspace_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let toolchain = ensure_nightly_toolchain()?;
-    let toolchain_arg = format!("+{toolchain}");
 
-    let sysroot = Command::new("rustc")
-        .arg(&toolchain_arg)
-        .args(["--print", "sysroot"])
+    let sysroot = Command::new("rustup")
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .args(["run", &toolchain, "rustc", "--print", "sysroot"])
         .stderr(Stdio::inherit())
         .output()?;
     if !sysroot.status.success() {
@@ -140,20 +139,24 @@ fn compile_bpf_object(workspace_dir: &Path) -> Result<PathBuf, Box<dyn std::erro
     let extras = [format!("-C llvm-args=-bpf-stack-size={STACK_SIZE}")];
     rustflags.push_str(&extras.join(" "));
 
-    let mut command = Command::new("cargo");
+    let target_dir = workspace_dir.join("target").join("nightly-bpf");
+
+    let mut command = Command::new(cargo_shim_path());
     command
         .current_dir(workspace_dir)
         .env("WARDEN_BPF_BUILD_SKIP", "1")
         .env("LD_LIBRARY_PATH", &ld_library_path)
-        .env("RUSTUP_TOOLCHAIN", &toolchain)
         .env("RUSTFLAGS", rustflags)
         .env(
             "CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER",
             create_bpf_linker_wrapper(workspace_dir)?,
         )
+        .env("CARGO_TARGET_DIR", &target_dir)
         .env_remove("RUSTC")
         .env_remove("RUSTC_WRAPPER")
-        .arg(&toolchain_arg)
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env("RUSTUP_TOOLCHAIN", &toolchain)
+        .arg(format!("+{toolchain}"))
         .args([
             "rustc",
             "-p",
@@ -174,13 +177,21 @@ fn compile_bpf_object(workspace_dir: &Path) -> Result<PathBuf, Box<dyn std::erro
         return Err(io::Error::other("failed to compile eBPF program").into());
     }
 
-    let deps_dir = workspace_dir
-        .join("target")
-        .join(TARGET)
-        .join("release")
-        .join("deps");
+    let deps_dir = target_dir.join(TARGET).join("release").join("deps");
     let object = find_object(&deps_dir)?;
     Ok(object)
+}
+
+fn cargo_shim_path() -> PathBuf {
+    if let Some(home) = env::var_os("CARGO_HOME") {
+        return PathBuf::from(home).join("bin").join("cargo");
+    }
+
+    if let Some(home) = env::var_os("HOME") {
+        return PathBuf::from(home).join(".cargo").join("bin").join("cargo");
+    }
+
+    PathBuf::from("cargo")
 }
 
 fn ensure_bpf_linker() -> Result<(), Box<dyn std::error::Error>> {
