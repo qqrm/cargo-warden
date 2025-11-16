@@ -98,6 +98,7 @@ Components:
 * **warden-bpf-api** – shared structures and map layouts with stable ABI.
 * **warden-policy-core** – permission model and config parsing.
 * **warden-policy-compiler** – compiles policies into compact structures for eBPF maps.
+* **warden-policy-orchestrator** – layers workspace policies, local overrides, manifest metadata, and trust DB entries, then validates and compiles the final policy for sandbox consumption.
 * **warden-agent-lite** – userspace daemon for events, logs, and basic telemetry.
 * **cli** – `cargo-warden` subcommand and wrapper: creates cgroup, loads BPF, handles UX.
 * **warden-testkits** – utilities for integration testing.
@@ -108,6 +109,7 @@ Boundaries:
 * `warden-bpf-core` imports only types from `warden-bpf-api`.
 * `cli` and `warden-agent-lite` contain no business logic—only wiring and output.
 * `warden-policy-core` knows nothing about eBPF, `warden-policy-compiler` knows nothing about the CLI.
+* `warden-policy-orchestrator` owns policy assembly; the CLI provides metadata handles but does not duplicate policy layering logic.
 
 ## 7. Workspace Layout and Features
 

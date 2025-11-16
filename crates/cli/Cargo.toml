@@ -14,23 +14,20 @@ readme = "../../README.md"
 clap = { version = "4", features = ["derive"] }
 cargo_metadata = { workspace = true }
 policy-core = { package = "warden-policy-core", version = "0.1.0", path = "../policy-core" }
-warden-policy-compiler = { version = "0.1.0", path = "../policy-compiler" }
 sandbox-runtime = { package = "warden-sandbox-runtime", version = "0.1.0", path = "../sandbox-runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde-jsonlines = "0.7"
-semver = "1"
 toml = "0.8"
 event-reporting = { version = "0.1.0", path = "../event-reporting" }
-directories = "5"
 itertools = "0.12"
+warden-policy-orchestrator = { version = "0.1.0", path = "../policy-orchestrator" }
 
 
 [dev-dependencies]
 serial_test = "3"
 assert_cmd = "2"
 tempfile = "3"
-scoped-env = "2.1.0"
 bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
 warden-testkits = { package = "warden-testkits", version = "0.1.0", path = "../testkits" }
 

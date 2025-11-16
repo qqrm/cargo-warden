@@ -3,7 +3,7 @@ use std::process::{Command, exit};
 
 use policy_core::Mode;
 
-use crate::policy::setup_isolation;
+use crate::policy::PolicyMetadata;
 use crate::sandbox::run_in_sandbox;
 
 pub(crate) fn exec(
@@ -19,7 +19,8 @@ pub(crate) fn exec(
             "missing command",
         ));
     }
-    let isolation = setup_isolation(allow, policy, mode_override)?;
+    let mut metadata = PolicyMetadata::default();
+    let isolation = metadata.configure_isolation(allow, policy, mode_override)?;
     let status = run_in_sandbox(run_command(&cmd), isolation.mode, &isolation, agent_config)?;
     if !status.success() {
         exit(status.code().unwrap_or(1));
