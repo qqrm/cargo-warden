@@ -3,6 +3,66 @@ pub(crate) mod policy;
 mod sandbox;
 #[cfg(test)]
 pub(crate) mod test_support;
+#[cfg(test)]
+mod allocation_tracker {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    pub struct CountingAllocator;
+
+    thread_local! {
+        static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    #[inline]
+    fn record_allocation() {
+        ALLOCATIONS.with(|cell| cell.set(cell.get().saturating_add(1)));
+    }
+
+    unsafe impl GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            record_allocation();
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            record_allocation();
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(ptr, layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            record_allocation();
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+    }
+
+    pub fn allocation_count() -> usize {
+        ALLOCATIONS.with(|cell| cell.get())
+    }
+
+    pub fn reset() {
+        ALLOCATIONS.with(|cell| cell.set(0));
+    }
+}
+
+#[cfg(test)]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: allocation_tracker::CountingAllocator =
+    allocation_tracker::CountingAllocator;
+
+#[cfg(test)]
+pub(crate) fn allocation_count() -> usize {
+    allocation_tracker::allocation_count()
+}
+
+#[cfg(test)]
+pub(crate) fn reset_allocation_count() {
+    allocation_tracker::reset();
+}
 
 use clap::{Parser, Subcommand, ValueEnum};
 use policy_core::Mode;
