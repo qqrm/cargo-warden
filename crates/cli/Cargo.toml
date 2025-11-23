@@ -22,6 +22,7 @@ toml = "0.8"
 event-reporting = { version = "0.1.0", path = "../event-reporting" }
 itertools = "0.12"
 warden-policy-orchestrator = { version = "0.1.0", path = "../policy-orchestrator" }
+libc = "0.2"
 
 
 [dev-dependencies]

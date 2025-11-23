@@ -16,6 +16,12 @@ const DENIED_UNIT: u8 = UNIT_RUSTC as u8;
 const RENAME_PATH: &str = "/var/warden/forbidden";
 const RENAME_ACTION: u8 = 1;
 
+fn cargo_warden_cmd() -> Result<Command, Box<dyn std::error::Error>> {
+    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    cmd.env("CARGO_WARDEN_SKIP_PRIVILEGE_CHECK", "1");
+    Ok(cmd)
+}
+
 #[cfg(unix)]
 fn set_executable(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -55,7 +61,7 @@ fn fake_sandbox_enforce_denial_fails_child() -> Result<(), Box<dyn std::error::E
     )?;
     let policy = project.write_exec_policy("enforce", Mode::Enforce, &[&script])?;
 
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("run")
         .arg("--policy")
         .arg(&policy)
@@ -106,7 +112,7 @@ fn fake_sandbox_enforce_rename_denial_reports_event() -> Result<(), Box<dyn std:
     )?;
     let policy = project.write_exec_policy("rename", Mode::Enforce, &[&script])?;
 
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("run")
         .arg("--policy")
         .arg(&policy)
@@ -157,7 +163,7 @@ fn fake_sandbox_observe_denial_allows_child() -> Result<(), Box<dyn std::error::
     )?;
     let policy = project.write_exec_policy("observe", Mode::Observe, &[&script])?;
 
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("run")
         .arg("--policy")
         .arg(&policy)
@@ -231,7 +237,7 @@ permissions = ["fs:read:include"]
     let sandbox = project.fake_sandbox("metadata-permissions")?;
     sandbox.touch_event_log()?;
 
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("run")
         .arg("--")
         .arg("true")
@@ -284,7 +290,7 @@ read_extra = ["/etc/ssl/certs"]
 
     let policy = project.child("policy.toml");
 
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("run")
         .arg("--allow")
         .arg("/bin/echo")
@@ -395,7 +401,7 @@ hosts = ["203.0.113.1:8080"]
 "#,
     )?;
 
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("run")
         .arg("--policy")
         .arg(&policy_a)
@@ -489,7 +495,7 @@ exit 1
     )?;
     set_executable(&cargo_stub)?;
 
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("build")
         .arg("--policy")
         .arg(&policy_a)
@@ -533,7 +539,7 @@ fn strict_mode_auto_paths_allow_build() -> Result<(), Box<dyn std::error::Error>
     project.create_dir_all(&target_override)?;
     project.create_dir_all(&out_dir_override)?;
 
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("run")
         .arg("--")
         .arg("true")
@@ -652,7 +658,7 @@ hosts = ["10.0.0.1:1234"]
 
     sandbox_alpha.touch_event_log()?;
     let alpha_dir = project.child("members/alpha");
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("run").arg("--").arg("true").current_dir(&alpha_dir);
     sandbox_alpha.apply_assert(&mut cmd);
     cmd.assert().success();
@@ -671,7 +677,7 @@ hosts = ["10.0.0.1:1234"]
     sandbox_alpha.assert_cgroup_removed()?;
 
     sandbox_beta.touch_event_log()?;
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("run")
         .arg("--")
         .arg("true")
@@ -725,7 +731,7 @@ fn status_reports_policy_sources_and_events() -> Result<(), Box<dyn std::error::
     )?;
     writeln!(events_file, "{{ not json }}")?;
 
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("status")
         .arg("--policy")
         .arg(&cli_policy)
@@ -804,7 +810,7 @@ fn report_emits_json_with_metrics() -> Result<(), Box<dyn std::error::Error>> {
         }))?,
     )?;
 
-    let mut cmd = Command::cargo_bin("cargo-warden")?;
+    let mut cmd = cargo_warden_cmd()?;
     cmd.arg("report")
         .arg("--format")
         .arg("json")

@@ -1,5 +1,6 @@
 mod commands;
 pub(crate) mod policy;
+mod privileges;
 mod sandbox;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -62,6 +63,17 @@ pub(crate) fn allocation_count() -> usize {
 #[cfg(test)]
 pub(crate) fn reset_allocation_count() {
     allocation_tracker::reset();
+}
+
+#[cfg(test)]
+mod allocation_helpers {
+    use super::{allocation_count, reset_allocation_count};
+
+    #[test]
+    fn allocation_counters_can_be_used() {
+        reset_allocation_count();
+        assert_eq!(allocation_count(), 0);
+    }
 }
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -162,6 +174,13 @@ fn main() {
         args.remove(1);
     }
     let cli = Cli::parse_from(args);
+    if let Err(err) = privileges::enforce_least_privilege() {
+        eprintln!("privilege check failed: {err}");
+        eprintln!(
+            "Use a dedicated service user with only CAP_BPF and CAP_SYS_ADMIN (see README for setup instructions)."
+        );
+        exit(1);
+    }
     let Cli {
         allow,
         policy,
