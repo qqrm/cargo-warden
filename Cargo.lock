@@ -2303,6 +2303,7 @@ dependencies = [
  "clap",
  "event-reporting",
  "itertools",
+ "libc",
  "serde",
  "serde-jsonlines",
  "serde_json",

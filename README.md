@@ -82,6 +82,59 @@ mount | grep cgroup2
 capsh --print | grep -E 'cap_(bpf|sys_admin)'
 ```
 
+### Least-privilege execution
+
+`cargo-warden` refuses to run as root or with an expanded capability set. Run it
+under a dedicated service account that has only `CAP_BPF` and `CAP_SYS_ADMIN`:
+
+1. Create a locked-down user and its state directory.
+
+   ```bash
+   sudo useradd --system --home /var/lib/cargo-warden --shell /usr/sbin/nologin cargo-warden
+   sudo install -d -o cargo-warden -g cargo-warden /var/lib/cargo-warden
+   ```
+
+2. Grant only the required capabilities to the process. A systemd unit keeps the
+   bounding set narrow and avoids `--privileged` containers:
+
+   ```ini
+   [Service]
+   User=cargo-warden
+   Group=cargo-warden
+   AmbientCapabilities=CAP_BPF CAP_SYS_ADMIN
+   CapabilityBoundingSet=CAP_BPF CAP_SYS_ADMIN
+   NoNewPrivileges=yes
+   PrivateTmp=yes
+   ProtectSystem=strict
+   ProtectHome=true
+   ```
+
+3. Run `cargo warden ...` from that unit or a rootless container with user
+   namespaces, isolated network namespace, and a minimal cgroup profile. Keep
+   workspace and `target` directories owned by the service user so no extra
+   capabilities are needed for filesystem access.
+
+In hermetic CI where capabilities cannot be delegated, set
+`CARGO_WARDEN_SKIP_PRIVILEGE_CHECK=1` only for the test job to bypass the
+guardrail. Do not use this escape hatch on shared hosts.
+
+### Isolation requirement
+
+`cargo-warden` refuses to run directly on a host; use an isolated container or
+throwaway VM with its own network namespace and a minimal cgroup profile. A
+rootless `podman` example that keeps the capability set narrow:
+
+```bash
+podman run --rm -it \
+  --cap-add=CAP_BPF --cap-add=CAP_SYS_ADMIN \
+  --security-opt=no-new-privileges --network=none \
+  --userns=keep-id -v "$PWD:/workspace":z -w /workspace \
+  ghcr.io/qqrm/cargo-warden:latest cargo warden status
+```
+
+For CI, prefer ephemeral containers or VMs with user namespaces and seccomp
+enabled; avoid `--privileged` runners.
+
 ## CLI Commands
 
 | Command | Description |
