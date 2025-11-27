@@ -5,15 +5,27 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: bpf-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ARTIFACT_NAME: warden-bpf-core-${{ github.sha }}
+
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    name: Build BPF artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
 
       - name: Build prebuilt objects
         run: ./scripts/build-bpf.sh
@@ -25,7 +37,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: warden-bpf-core-${{ github.sha }}
+          name: ${{ env.ARTIFACT_NAME }}
           path: |
             prebuilt.tar.gz
             prebuilt/manifest.json
