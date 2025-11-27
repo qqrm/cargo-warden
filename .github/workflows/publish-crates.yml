@@ -23,14 +23,19 @@ env:
 
 jobs:
   publish:
+    name: Publish crates
     runs-on: ubuntu-latest
     environment: prod
+    timeout-minutes: 60
     permissions:
       contents: write
     env:
       PUBLISH_INTERVAL: ${{ inputs.publish_interval || '60' }}
       RELEASE_PREFIX: ${{ inputs.release_prefix || '' }}
       PUBLISH_PLAN_PATH: target/publish-plan.log
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout
@@ -58,7 +63,6 @@ jobs:
           tool: cargo-workspaces
 
       - name: Configure crates.io token
-        shell: bash
         env:
           PRIMARY: ${{ secrets.CRATES_IO_TOKEN }}
           FALLBACK: ${{ secrets.CRATES_IO_API_KEY }}
@@ -71,17 +75,19 @@ jobs:
               break
             fi
           done
+
           if [[ -z "${token}" ]]; then
             echo "::error::No crates.io token found in secrets CRATES_IO_TOKEN, CRATES_IO_API_KEY, or CARGO_REGISTRY_TOKEN." >&2
             exit 1
           fi
+
           echo "::add-mask::${token}"
+
           {
             echo "CARGO_REGISTRY_TOKEN=${token}"
           } >> "${GITHUB_ENV}"
 
       - name: Sanity checks
-        shell: bash
         run: |
           cargo --version
           cargo workspaces --version
@@ -92,7 +98,6 @@ jobs:
 
       - name: Resolve and show publish plan
         id: publish_plan
-        shell: bash
         run: bash scripts/ci/resolve_publish_plan.sh
 
       - name: Upload publish plan
@@ -105,19 +110,15 @@ jobs:
 
       - name: Determine release tag
         id: release_tag
-        shell: bash
         run: bash scripts/ci/determine_release_tag.sh
 
-      - name: Publish
-        shell: bash
+      - name: Publish crates
         timeout-minutes: 45
         run: bash scripts/ci/run_publish.sh
 
       - name: Create release tag
-        shell: bash
         run: bash scripts/ci/create_release_tag.sh
 
       - name: Post-publish summary
         if: ${{ success() }}
-        shell: bash
         run: bash scripts/ci/post_publish_summary.sh
