@@ -6,65 +6,109 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   actionlint:
+    name: Actionlint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: reviewdog/action-actionlint@v1
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run actionlint via reviewdog
+        uses: reviewdog/action-actionlint@v1
         with:
           reporter: github-check
           github_token: ${{ secrets.GITHUB_TOKEN }}
+
   cargo-checks:
+    name: Cargo checks
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt, clippy, rust-src, llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
-      - run: ./scripts/check_path_versions.sh
-      - run: sudo apt-get update && sudo apt-get install -y pkg-config libseccomp-dev protobuf-compiler jq xxhash
-      - uses: taiki-e/install-action@v2
+
+      - name: Enable Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check path versions
+        run: ./scripts/check_path_versions.sh
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libseccomp-dev \
+            protobuf-compiler \
+            jq \
+            xxhash
+
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@v2
         with:
           tool: cargo-machete
-      - uses: taiki-e/install-action@v2
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
-      - uses: taiki-e/install-action@v2
+
+      - name: Install cargo-udeps
+        uses: taiki-e/install-action@v2
         with:
           tool: cargo-udeps
-      - uses: taiki-e/install-action@v2
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
+
       - name: cargo fmt --all -- --check
         id: cargo_fmt
         run: cargo fmt --all -- --check
         continue-on-error: true
+
       - name: cargo check --tests --benches
         id: cargo_check
         run: cargo check --tests --benches
         continue-on-error: true
+
       - name: cargo clippy --all-targets --all-features -- -D warnings
         id: cargo_clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
         continue-on-error: true
+
       - name: cargo nextest run
         id: cargo_nextest
         run: cargo nextest run
         continue-on-error: true
+
       - name: cargo machete
         id: cargo_machete
         run: cargo machete
         continue-on-error: true
+
       - name: cargo audit
         id: cargo_audit
         run: cargo audit
         continue-on-error: true
+
       - name: cargo +nightly udeps --all-targets --all-features
         id: cargo_udeps
         run: cargo +nightly udeps --all-targets --all-features
         continue-on-error: true
+
       - name: Aggregate cargo-checks results
         if: always()
         env:
@@ -78,15 +122,29 @@ jobs:
         run: ./scripts/ci/aggregate_cargo_checks.sh
 
   examples:
+    name: Examples
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libseccomp-dev protobuf-compiler
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - run: ./scripts/run_examples.sh
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libseccomp-dev \
+            protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Enable Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run examples
+        run: ./scripts/run_examples.sh
