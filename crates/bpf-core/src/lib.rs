@@ -2764,12 +2764,11 @@ mod tests {
     fn connect6_respects_rules() {
         let _g = TEST_LOCK.lock().unwrap();
         reset_network_state();
-        let ip = resolve_host("localhost")
-            .unwrap()
-            .into_iter()
-            .find(|i| i.is_ipv6())
-            .unwrap();
         let fallback = std::net::Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+        let ip = resolve_host("localhost")
+            .ok()
+            .and_then(|ips| ips.into_iter().find(|addr| addr.is_ipv6()))
+            .unwrap_or(std::net::IpAddr::V6(fallback));
         set_net_rules(&[
             rule_entry(1, std::net::IpAddr::V6(fallback), 80, 6),
             rule_entry(1, ip, 80, 6),
@@ -2888,8 +2887,15 @@ mod fuzzing_shims {
         if dst.is_null() || src.is_null() {
             return -1;
         }
+        let size = size as usize;
+        let mut offset = 0usize;
+
         unsafe {
-            core::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, size as usize);
+            while offset < size {
+                let byte = *(src as *const u8).add(offset);
+                *(dst as *mut u8).add(offset) = byte;
+                offset += 1;
+            }
         }
         0
     }

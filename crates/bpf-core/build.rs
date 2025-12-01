@@ -21,6 +21,7 @@ const STACK_SIZE: usize = 65536;
 const BPF_LINKER_VERSION: &str = "0.9.15";
 const MANIFEST_NAME: &str = "manifest.json";
 const SUPPORTED_ARCHES: &[&str] = &["x86_64", "aarch64"];
+const NIGHTLY_TOOLCHAIN: &str = "nightly-2025-11-30-x86_64-unknown-linux-gnu";
 
 fn main() {
     println!("cargo:rerun-if-changed=src");
@@ -136,10 +137,14 @@ fn compile_bpf_object(workspace_dir: &Path) -> Result<PathBuf, Box<dyn std::erro
     if !rustflags.is_empty() && !rustflags.ends_with(' ') {
         rustflags.push(' ');
     }
-    let extras = [format!("-C llvm-args=-bpf-stack-size={STACK_SIZE}")];
+    let extras = [
+        format!("-C llvm-args=-bpf-stack-size={STACK_SIZE}"),
+        format!("--sysroot={}", sysroot_path.display()),
+    ];
     rustflags.push_str(&extras.join(" "));
 
     let target_dir = workspace_dir.join("target").join("nightly-bpf");
+    let rustc = sysroot_path.join("bin").join("rustc");
 
     let mut command = Command::new(cargo_shim_path());
     command
@@ -147,12 +152,13 @@ fn compile_bpf_object(workspace_dir: &Path) -> Result<PathBuf, Box<dyn std::erro
         .env("WARDEN_BPF_BUILD_SKIP", "1")
         .env("LD_LIBRARY_PATH", &ld_library_path)
         .env("RUSTFLAGS", rustflags)
+        .env("RUSTUP_OVERRIDE_TOOLCHAIN", &toolchain)
+        .env("RUSTC", &rustc)
         .env(
             "CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER",
             create_bpf_linker_wrapper(workspace_dir)?,
         )
         .env("CARGO_TARGET_DIR", &target_dir)
-        .env_remove("RUSTC")
         .env_remove("RUSTC_WRAPPER")
         .env_remove("RUSTUP_TOOLCHAIN")
         .env("RUSTUP_TOOLCHAIN", &toolchain)
@@ -328,7 +334,8 @@ fn hex_digest(bytes: &[u8]) -> String {
 
 fn ensure_nightly_toolchain() -> Result<String, Box<dyn std::error::Error>> {
     let nightly_ready = Command::new("rustc")
-        .args(["+nightly", "--version"])
+        .arg(format!("+{NIGHTLY_TOOLCHAIN}"))
+        .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -337,27 +344,22 @@ fn ensure_nightly_toolchain() -> Result<String, Box<dyn std::error::Error>> {
 
     if !nightly_ready {
         let mut install = Command::new("rustup");
-        install.args(["toolchain", "install", "nightly"]);
+        install.args(["toolchain", "install", NIGHTLY_TOOLCHAIN]);
         run_command(install, "failed to install nightly toolchain")?;
     }
 
-    let host_triple = env::var("HOST").unwrap_or_else(|_| String::from("x86_64-unknown-linux-gnu"));
-    let nightly_toolchain = format!("nightly-{host_triple}");
+    let mut components = Command::new("rustup");
+    components.args([
+        "component",
+        "add",
+        "rust-src",
+        "llvm-tools-preview",
+        "--toolchain",
+        NIGHTLY_TOOLCHAIN,
+    ]);
+    run_command(components, "failed to add nightly components")?;
 
-    for toolchain in ["nightly", nightly_toolchain.as_str()] {
-        let mut components = Command::new("rustup");
-        components.args([
-            "component",
-            "add",
-            "rust-src",
-            "llvm-tools-preview",
-            "--toolchain",
-            toolchain,
-        ]);
-        run_command(components, "failed to add nightly components")?;
-    }
-
-    Ok(nightly_toolchain)
+    Ok(String::from(NIGHTLY_TOOLCHAIN))
 }
 
 fn run_command(mut command: Command, error: &str) -> Result<(), Box<dyn std::error::Error>> {
