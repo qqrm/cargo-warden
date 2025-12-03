@@ -330,6 +330,13 @@ Generate the prebuilt BPF bundle with:
 cargo build -p warden-bpf-core --release
 ```
 
+When a packaged object fails to parse on a specific kernel, regenerate the
+bundle locally with the helper script:
+
+```bash
+scripts/build-bpf.sh
+```
+
 The crate's build script invokes the nightly toolchain to cross-compile the
 eBPF program, writes architecture-specific copies, and emits a checksum
 manifest under `prebuilt/`. Set `WARDEN_BPF_USE_PREBUILT=1` to skip the compile
