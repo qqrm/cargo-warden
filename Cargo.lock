@@ -329,6 +329,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "cargo-warden"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "cargo_metadata",
+ "clap",
+ "event-reporting",
+ "itertools",
+ "libc",
+ "serde",
+ "serde-jsonlines",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "toml",
+ "warden-bpf-api",
+ "warden-policy-core",
+ "warden-policy-orchestrator",
+ "warden-sandbox-runtime",
+ "warden-testkits",
+]
+
+[[package]]
 name = "cargo_metadata"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2292,29 +2315,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
-]
-
-[[package]]
-name = "warden-cargo-warden"
-version = "0.1.0"
-dependencies = [
- "assert_cmd",
- "cargo_metadata",
- "clap",
- "event-reporting",
- "itertools",
- "libc",
- "serde",
- "serde-jsonlines",
- "serde_json",
- "serial_test",
- "tempfile",
- "toml",
- "warden-bpf-api",
- "warden-policy-core",
- "warden-policy-orchestrator",
- "warden-sandbox-runtime",
- "warden-testkits",
 ]
 
 [[package]]
