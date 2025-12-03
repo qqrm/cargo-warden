@@ -1,10 +1,15 @@
 # Examples
 
-Run the examples under `cargo warden` using the helper script:
+Run the examples under `cargo warden` using the helper script. It rebuilds the
+eBPF bundle locally (via `scripts/build-bpf.sh`) when no `prebuilt/manifest.json`
+is available and exports `WARDEN_BPF_DIST_DIR` automatically:
 
 ```bash
 ./scripts/run_examples.sh
 ```
+
+To reuse an existing bundle, point `WARDEN_BPF_DIST_DIR` at your artifact
+directory before launching the script.
 
 Expected output includes messages such as:
 
@@ -17,6 +22,11 @@ spawn blocked: Permission denied (os error 1)
 
 == fs-outside-workspace ==
 warning: write outside workspace blocked as expected: Operation not permitted (os error 1)
+
+== network-fs-demo ==
+warning: write outside workspace blocked as expected: Operation not permitted (os error 1)
+warning: read outside workspace blocked as expected: Permission denied (os error 13)
+warning: network access blocked as expected for 1.1.1.1:443: Operation not permitted (os error 1)
 
 == ex_proc_macro_hog ==
 warning: cargo-warden detected a simulated proc-macro resource hog
