@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build release binaries for CLI and agent
-cargo build --release -p warden-cargo-warden -p warden-agent-lite
+cargo build --release -p cargo-warden -p warden-agent-lite
 
 # Determine version from CLI crate
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/cli/Cargo.toml)

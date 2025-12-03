@@ -6,7 +6,7 @@ RUN apt-get update \
         libseccomp-dev \
         pkg-config \
     && rm -rf /var/lib/apt/lists/*
-RUN cargo build --release -p warden-cargo-warden -p warden-agent-lite
+RUN cargo build --release -p cargo-warden -p warden-agent-lite
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
