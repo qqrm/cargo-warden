@@ -2330,6 +2330,10 @@ name = "warden-network-build"
 version = "0.1.0"
 
 [[package]]
+name = "warden-network-fs-demo"
+version = "0.1.0"
+
+[[package]]
 name = "warden-policy-compiler"
 version = "0.1.0"
 dependencies = [

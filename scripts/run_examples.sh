@@ -1,24 +1,52 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+ensure_bpf_bundle() {
+    if [[ -n ${WARDEN_BPF_DIST_DIR:-} ]]; then
+        return
+    fi
+
+    local prebuilt_dir="$ROOT_DIR/prebuilt"
+    if [[ ! -f "$prebuilt_dir/manifest.json" ]]; then
+        echo "== building local eBPF bundle =="
+        "$ROOT_DIR/scripts/build-bpf.sh"
+    fi
+
+    export WARDEN_BPF_DIST_DIR="$prebuilt_dir"
+}
+
+warden() {
+    if command -v cargo-warden >/dev/null 2>&1; then
+        cargo warden "$@"
+    else
+        cargo run --bin cargo-warden -- "$@"
+    fi
+}
+
 run_network_build() {
-    cargo build -p warden-network-build
+    warden run -- cargo build -p warden-network-build
 }
 
 run_spawn_bash() {
-    cargo build -p warden-spawn-bash
+    warden run -- cargo build -p warden-spawn-bash
 }
 
 run_fs_outside_workspace() {
-    cargo build -p warden-fs-outside-workspace
+    warden run -- cargo build -p warden-fs-outside-workspace
+}
+
+run_network_fs_demo() {
+    warden run -- cargo build -p warden-network-fs-demo
 }
 
 run_git_clone_https() {
     local output
     if [[ ${WARDEN_EXAMPLE_REMOTE+x} ]]; then
-        output=$(WARDEN_EXAMPLE_REMOTE="$WARDEN_EXAMPLE_REMOTE" cargo build -p warden-git-clone-https 2>&1)
+        output=$(WARDEN_EXAMPLE_REMOTE="$WARDEN_EXAMPLE_REMOTE" warden run -- cargo build -p warden-git-clone-https 2>&1)
     else
-        output=$(cargo build -p warden-git-clone-https 2>&1)
+        output=$(warden run -- cargo build -p warden-git-clone-https 2>&1)
     fi
     printf '%s\n' "$output"
     if ! grep -q "git clone blocked as expected" <<<"$output"; then
@@ -53,6 +81,10 @@ run_example() {
             print_header "$flag_ref" "fs-outside-workspace"
             run_fs_outside_workspace
             ;;
+        network-fs-demo)
+            print_header "$flag_ref" "network-fs-demo"
+            run_network_fs_demo
+            ;;
         ex_git_clone_https)
             print_header "$flag_ref" "ex_git_clone_https"
             run_git_clone_https
@@ -70,13 +102,15 @@ run_example() {
 }
 
 main() {
+    ensure_bpf_bundle
+
     local first=1
     if [[ $# -gt 0 ]]; then
         for example in "$@"; do
             run_example "$example" first
         done
     else
-        for example in network-build spawn-bash fs-outside-workspace ex_git_clone_https ex_proc_macro_hog; do
+        for example in network-build spawn-bash fs-outside-workspace network-fs-demo ex_git_clone_https ex_proc_macro_hog; do
             run_example "$example" first
         done
     fi
