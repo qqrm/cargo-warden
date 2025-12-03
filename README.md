@@ -54,6 +54,18 @@ logs.
    Edit the generated `warden.toml` to promote specific permissions to enforce
    mode.
 
+### Building from source
+
+Run the repository bootstrap script before compiling the workspace to install
+the system dependencies (including `libseccomp-dev`) and configure Git remotes:
+
+```bash
+./scripts/repo-setup.sh
+```
+
+The installation guide in `docs/INSTALLATION.md` lists the full dependency set
+if you need to provision packages manually.
+
 ## Setup Requirements
 
 The project requires a Linux system with the following features:
