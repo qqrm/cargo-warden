@@ -3,16 +3,21 @@ name: Cargo Geiger
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   geiger:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
+      - uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
+      - uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97 # v2.8.2
+      - uses: taiki-e/install-action@493d7f216ecab2af0602481ce809ab2c72836fa1 # v2.62.62
         with:
           tool: cargo-geiger
       - name: cargo geiger

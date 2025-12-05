@@ -9,6 +9,9 @@ concurrency:
   group: bpf-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   ARTIFACT_NAME: warden-bpf-core-${{ github.sha }}
 
@@ -20,7 +23,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: Install system dependencies
         run: |
@@ -35,7 +40,7 @@ jobs:
           tar -czf prebuilt.tar.gz -C prebuilt .
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: |
