@@ -7,6 +7,9 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -16,12 +19,18 @@ jobs:
     name: Actionlint
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      checks: write
+      contents: read
+      pull-requests: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: Run actionlint via reviewdog
-        uses: reviewdog/action-actionlint@v1
+        uses: reviewdog/action-actionlint@c50cc86378c76976bc8d9c67e0f12327f85c323f # v1.69.1
         with:
           reporter: github-check
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -30,17 +39,21 @@ jobs:
     name: Cargo checks
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
         with:
           components: rustfmt, clippy, rust-src, llvm-tools-preview
 
       - name: Enable Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97 # v2.8.2
 
       - name: Check path versions
         run: ./scripts/check_path_versions.sh
@@ -56,22 +69,22 @@ jobs:
             xxhash
 
       - name: Install cargo-machete
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@493d7f216ecab2af0602481ce809ab2c72836fa1 # v2.62.62
         with:
           tool: cargo-machete
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@493d7f216ecab2af0602481ce809ab2c72836fa1 # v2.62.62
         with:
           tool: cargo-audit
 
       - name: Install cargo-udeps
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@493d7f216ecab2af0602481ce809ab2c72836fa1 # v2.62.62
         with:
           tool: cargo-udeps
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@493d7f216ecab2af0602481ce809ab2c72836fa1 # v2.62.62
         with:
           tool: cargo-nextest
 
@@ -129,9 +142,13 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04]
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: Install system dependencies
         run: |
@@ -142,10 +159,10 @@ jobs:
             protobuf-compiler
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
 
       - name: Enable Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@401aff9a7a08acb9d27b64936a90db81024cff97 # v2.8.2
 
       - name: Run examples
         run: ./scripts/run_examples.sh
