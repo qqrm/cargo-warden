@@ -189,16 +189,25 @@ fn compile_bpf_object(workspace_dir: &Path) -> Result<PathBuf, Box<dyn std::erro
 }
 
 fn cargo_shim_path() -> PathBuf {
+    let mut candidates = Vec::new();
+
     if let Some(home) = env::var_os("CARGO_HOME") {
-        return PathBuf::from(home).join("bin").join("cargo");
+        candidates.push(PathBuf::from(home).join("bin").join("cargo"));
     }
-
     if let Some(home) = env::var_os("HOME") {
-        return PathBuf::from(home).join(".cargo").join("bin").join("cargo");
+        candidates.push(PathBuf::from(home).join(".cargo").join("bin").join("cargo"));
     }
 
+    for path in &candidates {
+        if path.exists() {
+            return path.clone();
+        }
+    }
+
+    // Фолбэк на cargo из PATH
     PathBuf::from("cargo")
 }
+
 
 fn ensure_bpf_linker() -> Result<(), Box<dyn std::error::Error>> {
     let present = Command::new("bpf-linker")
