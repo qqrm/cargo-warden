@@ -1,9 +1,0 @@
-{
-  "mcpServers": [
-    {
-      "name": "crates",
-      "command": "crates-mcp"
-    }
-  ]
-}
-
