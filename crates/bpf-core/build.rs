@@ -208,7 +208,6 @@ fn cargo_shim_path() -> PathBuf {
     PathBuf::from("cargo")
 }
 
-
 fn ensure_bpf_linker() -> Result<(), Box<dyn std::error::Error>> {
     let present = Command::new("bpf-linker")
         .arg("--version")
