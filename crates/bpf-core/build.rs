@@ -204,7 +204,6 @@ fn cargo_shim_path() -> PathBuf {
         }
     }
 
-    // Фолбэк на cargo из PATH
     PathBuf::from("cargo")
 }
 

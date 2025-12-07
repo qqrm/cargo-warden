@@ -15,12 +15,16 @@ build = "build.rs"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
-[dependencies]
-aya-bpf = { package = "aya-ebpf", version = "0.1.1" }
-bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api", optional = true }
-
 [features]
 fuzzing = ["bpf-api"]
+
+[dependencies]
+aya-bpf = { package = "aya-ebpf", version = "0.1.1" }
+
+bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api", optional = true }
+
+[target.'cfg(not(target_arch = "bpf"))'.dependencies]
+arrayvec = "0.7"
 
 [target.'cfg(target_arch = "bpf")'.dependencies]
 bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
@@ -28,13 +32,11 @@ bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
 [dev-dependencies]
 bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
 
-[target.'cfg(not(target_arch = "bpf"))'.dependencies]
-arrayvec = "0.7"
-
 [build-dependencies]
 serde_json = "1"
 sha2 = "0.10"
 time = { version = "0.3", features = ["formatting"] }
+aya-build = "0.1.3"
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["aya-bpf"]
