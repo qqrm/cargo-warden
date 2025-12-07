@@ -94,7 +94,7 @@ The goal of cargo-warden is to provide Rust developers with a secure sandbox for
 
 Components:
 
-* **warden-bpf-core** – eBPF programs (LSM and cgroup) for exec, filesystem, and network.
+* **warden-bpf-core** – eBPF programs (LSM and cgroup) for exec, filesystem, and network, built with `aya-rs` for loading, map management, and CO-RE support.
 * **warden-bpf-api** – shared structures and map layouts with stable ABI.
 * **warden-policy-core** – permission model and config parsing.
 * **warden-policy-compiler** – compiles policies into compact structures for eBPF maps.
@@ -289,6 +289,7 @@ User’s local trust database:
 * Hash set of allowed exec paths.
 * Compact bitmasks for capability flags.
 * Hash map (`WORKLOAD_UNITS`) mapping pid to workload units for policy lookups.
+* Userspace program and map lifecycle management uses `aya-rs` to avoid kernel header dependencies and keep interfaces stable across kernels.
 
 ## 11. Execution Flow
 
