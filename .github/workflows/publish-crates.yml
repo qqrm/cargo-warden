@@ -32,6 +32,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
+      actions: write
     env:
       PUBLISH_INTERVAL: ${{ inputs.publish_interval || '60' }}
       RELEASE_PREFIX: ${{ inputs.release_prefix || '' }}
@@ -45,7 +46,6 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 0
-          persist-credentials: false
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
