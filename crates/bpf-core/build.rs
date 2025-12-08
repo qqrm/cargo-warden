@@ -11,7 +11,7 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 const TARGET: &str = "bpfel-unknown-none";
-const STACK_SIZE: usize = 65536;
+const STACK_SIZE: usize = 8192;
 const MANIFEST_NAME: &str = "manifest.json";
 const SUPPORTED_ARCHES: &[&str] = &["x86_64", "aarch64"];
 
@@ -27,7 +27,6 @@ fn main() {
 }
 
 fn try_main() -> Result<(), Box<dyn std::error::Error>> {
-    // не делаем ничего в доках, при явном скипе или при сборке самого bpf таргета
     if env::var_os("DOCS_RS").is_some() {
         return Ok(());
     }
@@ -56,10 +55,8 @@ fn compile_bpf_object() -> Result<PathBuf, Box<dyn std::error::Error>> {
         .and_then(Path::parent)
         .ok_or_else(|| io::Error::other("failed to resolve workspace root"))?;
 
-    // отдельный таргет-дир для bpf, чтобы не ловить дедлок по target/
     let bpf_target_dir = workspace_dir.join("target").join("nightly-bpf");
 
-    // проверяем, что bpf-linker вообще есть
     let has_bpf_linker = Command::new("bpf-linker")
         .arg("--version")
         .status()
@@ -77,15 +74,24 @@ fn compile_bpf_object() -> Result<PathBuf, Box<dyn std::error::Error>> {
     if !rustflags.is_empty() && !rustflags.ends_with(' ') {
         rustflags.push(' ');
     }
-    rustflags.push_str(&format!("-C llvm-args=-bpf-stack-size={STACK_SIZE}"));
+    // Увеличиваем лимит стека и для rustc, и для bpf-linker
+    rustflags.push_str(&format!(
+        "-C llvm-args=-bpf-stack-size={STACK_SIZE} \
+         -C link-arg=--llvm-args=-bpf-stack-size={STACK_SIZE}"
+    ));
+
+    // Увеличиваем лимит стека и на стадии codegen, и на стадии линковки (bpf-linker)
+    rustflags.push_str(&format!(
+        "-C llvm-args=-bpf-stack-size={size} -C link-arg=-mllvm -C link-arg=-bpf-stack-size={size}",
+        size = STACK_SIZE,
+    ));
 
     let status = Command::new("cargo")
         .current_dir(&workspace_dir)
-        // чтобы вложенный билд не запускал этот же build.rs повторно
         .env("WARDEN_BPF_BUILD_SKIP", "1")
         .env("RUSTFLAGS", rustflags)
         .env("CARGO_TARGET_DIR", &bpf_target_dir)
-        .arg("+nightly")
+        .arg("+nightly-2025-11-30-x86_64-unknown-linux-gnu")
         .args([
             "rustc",
             "-p",
@@ -105,10 +111,7 @@ fn compile_bpf_object() -> Result<PathBuf, Box<dyn std::error::Error>> {
         return Err(io::Error::other("bpf build failed - see cargo output above").into());
     }
 
-    let deps_dir = bpf_target_dir
-        .join(TARGET)
-        .join("release")
-        .join("deps");
+    let deps_dir = bpf_target_dir.join(TARGET).join("release").join("deps");
 
     let object = find_object(&deps_dir)?;
     Ok(object)
@@ -183,10 +186,9 @@ fn find_object(dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
         }
     }
 
-    candidates
-        .into_iter()
-        .next()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "failed to locate generated object").into())
+    candidates.into_iter().next().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, "failed to locate generated object").into()
+    })
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
