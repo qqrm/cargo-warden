@@ -41,6 +41,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -89,51 +90,25 @@ jobs:
           tool: cargo-nextest
 
       - name: cargo fmt --all -- --check
-        id: cargo_fmt
         run: cargo fmt --all -- --check
-        continue-on-error: true
 
       - name: cargo check --tests --benches
-        id: cargo_check
         run: cargo check --tests --benches
-        continue-on-error: true
 
       - name: cargo clippy --all-targets --all-features -- -D warnings
-        id: cargo_clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-        continue-on-error: true
 
       - name: cargo nextest run
-        id: cargo_nextest
         run: cargo nextest run
-        continue-on-error: true
 
       - name: cargo machete
-        id: cargo_machete
         run: cargo machete
-        continue-on-error: true
 
       - name: cargo audit
-        id: cargo_audit
         run: cargo audit
-        continue-on-error: true
 
       - name: cargo +nightly udeps --all-targets --all-features
-        id: cargo_udeps
         run: cargo +nightly udeps --all-targets --all-features
-        continue-on-error: true
-
-      - name: Aggregate cargo-checks results
-        if: always()
-        env:
-          CARGO_FMT_OUTCOME: ${{ steps.cargo_fmt.outcome }}
-          CARGO_CHECK_OUTCOME: ${{ steps.cargo_check.outcome }}
-          CARGO_CLIPPY_OUTCOME: ${{ steps.cargo_clippy.outcome }}
-          CARGO_NEXTEST_OUTCOME: ${{ steps.cargo_nextest.outcome }}
-          CARGO_MACHETE_OUTCOME: ${{ steps.cargo_machete.outcome }}
-          CARGO_AUDIT_OUTCOME: ${{ steps.cargo_audit.outcome }}
-          CARGO_UDEPS_OUTCOME: ${{ steps.cargo_udeps.outcome }}
-        run: ./scripts/ci/aggregate_cargo_checks.sh
 
   examples:
     name: Examples
@@ -144,6 +119,7 @@ jobs:
         os: [ubuntu-22.04, ubuntu-24.04]
     permissions:
       contents: read
+      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1

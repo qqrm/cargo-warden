@@ -11,6 +11,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write
 
 env:
   ARTIFACT_NAME: warden-bpf-core-${{ github.sha }}
