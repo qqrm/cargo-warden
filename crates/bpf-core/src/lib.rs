@@ -1052,6 +1052,7 @@ fn rule_allows_access(rule_access: u8, needed: u8) -> bool {
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[inline(never)]
 fn fs_entry_allows(entry: &bpf_api::FsRuleEntry, path: &CStr, needed: u8) -> bool {
     if !rule_allows_access(entry.rule.access, needed) {
         return false;
@@ -1062,7 +1063,24 @@ fn fs_entry_allows(entry: &bpf_api::FsRuleEntry, path: &CStr, needed: u8) -> boo
     path_prefix_matches(rule_path, path)
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[cfg(all(target_arch = "bpf"))]
+#[inline(never)]
+fn unit_fs_allowed(unit: u32, path: &CStr, needed: u8) -> bool {
+    let len = fs_rules_len();
+    let mut i = 0;
+    while i < len {
+        if let Some(entry) = unsafe { FS_RULES.get(i) } {
+            if entry.unit == unit && fs_entry_allows(entry, path, needed) {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+#[inline(never)]
 fn unit_fs_allowed(unit: u32, path: &CStr, needed: u8) -> bool {
     let len = fs_rules_len();
     let mut i = 0;
@@ -1142,6 +1160,7 @@ fn access_from_mask(mask: i32) -> u8 {
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[inline(never)]
 fn read_user_path(path_ptr: *const u8) -> Option<[u8; 256]> {
     if path_ptr.is_null() {
         return None;
@@ -1151,6 +1170,14 @@ fn read_user_path(path_ptr: *const u8) -> Option<[u8; 256]> {
     if res < 0 { None } else { Some(buf) }
 }
 
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+fn read_user_path_into(path_ptr: *const u8, buf: &mut [u8; 256]) -> bool {
+    if path_ptr.is_null() {
+        return false;
+    }
+    let res = unsafe { bpf_probe_read_user_str(buf.as_mut_ptr(), buf.len() as u32, path_ptr) };
+    res >= 0
+}
 #[cfg(target_arch = "bpf")]
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy)]
@@ -1370,9 +1397,37 @@ unsafe extern "C" {
     fn bpf_ktime_get_ns() -> u64;
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[cfg(target_arch = "bpf")]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/bprm_check_security")]
+#[inline(never)]
+pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
+    let filename_ptr = unsafe { *(ctx as *const *const u8) };
+
+    let mut buf = [0u8; 256];
+    if unsafe { bpf_probe_read_user_str(buf.as_mut_ptr(), buf.len() as u32, filename_ptr) } < 0 {
+        return deny_with_mode();
+    }
+
+    let len = exec_allowlist_len();
+    let mut i = 0;
+    while i < len {
+        // ключевая правка: доступ к EXEC_ALLOWLIST в unsafe
+        let entry = unsafe { EXEC_ALLOWLIST.get(i) };
+        if let Some(entry) = entry {
+            if path_matches(&entry.path, &buf) {
+                return 0;
+            }
+        }
+        i += 1;
+    }
+    deny_with_mode()
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "lsm/bprm_check_security")]
+#[inline(never)]
 pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
     let filename_ptr = unsafe { *(ctx as *const *const u8) };
     let mut buf = [0u8; 256];
@@ -1420,41 +1475,101 @@ pub extern "C" fn sendmsg6(ctx: *mut c_void) -> i32 {
     check6(ctx)
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[cfg(target_arch = "bpf")]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/file_open")]
+#[inline(never)]
 pub extern "C" fn file_open(file: *mut c_void, _cred: *mut c_void) -> i32 {
     let path_ptr = match file_path_ptr(file) {
         Some(ptr) => ptr,
         None => return deny_with_mode(),
     };
-    let Some(path) = read_user_path(path_ptr) else {
+
+    let mut path = [0u8; 256];
+    if !read_user_path_into(path_ptr, &mut path) {
         return deny_with_mode();
-    };
+    }
+
     let access = file_mode_bits(file)
         .map(access_from_mode)
         .unwrap_or(bpf_api::FS_READ);
+
+    let allowed = fs_allowed(&path, access);
+    if allowed { 0 } else { deny_with_mode() }
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "lsm/file_open")]
+#[inline(never)]
+pub extern "C" fn file_open(file: *mut c_void, _cred: *mut c_void) -> i32 {
+    let path_ptr = match file_path_ptr(file) {
+        Some(ptr) => ptr,
+        None => return deny_with_mode(),
+    };
+
+    let mut path = [0u8; 256];
+    if !read_user_path_into(path_ptr, &mut path) {
+        return deny_with_mode();
+    }
+
+    let access = file_mode_bits(file)
+        .map(access_from_mode)
+        .unwrap_or(bpf_api::FS_READ);
+
     let allowed = fs_allowed(&path, access);
     let event = fs_event(ACTION_OPEN, &path, access, allowed);
     publish_event(&event);
     if allowed { 0 } else { deny_with_mode() }
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[cfg(target_arch = "bpf")]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/file_permission")]
+#[inline(never)]
 pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
     let access = access_from_mask(mask);
     if access == 0 {
         return 0;
     }
+
     let path_ptr = match file_path_ptr(file) {
         Some(ptr) => ptr,
         None => return deny_with_mode(),
     };
-    let Some(path) = read_user_path(path_ptr) else {
+
+    let mut path = [0u8; 256];
+    if !read_user_path_into(path_ptr, &mut path) {
         return deny_with_mode();
+    }
+
+    if fs_allowed(&path, access) {
+        0
+    } else {
+        deny_with_mode()
+    }
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "lsm/file_permission")]
+#[inline(never)]
+pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
+    let access = access_from_mask(mask);
+    if access == 0 {
+        return 0;
+    }
+
+    let path_ptr = match file_path_ptr(file) {
+        Some(ptr) => ptr,
+        None => return deny_with_mode(),
     };
+
+    let mut path = [0u8; 256];
+    if !read_user_path_into(path_ptr, &mut path) {
+        return deny_with_mode();
+    }
+
     if fs_allowed(&path, access) {
         0
     } else {
@@ -1474,31 +1589,34 @@ pub extern "C" fn inode_rename(
     new_dentry: *mut c_void,
     _flags: u32,
 ) -> i32 {
+    let mut path = [0u8; 256];
+
     let old_path_ptr = match dentry_path_ptr(old_dentry) {
         Some(ptr) => ptr,
         None => return deny_with_mode(),
     };
-    let Some(old_path) = read_user_path(old_path_ptr) else {
+    if !read_user_path_into(old_path_ptr, &mut path) {
         return deny_with_mode();
-    };
-    let new_path_ptr = match dentry_path_ptr(new_dentry) {
-        Some(ptr) => ptr,
-        None => return deny_with_mode(),
-    };
-    let Some(new_path) = read_user_path(new_path_ptr) else {
-        return deny_with_mode();
-    };
+    }
 
     let mut allowed = true;
 
-    if !fs_allowed(&old_path, bpf_api::FS_WRITE) {
-        let event = fs_event(ACTION_RENAME, &old_path, bpf_api::FS_WRITE, false);
+    if !fs_allowed(&path, bpf_api::FS_WRITE) {
+        let event = fs_event(ACTION_RENAME, &path, bpf_api::FS_WRITE, false);
         publish_event(&event);
         allowed = false;
     }
 
-    if !fs_allowed(&new_path, bpf_api::FS_WRITE) {
-        let event = fs_event(ACTION_RENAME, &new_path, bpf_api::FS_WRITE, false);
+    let new_path_ptr = match dentry_path_ptr(new_dentry) {
+        Some(ptr) => ptr,
+        None => return deny_with_mode(),
+    };
+    if !read_user_path_into(new_path_ptr, &mut path) {
+        return deny_with_mode();
+    }
+
+    if !fs_allowed(&path, bpf_api::FS_WRITE) {
+        let event = fs_event(ACTION_RENAME, &path, bpf_api::FS_WRITE, false);
         publish_event(&event);
         allowed = false;
     }
@@ -1514,9 +1632,12 @@ pub extern "C" fn inode_unlink(_dir: *mut c_void, dentry: *mut c_void) -> i32 {
         Some(ptr) => ptr,
         None => return deny_with_mode(),
     };
-    let Some(path) = read_user_path(path_ptr) else {
+
+    let mut path = [0u8; 256];
+    if !read_user_path_into(path_ptr, &mut path) {
         return deny_with_mode();
-    };
+    }
+
     if fs_allowed(&path, bpf_api::FS_WRITE) {
         0
     } else {
