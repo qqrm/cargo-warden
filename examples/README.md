@@ -1,13 +1,5 @@
 # Examples
 
-Run the examples under `cargo warden` using the helper script. It rebuilds the
-eBPF bundle locally (via `scripts/build-bpf.sh`) when no `prebuilt/manifest.json`
-is available and exports `WARDEN_BPF_DIST_DIR` automatically:
-
-```bash
-./scripts/run_examples.sh
-```
-
 To reuse an existing bundle, point `WARDEN_BPF_DIST_DIR` at your artifact
 directory before launching the script.
 
