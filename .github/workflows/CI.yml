@@ -139,27 +139,35 @@ jobs:
           WARDEN_FAKE_SANDBOX: "1"
         run: cargo test --examples
 
-      - name: Run example: network-build
+      - name: Run example network-build
         env:
           WARDEN_FAKE_SANDBOX: "1"
-        run: cargo run --bin cargo-warden -- run -- cargo build -p warden-network-build
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-network-build
 
-      - name: Run example: spawn-bash
+      - name: Run example spawn-bash
         env:
           WARDEN_FAKE_SANDBOX: "1"
-        run: cargo run --bin cargo-warden -- run -- cargo build -p warden-spawn-bash
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-spawn-bash
 
-      - name: Run example: fs-outside-workspace
+      - name: Run example fs-outside-workspace
         env:
           WARDEN_FAKE_SANDBOX: "1"
-        run: cargo run --bin cargo-warden -- run -- cargo build -p warden-fs-outside-workspace
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-fs-outside-workspace
 
-      - name: Run example: network-fs-demo
+      - name: Run example network-fs-demo
         env:
           WARDEN_FAKE_SANDBOX: "1"
-        run: cargo run --bin cargo-warden -- run -- cargo build -p warden-network-fs-demo
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-network-fs-demo
 
-      - name: Run example: git-clone-https
+      - name: Run example git-clone-https
         env:
           WARDEN_FAKE_SANDBOX: "1"
         run: |
@@ -168,7 +176,9 @@ jobs:
           echo "$output"
           echo "$output" | grep -q "git clone blocked as expected"
 
-      - name: Run example: proc-macro-hog
+      - name: Run example proc-macro-hog
         env:
           WARDEN_FAKE_SANDBOX: "1"
-        run: cargo run --bin cargo-warden -- run -- env WARDEN_EXAMPLE_EXPECT_WARNING=1 cargo build -p warden-proc-macro-hog
+        run: >-
+          cargo run --bin cargo-warden -- run -- env WARDEN_EXAMPLE_EXPECT_WARNING=1
+          cargo build -p warden-proc-macro-hog
