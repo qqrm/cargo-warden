@@ -356,17 +356,26 @@ you to refine rules before enabling blocking.
 
 ## Local CI parity
 
-Use `scripts/run_ci_checks.sh` to reproduce the pull request GitHub Actions checks locally. The script:
+Reproduce the GitHub Actions validation locally by running the same commands as the `cargo-checks` and `examples` jobs. Install
+the prerequisites first:
 
-- installs missing Debian packages (`pkg-config`, `libseccomp-dev`, `protobuf-compiler`, `jq`, `xxhash`),
-- installs the cargo subcommands required by the pipeline (`cargo-machete`, `cargo-audit`, `cargo-nextest`, `cargo-udeps`),
-- ensures the nightly toolchain has the `rustfmt`, `clippy`, `rust-src`, and `llvm-tools-preview` components,
-- runs the same validation commands as the CI jobs, including formatting, linting, tests, supply-chain checks, and example runs.
+- Debian packages: `pkg-config`, `libseccomp-dev`, `protobuf-compiler`, `jq`, `xxhash`.
+- Cargo tools: `cargo-machete`, `cargo-audit`, `cargo-nextest`, `cargo-udeps`.
+- Nightly toolchain with the `rustfmt`, `clippy`, `rust-src`, and `llvm-tools-preview` components.
 
-Run it from the repository root:
+Then execute the CI-equivalent commands from the repository root:
 
 ```bash
-scripts/run_ci_checks.sh
+./scripts/check_path_versions.sh
+cargo fmt --all -- --check
+cargo check --tests --benches
+cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run
+cargo test
+cargo machete
+cargo audit
+cargo +nightly udeps --all-targets --all-features
+./scripts/run_examples.sh
 ```
 
 For a byte-for-byte reproduction of the GitHub Actions workflow, run it through [wrkflw](https://github.com/bahdotsh/wrkflw):
