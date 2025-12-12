@@ -57,6 +57,11 @@ jobs:
         with:
           tool: cargo-binstall
 
+      - name: Install bpf-linker
+        uses: taiki-e/install-action@v2
+        with:
+          tool: bpf-linker
+
       - name: Install cargo tools via cargo-binstall
         run: |
           cargo binstall cargo-machete --no-confirm --force

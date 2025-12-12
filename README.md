@@ -360,11 +360,11 @@ Reproduce the GitHub Actions validation locally by running the same commands as 
 the prerequisites first:
 
 - Debian packages: `pkg-config`, `libseccomp-dev`, `protobuf-compiler`, `jq`, `xxhash`.
-- Cargo tools: `cargo-machete`, `cargo-audit`, `cargo-nextest`, `cargo-udeps`. Install them via [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall) to reuse prebuilt binaries:
+- Cargo tools: `bpf-linker`, `cargo-machete`, `cargo-audit`, `cargo-nextest`, `cargo-udeps`. Install them via [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall) to reuse prebuilt binaries:
 
   ```bash
   cargo install cargo-binstall --locked
-  cargo binstall cargo-machete cargo-audit cargo-nextest cargo-udeps --no-confirm --force
+  cargo binstall bpf-linker cargo-machete cargo-audit cargo-nextest cargo-udeps --no-confirm --force
   ```
 - Nightly toolchain with the `rustfmt`, `clippy`, `rust-src`, and `llvm-tools-preview` components.
 

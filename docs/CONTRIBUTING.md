@@ -55,7 +55,7 @@ Install the helper Cargo binaries via [`cargo-binstall`](https://github.com/carg
 
 ```bash
 cargo install cargo-binstall --locked
-cargo binstall cargo-machete cargo-audit cargo-nextest cargo-udeps --no-confirm --force
+cargo binstall bpf-linker cargo-machete cargo-audit cargo-nextest cargo-udeps --no-confirm --force
 ```
 
 ## Documentation Standards
