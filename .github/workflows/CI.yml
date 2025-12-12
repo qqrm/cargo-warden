@@ -52,25 +52,17 @@ jobs:
             jq \
             xxhash
 
-      - name: Install cargo-machete
+      - name: Install cargo-binstall
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-machete
+          tool: cargo-binstall
 
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit
-
-      - name: Install cargo-udeps
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-udeps
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
+      - name: Install cargo tools via cargo-binstall
+        run: |
+          cargo binstall cargo-machete --no-confirm --force
+          cargo binstall cargo-audit --no-confirm --force
+          cargo binstall cargo-udeps --no-confirm --force
+          cargo binstall cargo-nextest --no-confirm --force
 
       - name: Check path versions
         run: ./scripts/check_path_versions.sh

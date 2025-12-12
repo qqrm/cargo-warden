@@ -51,6 +51,13 @@ WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- env WARDEN_EXAMPLE_
 
 Resolve any failures before continuing. If you add new tooling, document it in this file and in the relevant crate README.
 
+Install the helper Cargo binaries via [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall) to reuse prebuilt artifacts:
+
+```bash
+cargo install cargo-binstall --locked
+cargo binstall cargo-machete cargo-audit cargo-nextest cargo-udeps --no-confirm --force
+```
+
 ## Documentation Standards
 
 - Markdown files use uppercase filenames with underscores (for example, `END_TO_END_TUTORIAL.md`).
