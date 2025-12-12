@@ -375,7 +375,13 @@ cargo test
 cargo machete
 cargo audit
 cargo +nightly udeps --all-targets --all-features
-./scripts/run_examples.sh
+WARDEN_FAKE_SANDBOX=1 cargo test --examples
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-network-build
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-spawn-bash
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-fs-outside-workspace
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-network-fs-demo
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-git-clone-https
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- env WARDEN_EXAMPLE_EXPECT_WARNING=1 cargo build -p warden-proc-macro-hog
 ```
 
 For a byte-for-byte reproduction of the GitHub Actions workflow, run it through [wrkflw](https://github.com/bahdotsh/wrkflw):

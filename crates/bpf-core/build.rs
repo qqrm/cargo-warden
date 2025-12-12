@@ -20,6 +20,13 @@ fn main() {
         return;
     }
 
+    if env::var_os("CLIPPY_DRIVER_PATH").is_some()
+        || env::var_os("CARGO_CLIPPY").is_some()
+        || env::var_os("WARDEN_BPF_SKIP_BUILD").is_some()
+    {
+        return;
+    }
+
     ensure_bpf_linker();
 
     let status = Command::new("cargo")
