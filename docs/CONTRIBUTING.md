@@ -31,12 +31,16 @@ gh run list --limit 5
 Every contribution must pass the full validation suite before you submit it for review. Run all commands from the workspace root:
 
 ```bash
-cargo fmt --all
+./scripts/check_path_versions.sh
+cargo fmt --all -- --check
 cargo check --tests --benches
 cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run
 cargo test
 cargo machete
-./scripts/check_path_versions.sh
+cargo audit
+cargo +nightly udeps --all-targets --all-features
+./scripts/run_examples.sh
 ```
 
 Resolve any failures before continuing. If you add new tooling, document it in this file and in the relevant crate README.
