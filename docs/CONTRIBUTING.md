@@ -40,10 +40,23 @@ cargo test
 cargo machete
 cargo audit
 cargo +nightly udeps --all-targets --all-features
-./scripts/run_examples.sh
+WARDEN_FAKE_SANDBOX=1 cargo test --examples
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-network-build
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-spawn-bash
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-fs-outside-workspace
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-network-fs-demo
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-git-clone-https
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- env WARDEN_EXAMPLE_EXPECT_WARNING=1 cargo build -p warden-proc-macro-hog
 ```
 
 Resolve any failures before continuing. If you add new tooling, document it in this file and in the relevant crate README.
+
+Install the helper Cargo binaries via [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall) to reuse prebuilt artifacts:
+
+```bash
+cargo install cargo-binstall --locked
+cargo binstall bpf-linker cargo-machete cargo-audit cargo-nextest cargo-udeps --no-confirm --force
+```
 
 ## Documentation Standards
 

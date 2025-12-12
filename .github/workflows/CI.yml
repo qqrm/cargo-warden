@@ -52,25 +52,22 @@ jobs:
             jq \
             xxhash
 
-      - name: Install cargo-machete
+      - name: Install cargo-binstall
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-machete
+          tool: cargo-binstall
 
-      - name: Install cargo-audit
+      - name: Install bpf-linker
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-audit
+          tool: bpf-linker
 
-      - name: Install cargo-udeps
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-udeps
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
+      - name: Install cargo tools via cargo-binstall
+        run: |
+          cargo binstall cargo-machete --no-confirm --force
+          cargo binstall cargo-audit --no-confirm --force
+          cargo binstall cargo-udeps --no-confirm --force
+          cargo binstall cargo-nextest --no-confirm --force
 
       - name: Check path versions
         run: ./scripts/check_path_versions.sh
@@ -82,7 +79,9 @@ jobs:
         run: cargo check --tests --benches
 
       - name: Run cargo clippy --all-targets --all-features -- -D warnings
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        env:
+          WARDEN_BPF_SKIP_BUILD: "1"
+        run: cargo clippy --workspace --all-targets --all-features --exclude warden-bpf-core -- -D warnings
 
       - name: Run cargo nextest run
         run: cargo nextest run
@@ -124,5 +123,59 @@ jobs:
       - name: Enable Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run examples
-        run: ./scripts/run_examples.sh
+      - name: Install bpf-linker
+        uses: taiki-e/install-action@v2
+        with:
+          tool: bpf-linker
+
+      - name: Build BPF artifacts
+        run: cargo build -p warden-bpf-core --release
+
+      - name: Run cargo test --examples
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: cargo test --examples
+
+      - name: Run example network-build
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-network-build
+
+      - name: Run example spawn-bash
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-spawn-bash
+
+      - name: Run example fs-outside-workspace
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-fs-outside-workspace
+
+      - name: Run example network-fs-demo
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-network-fs-demo
+
+      - name: Run example git-clone-https
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: |
+          set -euo pipefail
+          output=$(cargo run --bin cargo-warden -- run -- cargo build -p warden-git-clone-https 2>&1)
+          echo "$output"
+          echo "$output" | grep -q "git clone blocked as expected"
+
+      - name: Run example proc-macro-hog
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: >-
+          cargo run --bin cargo-warden -- run -- env WARDEN_EXAMPLE_EXPECT_WARNING=1
+          cargo build -p warden-proc-macro-hog

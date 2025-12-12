@@ -360,7 +360,12 @@ Reproduce the GitHub Actions validation locally by running the same commands as 
 the prerequisites first:
 
 - Debian packages: `pkg-config`, `libseccomp-dev`, `protobuf-compiler`, `jq`, `xxhash`.
-- Cargo tools: `cargo-machete`, `cargo-audit`, `cargo-nextest`, `cargo-udeps`.
+- Cargo tools: `bpf-linker`, `cargo-machete`, `cargo-audit`, `cargo-nextest`, `cargo-udeps`. Install them via [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall) to reuse prebuilt binaries:
+
+  ```bash
+  cargo install cargo-binstall --locked
+  cargo binstall bpf-linker cargo-machete cargo-audit cargo-nextest cargo-udeps --no-confirm --force
+  ```
 - Nightly toolchain with the `rustfmt`, `clippy`, `rust-src`, and `llvm-tools-preview` components.
 
 Then execute the CI-equivalent commands from the repository root:
@@ -375,7 +380,13 @@ cargo test
 cargo machete
 cargo audit
 cargo +nightly udeps --all-targets --all-features
-./scripts/run_examples.sh
+WARDEN_FAKE_SANDBOX=1 cargo test --examples
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-network-build
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-spawn-bash
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-fs-outside-workspace
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-network-fs-demo
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-git-clone-https
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- env WARDEN_EXAMPLE_EXPECT_WARNING=1 cargo build -p warden-proc-macro-hog
 ```
 
 For a byte-for-byte reproduction of the GitHub Actions workflow, run it through [wrkflw](https://github.com/bahdotsh/wrkflw):

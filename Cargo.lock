@@ -163,16 +163,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aya-build"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59bc42f3c5ddacc34eca28a420b47e3cbb3f0f484137cb2bf1ad2153d0eae52a"
-dependencies = [
- "anyhow",
- "cargo_metadata 0.23.1",
-]
-
-[[package]]
 name = "aya-ebpf"
 version = "0.1.1"
 source = "git+https://github.com/aya-rs/aya?rev=30182463bdb6cce592477e66659d5f66f846cfcf#30182463bdb6cce592477e66659d5f66f846cfcf"
@@ -339,20 +329,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "cargo-platform"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "122ec45a44b270afd1402f351b782c676b173e3c3fb28d86ff7ebfb4d86a4ee4"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "cargo-warden"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
- "cargo_metadata 0.18.1",
+ "cargo_metadata",
  "clap",
  "event-reporting",
  "itertools",
@@ -377,25 +358,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d886547e41f740c616ae73108f6eb70afe6d940c7bc697cb30f13daec073037"
 dependencies = [
  "camino",
- "cargo-platform 0.1.9",
+ "cargo-platform",
  "semver",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "cargo_metadata"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9"
-dependencies = [
- "camino",
- "cargo-platform 0.3.1",
- "semver",
- "serde",
- "serde_json",
- "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -2074,7 +2041,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91e7d9e3bb61134e77bde20dd4825b97c010155709965fedf0f49bb138e52a9d"
 dependencies = [
  "deranged",
- "itoa",
  "num-conv",
  "powerfmt",
  "serde",
@@ -2332,11 +2298,7 @@ name = "warden-bpf-core"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
- "aya-build",
  "aya-ebpf",
- "serde_json",
- "sha2",
- "time",
  "warden-bpf-api",
 ]
 
@@ -2391,7 +2353,7 @@ dependencies = [
 name = "warden-policy-orchestrator"
 version = "0.1.0"
 dependencies = [
- "cargo_metadata 0.18.1",
+ "cargo_metadata",
  "directories",
  "scoped-env",
  "semver",
