@@ -32,9 +32,11 @@ impl PolicyMetadata {
 
     fn metadata(&mut self) -> io::Result<&Metadata> {
         if self.metadata.is_none() {
-            let mut command = MetadataCommand::new();
-            command.current_dir(workspace_dir()?);
+            let workspace = workspace_dir()?;
+            ensure_process_dir(&workspace)?;
 
+            let mut command = MetadataCommand::new();
+            command.current_dir(&workspace);
             let discovered = command.exec().map_err(io::Error::other)?;
             self.metadata = Some(discovered);
         }
@@ -59,15 +61,58 @@ fn workspace_dir() -> io::Result<PathBuf> {
         return Ok(PathBuf::from(dir));
     }
 
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        "failed to resolve workspace directory via WARDEN_WORKSPACE_ROOT, current working directory, or CARGO_MANIFEST_DIR",
-    ))
+    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+}
+
+fn ensure_process_dir(workspace: &PathBuf) -> io::Result<()> {
+    if env::current_dir().is_err() {
+        env::set_current_dir(workspace)?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::PolicyMetadata;
+    use std::{env, path::PathBuf};
+    use tempfile::tempdir;
+
+    struct EnvGuard {
+        original_dir: PathBuf,
+        workspace_root: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn new() -> Self {
+            let original_dir = env::current_dir().expect("current directory is available");
+            let workspace_root = env::var_os("WARDEN_WORKSPACE_ROOT");
+
+            Self {
+                original_dir,
+                workspace_root,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            let _ = env::set_current_dir(&self.original_dir);
+
+            match &self.workspace_root {
+                Some(value) => unsafe {
+                    // SAFETY: tests serialize access to environment variables and restore the
+                    // previous value when the guard drops.
+                    env::set_var("WARDEN_WORKSPACE_ROOT", value);
+                },
+                None => unsafe {
+                    // SAFETY: tests serialize access to environment variables and restore the
+                    // previous value when the guard drops.
+                    env::remove_var("WARDEN_WORKSPACE_ROOT");
+                },
+            }
+        }
+    }
 
     #[test]
     fn caches_metadata_between_calls() {
@@ -75,5 +120,27 @@ mod tests {
         let first = metadata.metadata().unwrap() as *const _;
         let second = metadata.metadata().unwrap() as *const _;
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn recovers_when_current_dir_is_missing() {
+        let _guard = EnvGuard::new();
+        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+        let temp = tempdir().expect("tempdir is created");
+        env::set_current_dir(temp.path()).expect("current dir can be set to tempdir");
+        let temp_path = temp.keep();
+        std::fs::remove_dir_all(temp_path).expect("tempdir is removed");
+
+        unsafe {
+            // SAFETY: tests serialize access to environment variables and restore the previous
+            // state through EnvGuard.
+            env::set_var("WARDEN_WORKSPACE_ROOT", &workspace);
+        }
+
+        let mut metadata = PolicyMetadata::default();
+        metadata
+            .metadata()
+            .expect("metadata loads even when current dir is missing");
     }
 }
