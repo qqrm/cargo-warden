@@ -1,6 +1,6 @@
 use cargo_metadata::{Metadata, MetadataCommand};
 use policy_core::Mode;
-use std::io;
+use std::{env, io, path::PathBuf};
 use warden_policy_orchestrator as orchestrator;
 
 pub(crate) use orchestrator::{IsolationConfig, PolicySource, PolicySourceKind, PolicyStatus};
@@ -32,7 +32,10 @@ impl PolicyMetadata {
 
     fn metadata(&mut self) -> io::Result<&Metadata> {
         if self.metadata.is_none() {
-            let discovered = MetadataCommand::new().exec().map_err(io::Error::other)?;
+            let mut command = MetadataCommand::new();
+            command.current_dir(workspace_dir()?);
+
+            let discovered = command.exec().map_err(io::Error::other)?;
             self.metadata = Some(discovered);
         }
 
@@ -41,6 +44,25 @@ impl PolicyMetadata {
             .as_ref()
             .expect("metadata is populated before returning"))
     }
+}
+
+fn workspace_dir() -> io::Result<PathBuf> {
+    if let Some(dir) = env::var_os("WARDEN_WORKSPACE_ROOT") {
+        return Ok(PathBuf::from(dir));
+    }
+
+    if let Ok(dir) = env::current_dir() {
+        return Ok(dir);
+    }
+
+    if let Some(dir) = env::var_os("CARGO_MANIFEST_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        "failed to resolve workspace directory via WARDEN_WORKSPACE_ROOT, current working directory, or CARGO_MANIFEST_DIR",
+    ))
 }
 
 #[cfg(test)]
