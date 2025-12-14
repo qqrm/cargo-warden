@@ -88,7 +88,7 @@ cat /sys/kernel/security/lsm | grep bpf
 mount | grep cgroup2
 ```
 
-- **Capabilities** `CAP_BPF` and `CAP_SYS_ADMIN`
+- **Capabilities** `CAP_SYS_ADMIN` (required) and `CAP_BPF` (preferred when available; some hosts keep BPF behind `CAP_SYS_ADMIN` only)
 
 ```bash
 capsh --print | grep -E 'cap_(bpf|sys_admin)'
@@ -97,7 +97,8 @@ capsh --print | grep -E 'cap_(bpf|sys_admin)'
 ### Least-privilege execution
 
 `cargo-warden` refuses to run as root or with an expanded capability set. Run it
-under a dedicated service account that has only `CAP_BPF` and `CAP_SYS_ADMIN`:
+under a dedicated service account that has `CAP_SYS_ADMIN` and, when supported
+by the host, `CAP_BPF`:
 
 1. Create a locked-down user and its state directory.
 
@@ -107,7 +108,9 @@ under a dedicated service account that has only `CAP_BPF` and `CAP_SYS_ADMIN`:
    ```
 
 2. Grant only the required capabilities to the process. A systemd unit keeps the
-   bounding set narrow and avoids `--privileged` containers:
+   bounding set narrow and avoids `--privileged` containers. Include `CAP_BPF`
+   when the platform exposes it in `CapEff`; otherwise `cargo-warden` will warn
+   and rely on `CAP_SYS_ADMIN` for eBPF operations:
 
    ```ini
    [Service]

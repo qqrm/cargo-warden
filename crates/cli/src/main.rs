@@ -177,7 +177,7 @@ fn main() {
     if let Err(err) = privileges::enforce_least_privilege() {
         eprintln!("privilege check failed: {err}");
         eprintln!(
-            "Use a dedicated service user with only CAP_BPF and CAP_SYS_ADMIN (see README for setup instructions)."
+            "Use a dedicated service user with CAP_SYS_ADMIN and, when available, CAP_BPF (see README for setup instructions)."
         );
         exit(1);
     }
