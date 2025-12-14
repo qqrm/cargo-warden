@@ -150,6 +150,12 @@ impl<K: Copy + PartialEq, V: Copy, const CAPACITY: usize> HashMapDescriptor<K, V
     }
 }
 
+#[cfg(target_arch = "bpf")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __bpf_trap() -> ! {
+    loop {}
+}
+
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 struct RingBufDescriptor<const BYTE_SIZE: usize> {
     #[cfg(any(test, feature = "fuzzing"))]
