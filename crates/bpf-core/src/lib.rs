@@ -1063,7 +1063,7 @@ fn fs_entry_allows(entry: &bpf_api::FsRuleEntry, path: &CStr, needed: u8) -> boo
     path_prefix_matches(rule_path, path)
 }
 
-#[cfg(all(target_arch = "bpf"))]
+#[cfg(target_arch = "bpf")]
 #[inline(never)]
 fn unit_fs_allowed(unit: u32, path: &CStr, needed: u8) -> bool {
     let len = fs_rules_len();

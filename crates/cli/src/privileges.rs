@@ -131,7 +131,7 @@ pub(crate) fn enforce_least_privilege() -> Result<(), PrivilegeError> {
         return Ok(());
     }
 
-    if !detect_containerization()? {
+    if !detect_isolation()? {
         return Err(PrivilegeError::MissingContainerIsolation);
     }
 
@@ -164,12 +164,12 @@ fn validate_capabilities(effective_caps: u64) -> Result<(), PrivilegeError> {
     Ok(())
 }
 
-fn detect_containerization() -> Result<bool, PrivilegeError> {
-    let markers = ContainerMarkers::gather()?;
-    Ok(has_container_markers(&markers))
+fn detect_isolation() -> Result<bool, PrivilegeError> {
+    let markers = IsolationMarkers::gather()?;
+    Ok(has_container_markers(&markers) || has_vm_markers(&markers))
 }
 
-fn has_container_markers(markers: &ContainerMarkers) -> bool {
+fn has_container_markers(markers: &IsolationMarkers) -> bool {
     if markers.has_dockerenv || markers.has_containerenv {
         return true;
     }
@@ -189,6 +189,40 @@ fn has_container_markers(markers: &ContainerMarkers) -> bool {
             .iter()
             .any(|marker| line.contains(marker))
     })
+}
+
+fn has_vm_markers(markers: &IsolationMarkers) -> bool {
+    const PRODUCT_NAME_MARKERS: [&str; 5] =
+        ["virtual machine", "kvm", "qemu", "vmware", "virtualbox"];
+    const SYS_VENDOR_MARKERS: [&str; 5] = [
+        "microsoft corporation",
+        "kvm",
+        "qemu",
+        "vmware",
+        "oracle corporation",
+    ];
+
+    if let Some(name) = &markers.product_name {
+        let lower = name.to_ascii_lowercase();
+        if PRODUCT_NAME_MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker))
+        {
+            return true;
+        }
+    }
+
+    if let Some(vendor) = &markers.sys_vendor {
+        let lower = vendor.to_ascii_lowercase();
+        if SYS_VENDOR_MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker))
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn read_effective_capabilities() -> Result<u64, PrivilegeError> {
@@ -230,28 +264,49 @@ fn describe_capabilities(mask: u64) -> String {
 }
 
 #[derive(Default)]
-struct ContainerMarkers {
+struct IsolationMarkers {
     container_env: Option<String>,
     cgroup: String,
     has_dockerenv: bool,
     has_containerenv: bool,
+    product_name: Option<String>,
+    sys_vendor: Option<String>,
 }
 
-impl ContainerMarkers {
+impl IsolationMarkers {
     fn gather() -> Result<Self, PrivilegeError> {
         let container_env = std::env::var("container").ok();
         let cgroup = fs::read_to_string("/proc/1/cgroup")
             .or_else(|_| fs::read_to_string("/proc/self/cgroup"))?;
         let has_dockerenv = std::path::Path::new("/.dockerenv").exists();
         let has_containerenv = std::path::Path::new("/run/.containerenv").exists();
+        let product_name = read_sysfs_value(&[
+            "/sys/class/dmi/id/product_name",
+            "/sys/devices/virtual/dmi/id/product_name",
+        ]);
+        let sys_vendor = read_sysfs_value(&[
+            "/sys/class/dmi/id/sys_vendor",
+            "/sys/devices/virtual/dmi/id/sys_vendor",
+        ]);
 
-        Ok(ContainerMarkers {
+        Ok(IsolationMarkers {
             container_env,
             cgroup,
             has_dockerenv,
             has_containerenv,
+            product_name,
+            sys_vendor,
         })
     }
+}
+
+fn read_sysfs_value(paths: &[&str]) -> Option<String> {
+    paths.iter().find_map(|path| {
+        fs::read_to_string(path)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
 }
 
 #[cfg(test)]
@@ -292,7 +347,7 @@ mod tests {
 
     #[test]
     fn detects_container_by_cgroup_marker() {
-        let markers = ContainerMarkers {
+        let markers = IsolationMarkers {
             cgroup: String::from("0::/kubepods.slice"),
             ..Default::default()
         };
@@ -301,13 +356,13 @@ mod tests {
 
     #[test]
     fn detects_container_by_env_and_sentinels() {
-        let markers = ContainerMarkers {
+        let markers = IsolationMarkers {
             container_env: Some(String::from("podman")),
             ..Default::default()
         };
         assert!(has_container_markers(&markers));
 
-        let sentinel = ContainerMarkers {
+        let sentinel = IsolationMarkers {
             has_dockerenv: true,
             ..Default::default()
         };
@@ -316,7 +371,27 @@ mod tests {
 
     #[test]
     fn rejects_plain_host_markers() {
-        let markers = ContainerMarkers::default();
+        let markers = IsolationMarkers::default();
         assert!(!has_container_markers(&markers));
+    }
+
+    #[test]
+    fn detects_vm_by_product_name() {
+        let markers = IsolationMarkers {
+            product_name: Some(String::from("Virtual Machine")),
+            ..Default::default()
+        };
+
+        assert!(has_vm_markers(&markers));
+    }
+
+    #[test]
+    fn detects_vm_by_sys_vendor() {
+        let markers = IsolationMarkers {
+            sys_vendor: Some(String::from("Microsoft Corporation")),
+            ..Default::default()
+        };
+
+        assert!(has_vm_markers(&markers));
     }
 }
