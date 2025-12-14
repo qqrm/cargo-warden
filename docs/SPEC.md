@@ -87,7 +87,7 @@ The goal of cargo-warden is to provide Rust developers with a secure sandbox for
 **Compatibility**
 
 * Linux kernel ≥ 5.13, BPF LSM, cgroup v2.
-* Requires `CAP_BPF` and `CAP_SYS_ADMIN` to load eBPF programs.
+* Requires `CAP_SYS_ADMIN` to load eBPF programs; `CAP_BPF` is preferred when the kernel exposes it via `CapEff`.
 * Rust compiler MSRV: stable `1.91`. The workspace pins this toolchain via `rust-toolchain.toml`, and any upgrade requires proving `cargo +<new> check --workspace` succeeds, updating every crate's `rust-version`, and documenting the policy change.
 
 ## 6. High-Level Architecture

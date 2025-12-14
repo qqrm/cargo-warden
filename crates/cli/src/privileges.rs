@@ -46,7 +46,8 @@ const CAP_NAMES: [&str; 40] = [
     "CAP_BPF",
     "CAP_CHECKPOINT_RESTORE",
 ];
-const REQUIRED_CAP_MASK: u64 = (1u64 << CAP_SYS_ADMIN) | (1u64 << CAP_BPF);
+const REQUIRED_CAP_MASK: u64 = 1u64 << CAP_SYS_ADMIN;
+const ALLOWED_CAP_MASK: u64 = REQUIRED_CAP_MASK | (1u64 << CAP_BPF);
 const SKIP_ENV: &str = "CARGO_WARDEN_SKIP_PRIVILEGE_CHECK";
 const CONTAINER_ENV_MARKERS: [&str; 7] = [
     "docker",
@@ -82,7 +83,7 @@ impl fmt::Display for PrivilegeError {
         match self {
             PrivilegeError::RunningAsRoot => write!(
                 f,
-                "cargo-warden must run under a dedicated non-root user; drop to an account with only CAP_BPF and CAP_SYS_ADMIN"
+                "cargo-warden must run under a dedicated non-root user; drop to an account with CAP_SYS_ADMIN and optional CAP_BPF"
             ),
             PrivilegeError::MissingContainerIsolation => write!(
                 f,
@@ -96,7 +97,7 @@ impl fmt::Display for PrivilegeError {
             ),
             PrivilegeError::ExtraCapabilities { current, extra } => write!(
                 f,
-                "too many effective capabilities: {} (required: CAP_BPF, CAP_SYS_ADMIN; effective set: {})",
+                "too many effective capabilities: {} (allowed: CAP_SYS_ADMIN with optional CAP_BPF; effective set: {})",
                 describe_capabilities(*extra),
                 describe_capabilities(*current)
             ),
@@ -153,12 +154,18 @@ fn validate_capabilities(effective_caps: u64) -> Result<(), PrivilegeError> {
         });
     }
 
-    let extra = effective_caps & !REQUIRED_CAP_MASK;
+    let extra = effective_caps & !ALLOWED_CAP_MASK;
     if extra != 0 {
         return Err(PrivilegeError::ExtraCapabilities {
             current: effective_caps,
             extra,
         });
+    }
+
+    if effective_caps & (1u64 << CAP_BPF) == 0 {
+        eprintln!(
+            "warning: CAP_BPF is unavailable; falling back to CAP_SYS_ADMIN for eBPF operations"
+        );
     }
 
     Ok(())
@@ -333,8 +340,14 @@ mod tests {
     }
 
     #[test]
-    fn accepts_minimal_capabilities() {
+    fn accepts_full_capabilities() {
         let result = validate_capabilities((1u64 << CAP_BPF) | (1u64 << CAP_SYS_ADMIN));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn accepts_without_optional_capabilities() {
+        let result = validate_capabilities(1u64 << CAP_SYS_ADMIN);
         assert!(result.is_ok());
     }
 
