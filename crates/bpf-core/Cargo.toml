@@ -5,11 +5,10 @@ edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
 description = "eBPF enforcement programs for the cargo-warden sandbox."
-repository = "https://github.com/warden/cargo-warden"
-homepage = "https://github.com/warden/cargo-warden"
+repository = "https://github.com/qqrm/cargo-warden"
+homepage = "https://github.com/qqrm/cargo-warden"
 documentation = "https://docs.rs/warden-bpf-core"
 readme = "../../README.md"
-build = "build.rs"
 
 [lib]
 path = "src/lib.rs"
