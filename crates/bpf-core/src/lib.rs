@@ -1,3 +1,4 @@
+// PATCH_APPLIED_MARKER
 #![cfg_attr(target_arch = "bpf", no_std)]
 #![cfg_attr(target_arch = "bpf", allow(static_mut_refs))]
 #![cfg_attr(target_arch = "bpf", allow(unsafe_op_in_unsafe_fn))]
