@@ -39,6 +39,9 @@
 
           buildPhase = ''
             runHook preBuild
+            export HOME=$TMPDIR/home
+            export CARGO_HOME=$TMPDIR/cargo
+            mkdir -p $HOME $CARGO_HOME
             export CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER=${pkgs.bpf-linker}/bin/bpf-linker
             export CARGO_TARGET_DIR=$TMPDIR/target
             cargo run -p xtask --release -- bpf-prebuilt
