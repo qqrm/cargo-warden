@@ -51,7 +51,12 @@ fn build_prebuilt_artifacts() -> Result<()> {
         .context("failed to read cargo metadata")?;
 
     let workspace_root = PathBuf::from(metadata.workspace_root.clone());
-    let target_dir = workspace_root.join("target").join(TARGET).join("release");
+
+    let target_base = env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace_root.join("target"));
+
+    let target_dir = target_base.join(TARGET).join("release");
 
     run_build(&workspace_root)?;
 
