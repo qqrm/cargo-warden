@@ -18,18 +18,46 @@
         llvm = pkgs.llvmPackages_21;
 
         rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+
+        buildInputs = [
+          rust
+          llvm.clang
+          llvm.bintools
+          pkgs.pkg-config
+          pkgs.zlib
+          pkgs.bpf-linker
+          pkgs.libseccomp
+        ];
       in
       {
+        packages.bpf-prebuilt = pkgs.stdenv.mkDerivation {
+          pname = "warden-bpf-prebuilt";
+          version = "0.1.0";
+          src = ./.;
+
+          nativeBuildInputs = buildInputs;
+
+          buildPhase = ''
+            runHook preBuild
+            export CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER=${pkgs.bpf-linker}/bin/bpf-linker
+            export CARGO_TARGET_DIR=$TMPDIR/target
+            cargo run -p xtask --release -- bpf-prebuilt
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out
+            cp prebuilt.tar.gz $out/prebuilt.tar.gz
+            cp prebuilt/manifest.json $out/manifest.json
+            runHook postInstall
+          '';
+
+          doCheck = false;
+        };
+
         devShells.default = pkgs.mkShell {
-          packages = [
-            rust
-            llvm.clang
-            llvm.bintools
-            pkgs.pkg-config
-            pkgs.zlib
-            pkgs.bpf-linker
-            pkgs.libseccomp
-          ];
+          packages = buildInputs;
         };
       });
 }

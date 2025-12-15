@@ -28,24 +28,14 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      - name: Enable Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-            prebuilt
-
       - name: Build prebuilt objects
-        run: nix develop .#default --command bash -lc 'set -euo pipefail; cargo build -p warden-bpf-core --release --target bpfel-unknown-none -Z build-std=core'
-
-      - name: Archive artifacts
-        run: tar -czf prebuilt.tar.gz -C prebuilt .
+        run: nix build -L .#bpf-prebuilt
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: |
-            prebuilt.tar.gz
-            prebuilt/manifest.json
+            result/prebuilt.tar.gz
+            result/manifest.json
           retention-days: 7

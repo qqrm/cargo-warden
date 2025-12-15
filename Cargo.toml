@@ -18,6 +18,7 @@ members = [
     "examples/git-clone-https",
     "crates/event-reporting",
     "crates/policy-orchestrator",
+    "crates/xtask",
 ]
 resolver = "2"
 
