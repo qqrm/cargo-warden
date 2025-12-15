@@ -3,8 +3,11 @@ use std::fmt;
 use std::fs;
 
 const CAP_SYS_ADMIN: u8 = 21;
-const CAP_BPF: u8 = 38;
-const CAP_NAMES: [&str; 40] = [
+const CAP_PERFMON: u8 = 38;
+const CAP_BPF: u8 = 39;
+const CAP_CHECKPOINT_RESTORE: u8 = 40;
+
+const CAP_NAMES: [&str; 41] = [
     "CAP_CHOWN",
     "CAP_DAC_OVERRIDE",
     "CAP_DAC_READ_SEARCH",
@@ -43,9 +46,11 @@ const CAP_NAMES: [&str; 40] = [
     "CAP_WAKE_ALARM",
     "CAP_BLOCK_SUSPEND",
     "CAP_AUDIT_READ",
+    "CAP_PERFMON",
     "CAP_BPF",
     "CAP_CHECKPOINT_RESTORE",
 ];
+
 const REQUIRED_CAP_MASK: u64 = 1u64 << CAP_SYS_ADMIN;
 const ALLOWED_CAP_MASK: u64 = REQUIRED_CAP_MASK | (1u64 << CAP_BPF);
 const SKIP_ENV: &str = "CARGO_WARDEN_SKIP_PRIVILEGE_CHECK";
@@ -66,6 +71,7 @@ const CONTAINER_CGROUP_MARKERS: [&str; 6] = [
     "libpod",
     "lxc",
 ];
+
 
 #[derive(Debug)]
 pub(crate) enum PrivilegeError {
