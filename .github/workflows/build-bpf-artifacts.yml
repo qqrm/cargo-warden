@@ -36,7 +36,7 @@ jobs:
             prebuilt
 
       - name: Build prebuilt objects
-        run: nix develop .#default --command cargo build -p warden-bpf-core --release
+        run: nix develop .#default --command bash -lc 'set -euo pipefail; cargo build -p warden-bpf-core --release --target bpfel-unknown-none -Z build-std=core'
 
       - name: Archive artifacts
         run: tar -czf prebuilt.tar.gz -C prebuilt .
