@@ -432,5 +432,71 @@ jobs:
 * **Allowlist** – list of explicitly permitted entities.
 * **Workspace** – root of the Cargo project.
 
+## 21. Future Considerations: Root Execution and Research Modes
+
+### Motivation
+
+Some classes of malicious or policy-sensitive software exhibit different behavior when executed with elevated privileges. In particular, build scripts, helper binaries, or procedural macros may intentionally check whether they are running as `root` and only activate certain code paths in that case.
+
+To accurately study, reproduce, and analyze such behavior, it may be desirable to run `cargo-warden` in a controlled *root-execution research mode*, while still preserving the default security guarantees for normal users.
+
+### Design Principles
+
+Any future support for root execution MUST follow these principles:
+
+* **Root execution is never the default.**
+* **The standard `cargo warden run` workflow remains non-root only.**
+* **Root-capable execution is explicitly opt-in, noisy, and hard to enable accidentally.**
+* **Security boundaries must remain explicit and reviewable.**
+
+### Proposed Direction
+
+Rather than adding a simple `--allow-root` flag, future versions may introduce a **separate execution path** with clearly distinct semantics. Possible approaches include:
+
+#### 1. Dedicated Subcommand or Binary
+
+Introduce a separate command or binary for research and analysis purposes, for example:
+
+* `cargo warden probe-root`
+* `cargo warden research run`
+* `cargo-warden-root` (separate binary)
+
+This avoids silently weakening the security model of the primary workflow and makes root execution an explicit, intentional act.
+
+#### 2. Strong Guardrails
+
+If root execution is enabled in any form, it must require **multiple explicit confirmations**, such as:
+
+* A verbose command-line flag (for example, `--i-know-what-i-am-doing-running-as-root`)
+* A dedicated environment variable (for example, `CARGO_WARDEN_ALLOW_ROOT=1`)
+* Prominent warnings printed to stderr at startup
+
+These confirmations are designed to prevent accidental use in aliases, scripts, or CI pipelines.
+
+#### 3. Restricted Capabilities Even Under Root
+
+Even when executed as `root`, the tool should:
+
+* Drop all unnecessary capabilities
+* Retain only `CAP_SYS_ADMIN` and, where available, `CAP_BPF`
+* Refuse to run if additional effective capabilities are present
+
+This preserves the principle of least privilege and reduces the blast radius of mistakes.
+
+#### 4. Mode Restrictions
+
+By default, root execution should be limited to `observe` mode. Enabling `enforce` mode under root may require an additional explicit confirmation or may remain unsupported entirely.
+
+### Rationale
+
+Separating root execution into a distinct, research-oriented mode provides the following benefits:
+
+* Allows accurate analysis of software that behaves differently under elevated privileges
+* Avoids weakening the default threat model
+* Makes dangerous operations auditable and intentional
+* Preserves trust in `cargo-warden` as a safe-by-default security tool
+
+This functionality is intentionally deferred beyond v0.1 and will be revisited once the core enforcement pipeline, CI integration, and policy model have matured.
+
 _End of v0.1 specification._
 
