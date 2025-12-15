@@ -16,29 +16,26 @@ jobs:
   build:
     name: Build BPF artifacts
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
       - name: Build prebuilt objects
-        run: ./scripts/build-bpf.sh
-
-      - name: Archive artifacts
-        run: |
-          tar -czf prebuilt.tar.gz -C prebuilt .
+        run: nix build -L .#bpf-prebuilt
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: |
-            prebuilt.tar.gz
-            prebuilt/manifest.json
+            result/prebuilt.tar.gz
+            result/manifest.json
           retention-days: 7
