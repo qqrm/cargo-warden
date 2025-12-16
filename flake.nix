@@ -30,6 +30,8 @@
         ];
       in
       {
+        formatter = pkgs.nixfmt-rfc-style;
+
         packages.bpf-prebuilt = pkgs.stdenv.mkDerivation {
           pname = "warden-bpf-prebuilt";
           version = "0.1.0";
@@ -60,7 +62,12 @@
         };
 
         devShells.default = pkgs.mkShell {
-          packages = buildInputs;
+          packages = buildInputs ++  [ 
+            pkgs.fish
+            pkgs.nixfmt-rfc-style
+            pkgs.nil
+          ];
         };
-      });
+      }
+    );
 }
