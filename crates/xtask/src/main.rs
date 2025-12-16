@@ -44,6 +44,34 @@ struct ManifestArtifact {
     sha256: String,
 }
 
+fn workspace_root() -> Result<std::path::PathBuf> {
+    use anyhow::{anyhow, Context, Result};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn is_workspace_root(dir: &Path) -> Result<bool> {
+        let toml = dir.join("Cargo.toml");
+        if !toml.is_file() {
+            return Ok(false);
+        }
+        let contents = fs::read_to_string(&toml)
+            .with_context(|| format!("failed to read {}", toml.display()))?;
+        Ok(contents.contains("[workspace]"))
+    }
+
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    loop {
+        if is_workspace_root(&dir)? {
+            return Ok(dir);
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+
+    Err(anyhow!("failed to locate workspace root from CARGO_MANIFEST_DIR"))
+}
+
 fn build_prebuilt_artifacts() -> Result<()> {
     let workspace_root = workspace_root()?;
     let prebuilt_dir = workspace_root.join("prebuilt");
