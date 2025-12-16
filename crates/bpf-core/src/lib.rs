@@ -557,14 +557,14 @@ define_map_accessors!(
     bpf_api::NET_PARENTS_CAPACITY
 );
 
-// define_map_accessors!(
-//     load_fs_rule,
-//     fs_rules_len,
-//     FS_RULES,
-//     FS_RULES_LENGTH,
-//     bpf_api::FsRuleEntry,
-//     bpf_api::FS_RULES_CAPACITY
-// );
+define_map_accessors!(
+    load_fs_rule,
+    fs_rules_len,
+    FS_RULES,
+    FS_RULES_LENGTH,
+    bpf_api::FsRuleEntry,
+    bpf_api::FS_RULES_CAPACITY
+);
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn path_matches(a: &[u8; 256], b: &[u8; 256]) -> bool {
