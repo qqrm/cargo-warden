@@ -34,8 +34,8 @@ const _EVENT_SIZE: usize = size_of::<Event>();
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const EPERM: i32 = 1;
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-const ACTION_OPEN: u8 = 0;
+// #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+// const ACTION_OPEN: u8 = 0;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const ACTION_RENAME: u8 = 1;
@@ -530,14 +530,14 @@ macro_rules! define_map_accessors {
     };
 }
 
-define_map_accessors!(
-    load_exec_allow_entry,
-    exec_allowlist_len,
-    EXEC_ALLOWLIST,
-    EXEC_ALLOWLIST_LENGTH,
-    bpf_api::ExecAllowEntry,
-    bpf_api::EXEC_ALLOWLIST_CAPACITY
-);
+// define_map_accessors!(
+//     load_exec_allow_entry,
+//     exec_allowlist_len,
+//     EXEC_ALLOWLIST,
+//     EXEC_ALLOWLIST_LENGTH,
+//     bpf_api::ExecAllowEntry,
+//     bpf_api::EXEC_ALLOWLIST_CAPACITY
+// );
 
 define_map_accessors!(
     load_net_rule,
@@ -557,14 +557,14 @@ define_map_accessors!(
     bpf_api::NET_PARENTS_CAPACITY
 );
 
-define_map_accessors!(
-    load_fs_rule,
-    fs_rules_len,
-    FS_RULES,
-    FS_RULES_LENGTH,
-    bpf_api::FsRuleEntry,
-    bpf_api::FS_RULES_CAPACITY
-);
+// define_map_accessors!(
+//     load_fs_rule,
+//     fs_rules_len,
+//     FS_RULES,
+//     FS_RULES_LENGTH,
+//     bpf_api::FsRuleEntry,
+//     bpf_api::FS_RULES_CAPACITY
+// );
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn path_matches(a: &[u8; 256], b: &[u8; 256]) -> bool {
@@ -1166,16 +1166,16 @@ fn access_from_mask(mask: i32) -> u8 {
     access
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-#[inline(never)]
-fn read_user_path(path_ptr: *const u8) -> Option<[u8; 256]> {
-    if path_ptr.is_null() {
-        return None;
-    }
-    let mut buf = [0u8; 256];
-    let res = unsafe { bpf_probe_read_user_str(buf.as_mut_ptr(), buf.len() as u32, path_ptr) };
-    if res < 0 { None } else { Some(buf) }
-}
+// #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+// #[inline(never)]
+// fn read_user_path(path_ptr: *const u8) -> Option<[u8; 256]> {
+//     if path_ptr.is_null() {
+//         return None;
+//     }
+//     let mut buf = [0u8; 256];
+//     let res = unsafe { bpf_probe_read_user_str(buf.as_mut_ptr(), buf.len() as u32, path_ptr) };
+//     if res < 0 { None } else { Some(buf) }
+// }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 fn read_user_path_into(path_ptr: *const u8, buf: &mut [u8; 256]) -> bool {

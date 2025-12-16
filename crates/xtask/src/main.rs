@@ -177,33 +177,33 @@ fn build_prebuilt_artifacts() -> Result<()> {
     Ok(())
 }
 
-fn run_build(workspace_root: &Path) -> Result<()> {
-    let status = Command::new("cargo")
-        .current_dir(workspace_root)
-        .args([
-            "build",
-            "-p",
-            PACKAGE_NAME,
-            "--release",
-            "--target",
-            TARGET,
-            "-Z",
-            "build-std=core,compiler_builtins",
-        ])
-        .env(
-            "CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER",
-            env::var("CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER")
-                .unwrap_or_else(|_| "bpf-linker".into()),
-        )
-        .status()
-        .context("failed to invoke cargo build")?;
+// fn run_build(workspace_root: &Path) -> Result<()> {
+//     let status = Command::new("cargo")
+//         .current_dir(workspace_root)
+//         .args([
+//             "build",
+//             "-p",
+//             PACKAGE_NAME,
+//             "--release",
+//             "--target",
+//             TARGET,
+//             "-Z",
+//             "build-std=core,compiler_builtins",
+//         ])
+//         .env(
+//             "CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER",
+//             env::var("CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER")
+//                 .unwrap_or_else(|_| "bpf-linker".into()),
+//         )
+//         .status()
+//         .context("failed to invoke cargo build")?;
 
-    if !status.success() {
-        return Err(anyhow!("cargo build for {PACKAGE_NAME} failed"));
-    }
+//     if !status.success() {
+//         return Err(anyhow!("cargo build for {PACKAGE_NAME} failed"));
+//     }
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 fn locate_artifact(target_dir: &Path) -> Result<PathBuf> {
     let preferred = target_dir.join(OBJECT_NAME);
