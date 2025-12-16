@@ -45,86 +45,103 @@ struct ManifestArtifact {
 }
 
 fn build_prebuilt_artifacts() -> Result<()> {
-    let metadata = MetadataCommand::new()
-        .no_deps()
-        .exec()
-        .context("failed to read cargo metadata")?;
-
-    let workspace_root = PathBuf::from(metadata.workspace_root.clone());
-
-    let target_base = env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root.join("target"));
-
-    let target_dir = target_base.join(TARGET).join("release");
-
-    run_build(&workspace_root)?;
-
-    let artifact = locate_artifact(&target_dir).with_context(|| {
-        format!(
-            "unable to locate compiled object for target {}; expected {}",
-            TARGET,
-            target_dir.join(OBJECT_NAME).display()
-        )
-    })?;
-
+    let workspace_root = workspace_root()?;
     let prebuilt_dir = workspace_root.join("prebuilt");
     if prebuilt_dir.exists() {
         fs::remove_dir_all(&prebuilt_dir)
             .with_context(|| format!("failed to clear {}", prebuilt_dir.display()))?;
     }
+    fs::create_dir_all(&prebuilt_dir)
+        .with_context(|| format!("failed to create {}", prebuilt_dir.display()))?;
 
-    let arch = env::consts::ARCH;
+    // Disable basic block sections to avoid `.text.unlikely.*` sections in the BPF object.
+    let mut rustflags = env::var("RUSTFLAGS").unwrap_or_default();
+    if !rustflags.is_empty() {
+        rustflags.push(' ');
+    }
+    rustflags.push_str("-C llvm-args=-basic-block-sections=none");
+
+    let status = Command::new("cargo")
+        .current_dir(&workspace_root)
+        .args([
+            "build",
+            "-p",
+            PACKAGE_NAME,
+            "--release",
+            "--target",
+            TARGET,
+            "-Z",
+            "build-std=core,compiler_builtins",
+        ])
+        .env("RUSTFLAGS", rustflags)
+        .env(
+            "CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER",
+            env::var("CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER")
+                .unwrap_or_else(|_| "bpf-linker".into()),
+        )
+        .status()
+        .context("failed to invoke cargo build")?;
+
+    if !status.success() {
+        return Err(anyhow!("cargo build for {PACKAGE_NAME} failed"));
+    }
+
+    let target_dir = workspace_root.join("target").join(TARGET).join("release");
+    let built_object = locate_artifact(&target_dir)?;
+
+    let arch = match env::consts::ARCH {
+        "x86_64" => "x86_64",
+        "aarch64" => "aarch64",
+        other => other,
+    };
+
     let dest_rel_path = PathBuf::from(arch).join(OBJECT_NAME);
     let dest_path = prebuilt_dir.join(&dest_rel_path);
-    fs::create_dir_all(
-        dest_path
-            .parent()
-            .ok_or_else(|| anyhow!("missing parent for {}", dest_path.display()))?,
-    )?;
-    fs::copy(&artifact, &dest_path).with_context(|| {
+    fs::create_dir_all(dest_path.parent().unwrap())
+        .with_context(|| format!("failed to create {}", dest_path.parent().unwrap().display()))?;
+
+    fs::copy(&built_object, &dest_path).with_context(|| {
         format!(
             "failed to copy {} to {}",
-            artifact.display(),
+            built_object.display(),
             dest_path.display()
         )
     })?;
 
-    let checksum = sha256_file(&dest_path)?;
-    let manifest_path = prebuilt_dir.join("manifest.json");
+    let metadata = MetadataCommand::new()
+        .current_dir(&workspace_root)
+        .exec()
+        .context("failed to query cargo metadata")?;
+    let version = resolve_package_version(&metadata, PACKAGE_NAME)?;
+
+    let sha256 = sha256_file(&dest_path)?;
     let manifest = Manifest {
         package: PACKAGE_NAME.to_string(),
-        version: resolve_package_version(&metadata, PACKAGE_NAME)?,
+        version,
         kernel_min: None,
         generated_at: None,
         target: Some(TARGET.to_string()),
         artifacts: vec![ManifestArtifact {
             architecture: arch.to_string(),
             file: dest_rel_path.clone(),
-            sha256: checksum,
+            sha256,
         }],
     };
 
-    let manifest_json = serde_json::to_string_pretty(&manifest)?;
+    let manifest_path = prebuilt_dir.join("manifest.json");
+    let manifest_json =
+        serde_json::to_vec_pretty(&manifest).context("failed to serialize manifest")?;
     fs::write(&manifest_path, manifest_json).context("failed to write prebuilt manifest.json")?;
 
     let tarball_path = workspace_root.join("prebuilt.tar.gz");
-    if tarball_path.exists() {
-        fs::remove_file(&tarball_path).ok();
-    }
-
-    create_tarball(
-        &prebuilt_dir,
-        &tarball_path,
-        [&manifest_path as &Path, &dest_path as &Path],
-    )?;
+    create_tarball(&prebuilt_dir, &tarball_path, [&manifest_path, &dest_path])
+        .context("failed to build prebuilt.tar.gz")?;
 
     println!(
         "BPF artifacts ready: {} and {}",
         tarball_path.display(),
         manifest_path.display()
     );
-
     Ok(())
 }
 
