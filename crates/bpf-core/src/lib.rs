@@ -34,8 +34,8 @@ const _EVENT_SIZE: usize = size_of::<Event>();
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const EPERM: i32 = 1;
 
-// #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-// const ACTION_OPEN: u8 = 0;
+#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+const ACTION_OPEN: u8 = 0;
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 const ACTION_RENAME: u8 = 1;
@@ -530,14 +530,14 @@ macro_rules! define_map_accessors {
     };
 }
 
-// define_map_accessors!(
-//     load_exec_allow_entry,
-//     exec_allowlist_len,
-//     EXEC_ALLOWLIST,
-//     EXEC_ALLOWLIST_LENGTH,
-//     bpf_api::ExecAllowEntry,
-//     bpf_api::EXEC_ALLOWLIST_CAPACITY
-// );
+define_map_accessors!(
+    load_exec_allow_entry,
+    exec_allowlist_len,
+    EXEC_ALLOWLIST,
+    EXEC_ALLOWLIST_LENGTH,
+    bpf_api::ExecAllowEntry,
+    bpf_api::EXEC_ALLOWLIST_CAPACITY
+);
 
 define_map_accessors!(
     load_net_rule,
