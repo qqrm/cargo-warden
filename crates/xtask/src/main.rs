@@ -162,8 +162,12 @@ fn build_prebuilt_artifacts() -> Result<()> {
     fs::write(&manifest_path, manifest_json).context("failed to write prebuilt manifest.json")?;
 
     let tarball_path = workspace_root.join("prebuilt.tar.gz");
-    create_tarball(&prebuilt_dir, &tarball_path, [&manifest_path, &dest_path])
-        .context("failed to build prebuilt.tar.gz")?;
+    create_tarball(
+        &prebuilt_dir,
+        &tarball_path,
+        [manifest_path.as_path(), dest_path.as_path()],
+    )
+    .context("failed to build prebuilt.tar.gz")?;
 
     println!(
         "BPF artifacts ready: {} and {}",
