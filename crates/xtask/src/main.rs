@@ -45,7 +45,7 @@ struct ManifestArtifact {
 }
 
 fn workspace_root() -> Result<std::path::PathBuf> {
-    use anyhow::{anyhow, Context, Result};
+    use anyhow::{Context, Result, anyhow};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -69,7 +69,9 @@ fn workspace_root() -> Result<std::path::PathBuf> {
         }
     }
 
-    Err(anyhow!("failed to locate workspace root from CARGO_MANIFEST_DIR"))
+    Err(anyhow!(
+        "failed to locate workspace root from CARGO_MANIFEST_DIR"
+    ))
 }
 
 fn build_prebuilt_artifacts() -> Result<()> {
@@ -117,11 +119,7 @@ fn build_prebuilt_artifacts() -> Result<()> {
     let target_dir = workspace_root.join("target").join(TARGET).join("release");
     let built_object = locate_artifact(&target_dir)?;
 
-    let arch = match env::consts::ARCH {
-        "x86_64" => "x86_64",
-        "aarch64" => "aarch64",
-        other => other,
-    };
+    let arch = env::consts::ARCH;
 
     let dest_rel_path = PathBuf::from(arch).join(OBJECT_NAME);
     let dest_path = prebuilt_dir.join(&dest_rel_path);
@@ -174,34 +172,6 @@ fn build_prebuilt_artifacts() -> Result<()> {
         tarball_path.display(),
         manifest_path.display()
     );
-    Ok(())
-}
-
-fn run_build(workspace_root: &Path) -> Result<()> {
-    let status = Command::new("cargo")
-        .current_dir(workspace_root)
-        .args([
-            "build",
-            "-p",
-            PACKAGE_NAME,
-            "--release",
-            "--target",
-            TARGET,
-            "-Z",
-            "build-std=core,compiler_builtins",
-        ])
-        .env(
-            "CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER",
-            env::var("CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER")
-                .unwrap_or_else(|_| "bpf-linker".into()),
-        )
-        .status()
-        .context("failed to invoke cargo build")?;
-
-    if !status.success() {
-        return Err(anyhow!("cargo build for {PACKAGE_NAME} failed"));
-    }
-
     Ok(())
 }
 

@@ -993,7 +993,7 @@ fn connect4_respects_rules() {
             _ => 0,
         },
         user_ip6: [0; 4],
-        user_port: 80u16.to_be(),
+        user_port: u32::from(80u16.to_be()),
         family: 2,
         protocol: 6,
     };
@@ -1003,7 +1003,7 @@ fn connect4_respects_rules() {
             _ => 0,
         },
         user_ip6: [0; 4],
-        user_port: 80u16.to_be(),
+        user_port: u32::from(80u16.to_be()),
         family: 2,
         protocol: 6,
     };
@@ -1030,7 +1030,7 @@ fn connect4_observe_mode_allows_denied_requests() {
     let denied = SockAddr {
         user_ip4: u32::from_be_bytes([203, 0, 113, 2]),
         user_ip6: [0; 4],
-        user_port: 8080u16.to_be(),
+        user_port: u32::from(8080u16.to_be()),
         family: 2,
         protocol: 6,
     };
@@ -1069,14 +1069,14 @@ fn connect6_respects_rules() {
     let allowed = SockAddr {
         user_ip4: 0,
         user_ip6: ip6_words,
-        user_port: 80u16.to_be(),
+        user_port: u32::from(80u16.to_be()),
         family: 10,
         protocol: 6,
     };
     let other = SockAddr {
         user_ip4: 0,
         user_ip6: ipv6_words(denied),
-        user_port: 80u16.to_be(),
+        user_port: u32::from(80u16.to_be()),
         family: 10,
         protocol: 6,
     };
@@ -1104,7 +1104,7 @@ fn connect6_observe_mode_allows_denied_requests() {
     let denied = SockAddr {
         user_ip4: 0,
         user_ip6: ipv6_words(denied_addr),
-        user_port: 8080u16.to_be(),
+        user_port: u32::from(8080u16.to_be()),
         family: 10,
         protocol: 6,
     };

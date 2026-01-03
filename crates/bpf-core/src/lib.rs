@@ -13,8 +13,9 @@ use crate::host_shims::{
 use aya_bpf::{
     cty::{c_char, c_long},
     helpers::bpf_probe_read_kernel,
-    macros::map,
+    macros::{cgroup_sock_addr, map, tracepoint},
     maps::{Array, HashMap, RingBuf},
+    programs::{SockAddrContext, TracePointContext},
 };
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
 use bpf_api::{self, Event};
@@ -898,34 +899,49 @@ fn classify_and_record_exec(ctx: &SysEnterExecveArgs) {
 }
 
 #[cfg(target_arch = "bpf")]
-#[unsafe(no_mangle)]
-#[unsafe(link_section = "tracepoint/syscalls/sys_enter_execve")]
-pub extern "C" fn sys_enter_execve(ctx: *mut c_void) -> i32 {
-    let args = unsafe { &*(ctx as *const SysEnterExecveArgs) };
-    classify_and_record_exec(args);
+#[tracepoint(name = "sys_enter_execve", category = "syscalls")]
+pub fn sys_enter_execve(ctx: TracePointContext) -> u32 {
+    let _ = unsafe { try_sys_enter_execve(ctx) };
     0
 }
 
 #[cfg(target_arch = "bpf")]
-#[unsafe(no_mangle)]
-#[unsafe(link_section = "tracepoint/sched/sched_process_fork")]
-pub extern "C" fn sched_process_fork(ctx: *mut c_void) -> i32 {
-    let args = unsafe { &*(ctx as *const SchedProcessForkArgs) };
+unsafe fn try_sys_enter_execve(ctx: TracePointContext) -> Result<(), i64> {
+    let args: SysEnterExecveArgs = ctx.read_at(0)?;
+    classify_and_record_exec(&args);
+    Ok(())
+}
+
+#[cfg(target_arch = "bpf")]
+#[tracepoint(name = "sched_process_fork", category = "sched")]
+pub fn sched_process_fork(ctx: TracePointContext) -> u32 {
+    let _ = unsafe { try_sched_process_fork(ctx) };
+    0
+}
+
+#[cfg(target_arch = "bpf")]
+unsafe fn try_sched_process_fork(ctx: TracePointContext) -> Result<(), i64> {
+    let args: SchedProcessForkArgs = ctx.read_at(0)?;
     let parent = args.parent_tgid as u32;
     let child = args.child_tgid as u32;
     let unit = workload_unit_for_pid(parent);
     set_workload_unit(child, unit);
+    Ok(())
+}
+
+#[cfg(target_arch = "bpf")]
+#[tracepoint(name = "sched_process_exit", category = "sched")]
+pub fn sched_process_exit(ctx: TracePointContext) -> u32 {
+    let _ = unsafe { try_sched_process_exit(ctx) };
     0
 }
 
 #[cfg(target_arch = "bpf")]
-#[unsafe(no_mangle)]
-#[unsafe(link_section = "tracepoint/sched/sched_process_exit")]
-pub extern "C" fn sched_process_exit(ctx: *mut c_void) -> i32 {
-    let args = unsafe { &*(ctx as *const SchedProcessExitArgs) };
+unsafe fn try_sched_process_exit(ctx: TracePointContext) -> Result<(), i64> {
+    let args: SchedProcessExitArgs = ctx.read_at(0)?;
     let pid = args.pid as u32;
     remove_workload_unit(pid);
-    0
+    Ok(())
 }
 
 #[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
@@ -1355,22 +1371,22 @@ fn publish_event(event: &Event) {
     }
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[cfg(any(test, feature = "fuzzing"))]
 #[repr(C)]
 struct SockAddr {
     user_ip4: u32,
     user_ip6: [u32; 4],
-    user_port: u16,
-    family: u16,
+    user_port: u32,
+    family: u32,
     protocol: u32,
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn check4(ctx: *mut c_void) -> i32 {
-    let ctx = unsafe { &*(ctx as *const SockAddr) };
+#[cfg(target_arch = "bpf")]
+fn check4(ctx: SockAddrContext) -> i32 {
+    let ctx = unsafe { &*ctx.sock_addr };
     let mut addr = [0u8; 16];
     addr[..4].copy_from_slice(&ctx.user_ip4.to_be_bytes());
-    let port = u16::from_be(ctx.user_port);
+    let port = u16::from_be(ctx.user_port as u16);
     let proto = ctx.protocol as u8;
     if net_allowed(&addr, port, proto) {
         0
@@ -1379,14 +1395,44 @@ fn check4(ctx: *mut c_void) -> i32 {
     }
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[cfg(any(test, feature = "fuzzing"))]
+fn check4(ctx: *mut c_void) -> i32 {
+    let ctx = unsafe { &*(ctx as *const SockAddr) };
+    let mut addr = [0u8; 16];
+    addr[..4].copy_from_slice(&ctx.user_ip4.to_be_bytes());
+    let port = u16::from_be(ctx.user_port as u16);
+    let proto = ctx.protocol as u8;
+    if net_allowed(&addr, port, proto) {
+        0
+    } else {
+        deny_with_mode()
+    }
+}
+
+#[cfg(target_arch = "bpf")]
+fn check6(ctx: SockAddrContext) -> i32 {
+    let ctx = unsafe { &*ctx.sock_addr };
+    let mut addr = [0u8; 16];
+    for (i, part) in ctx.user_ip6.iter().enumerate() {
+        addr[i * 4..(i + 1) * 4].copy_from_slice(&part.to_be_bytes());
+    }
+    let port = u16::from_be(ctx.user_port as u16);
+    let proto = ctx.protocol as u8;
+    if net_allowed(&addr, port, proto) {
+        0
+    } else {
+        deny_with_mode()
+    }
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
 fn check6(ctx: *mut c_void) -> i32 {
     let ctx = unsafe { &*(ctx as *const SockAddr) };
     let mut addr = [0u8; 16];
     for (i, part) in ctx.user_ip6.iter().enumerate() {
         addr[i * 4..(i + 1) * 4].copy_from_slice(&part.to_be_bytes());
     }
-    let port = u16::from_be(ctx.user_port);
+    let port = u16::from_be(ctx.user_port as u16);
     let proto = ctx.protocol as u8;
     if net_allowed(&addr, port, proto) {
         0
@@ -1454,28 +1500,52 @@ pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
     deny_with_mode()
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[cfg(target_arch = "bpf")]
+#[cgroup_sock_addr(connect4)]
+pub fn connect4(ctx: SockAddrContext) -> i32 {
+    check4(ctx)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "cgroup/connect4")]
 pub extern "C" fn connect4(ctx: *mut c_void) -> i32 {
     check4(ctx)
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[cfg(target_arch = "bpf")]
+#[cgroup_sock_addr(connect6)]
+pub fn connect6(ctx: SockAddrContext) -> i32 {
+    check6(ctx)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "cgroup/connect6")]
 pub extern "C" fn connect6(ctx: *mut c_void) -> i32 {
     check6(ctx)
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[cfg(target_arch = "bpf")]
+#[cgroup_sock_addr(sendmsg4)]
+pub fn sendmsg4(ctx: SockAddrContext) -> i32 {
+    check4(ctx)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "cgroup/sendmsg4")]
 pub extern "C" fn sendmsg4(ctx: *mut c_void) -> i32 {
     check4(ctx)
 }
 
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
+#[cfg(target_arch = "bpf")]
+#[cgroup_sock_addr(sendmsg6)]
+pub fn sendmsg6(ctx: SockAddrContext) -> i32 {
+    check6(ctx)
+}
+
+#[cfg(any(test, feature = "fuzzing"))]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "cgroup/sendmsg6")]
 pub extern "C" fn sendmsg6(ctx: *mut c_void) -> i32 {
