@@ -3,9 +3,7 @@ use std::fmt;
 use std::fs;
 
 const CAP_SYS_ADMIN: u8 = 21;
-const CAP_PERFMON: u8 = 38;
 const CAP_BPF: u8 = 39;
-const CAP_CHECKPOINT_RESTORE: u8 = 40;
 
 const CAP_NAMES: [&str; 41] = [
     "CAP_CHOWN",
@@ -71,7 +69,6 @@ const CONTAINER_CGROUP_MARKERS: [&str; 6] = [
     "libpod",
     "lxc",
 ];
-
 
 #[derive(Debug)]
 pub(crate) enum PrivilegeError {
