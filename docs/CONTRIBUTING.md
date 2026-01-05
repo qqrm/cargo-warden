@@ -4,11 +4,9 @@ Thank you for helping us harden cargo-warden. This document explains how to set 
 
 ## Getting Started
 
-1. Install the required toolchain and repository tooling by running:
-
-```bash
-./scripts/repo-setup.sh
-```
+1. Install the required toolchain and system dependencies. Follow
+   `docs/INSTALLATION.md` for package lists, or use the root `Dockerfile` as a
+   reference environment.
 
 2. Configure GitHub CLI access so you can inspect workflows and automation:
 
