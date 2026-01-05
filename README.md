@@ -56,15 +56,9 @@ logs.
 
 ### Building from source
 
-Run the repository bootstrap script before compiling the workspace to install
-the system dependencies (including `libseccomp-dev`) and configure Git remotes:
-
-```bash
-./scripts/repo-setup.sh
-```
-
-The installation guide in `docs/INSTALLATION.md` lists the full dependency set
-if you need to provision packages manually.
+Install the required system dependencies before compiling the workspace. The
+installation guide in `docs/INSTALLATION.md` lists the full dependency set, and
+the root `Dockerfile` shows a working reference environment.
 
 ## Setup Requirements
 
