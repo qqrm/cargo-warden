@@ -71,6 +71,9 @@ wrkflw validate
 wrkflw run .github/workflows/ci.yml
 ```
 
+Rust toolchain updates are handled by Dependabot (`rust-toolchain`), and
+Dependabot PRs are set to auto-merge once required checks pass.
+
 Refer to recent workflow history with:
 
 ```bash

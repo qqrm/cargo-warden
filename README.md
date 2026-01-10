@@ -365,6 +365,9 @@ the prerequisites first:
   ```
 - Nightly toolchain with the `rustfmt`, `clippy`, `rust-src`, and `llvm-tools-preview` components.
 
+Rust toolchain updates are managed via Dependabot (`rust-toolchain`), and
+Dependabot PRs are configured for auto-merge once required checks pass.
+
 Then execute the CI-equivalent commands from the repository root:
 
 ```bash
