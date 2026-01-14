@@ -86,7 +86,7 @@ impl fmt::Display for PrivilegeError {
         match self {
             PrivilegeError::RunningAsRoot => write!(
                 f,
-                "cargo-warden must run under a dedicated non-root user; drop to an account with CAP_SYS_ADMIN and optional CAP_BPF"
+                "cargo-warden must run under a dedicated non-root user; running under sudo/root is rejected. Drop to an account with CAP_SYS_ADMIN and optional CAP_BPF (see README for setup guidance)."
             ),
             PrivilegeError::MissingContainerIsolation => write!(
                 f,

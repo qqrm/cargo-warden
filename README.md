@@ -7,6 +7,22 @@ filesystem access, process launches, and outbound network traffic. The CLI wraps
 `cargo` commands, enforces declarative policies, and emits actionable event
 logs.
 
+## Two build contexts (cargo-warden vs. target project)
+
+There are two distinct contexts:
+
+- **Building cargo-warden itself** (this repository). This is a normal Rust
+  workspace build and does **not** activate the sandbox unless you explicitly
+  run `cargo warden <command>`.
+- **Using cargo-warden to build another Rust project**. This is the main use
+  case: run `cargo warden build` (or `cargo warden run -- <command>`) from
+  the target project's workspace to enforce or observe policy on its build
+  scripts, proc macros, and build-time tooling.
+
+If your goal is to guard an untrusted project, ensure you are invoking
+`cargo-warden` as the wrapper around that project's build, not just compiling
+the cargo-warden binaries themselves.
+
 ## Documentation
 
 - [Installation Guide](docs/INSTALLATION.md)
