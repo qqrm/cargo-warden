@@ -4,17 +4,130 @@
 #![cfg_attr(target_arch = "bpf", allow(unsafe_op_in_unsafe_fn))]
 #![cfg_attr(not(target_arch = "bpf"), allow(dead_code))]
 
-
 #[cfg(target_arch = "bpf")]
 use aya_bpf::{
     cty::{c_char, c_long},
     helpers::bpf_probe_read_kernel,
-    macros::{cgroup_sock_addr, map, tracepoint},
+    helpers::{bpf_get_current_pid_tgid, bpf_probe_read_user, bpf_probe_read_user_str_bytes},
+    macros::map,
     maps::{Array, HashMap, RingBuf},
-    programs::{SockAddrContext, TracePointContext},
 };
 
+#[cfg(target_arch = "bpf")]
+use bpf_api;
 
+#[cfg(target_arch = "bpf")]
+use core::ffi::{CStr, c_void};
+
+#[cfg(target_arch = "bpf")]
+use core::marker::PhantomData;
+
+#[cfg(target_arch = "bpf")]
+const MAX_CAPTURED_ARGS: usize = 4;
+
+#[cfg(target_arch = "bpf")]
+const MAX_ARG_LENGTH: usize = 48;
+
+#[cfg(target_arch = "bpf")]
+struct ArrayDescriptor<T, const CAPACITY: usize> {
+    _marker: PhantomData<T>,
+}
+
+#[cfg(target_arch = "bpf")]
+impl<T: Copy, const CAPACITY: usize> ArrayDescriptor<T, CAPACITY> {
+    const fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+
+    const fn bpf_map(&self) -> Array<T> {
+        Array::with_max_entries(CAPACITY as u32, 0)
+    }
+}
+
+#[cfg(target_arch = "bpf")]
+struct HashMapDescriptor<K, V, const CAPACITY: usize> {
+    _marker: PhantomData<(K, V)>,
+}
+
+#[cfg(target_arch = "bpf")]
+impl<K: Copy + PartialEq, V: Copy, const CAPACITY: usize> HashMapDescriptor<K, V, CAPACITY> {
+    const fn new() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+
+    const fn bpf_map(&self) -> HashMap<K, V> {
+        HashMap::with_max_entries(CAPACITY as u32, 0)
+    }
+}
+
+#[cfg(target_arch = "bpf")]
+struct RingBufDescriptor<const BYTE_SIZE: usize>;
+
+#[cfg(target_arch = "bpf")]
+impl<const BYTE_SIZE: usize> RingBufDescriptor<BYTE_SIZE> {
+    const fn new() -> Self {
+        Self
+    }
+
+    const fn bpf_map(&self) -> RingBuf {
+        RingBuf::with_byte_size(BYTE_SIZE as u32, 0)
+    }
+}
+
+#[cfg(target_arch = "bpf")]
+const EXEC_ALLOWLIST_DESCRIPTOR: ArrayDescriptor<
+    bpf_api::ExecAllowEntry,
+    { bpf_api::EXEC_ALLOWLIST_CAPACITY as usize },
+> = ArrayDescriptor::new();
+
+#[cfg(target_arch = "bpf")]
+const EXEC_ALLOWLIST_LENGTH_DESCRIPTOR: ArrayDescriptor<u32, 1> = ArrayDescriptor::new();
+
+#[cfg(target_arch = "bpf")]
+const NET_RULES_DESCRIPTOR: ArrayDescriptor<
+    bpf_api::NetRuleEntry,
+    { bpf_api::NET_RULES_CAPACITY as usize },
+> = ArrayDescriptor::new();
+
+#[cfg(target_arch = "bpf")]
+const NET_RULES_LENGTH_DESCRIPTOR: ArrayDescriptor<u32, 1> = ArrayDescriptor::new();
+
+#[cfg(target_arch = "bpf")]
+const NET_PARENTS_DESCRIPTOR: ArrayDescriptor<
+    bpf_api::NetParentEntry,
+    { bpf_api::NET_PARENTS_CAPACITY as usize },
+> = ArrayDescriptor::new();
+
+#[cfg(target_arch = "bpf")]
+const NET_PARENTS_LENGTH_DESCRIPTOR: ArrayDescriptor<u32, 1> = ArrayDescriptor::new();
+
+#[cfg(target_arch = "bpf")]
+const FS_RULES_DESCRIPTOR: ArrayDescriptor<
+    bpf_api::FsRuleEntry,
+    { bpf_api::FS_RULES_CAPACITY as usize },
+> = ArrayDescriptor::new();
+
+#[cfg(target_arch = "bpf")]
+const FS_RULES_LENGTH_DESCRIPTOR: ArrayDescriptor<u32, 1> = ArrayDescriptor::new();
+
+#[cfg(target_arch = "bpf")]
+const MODE_FLAGS_DESCRIPTOR: ArrayDescriptor<u32, { bpf_api::MODE_FLAGS_CAPACITY as usize }> =
+    ArrayDescriptor::new();
+
+#[cfg(target_arch = "bpf")]
+const WORKLOAD_UNITS_DESCRIPTOR: HashMapDescriptor<
+    u32,
+    u32,
+    { bpf_api::WORKLOAD_UNITS_CAPACITY as usize },
+> = HashMapDescriptor::new();
+
+#[cfg(target_arch = "bpf")]
+const EVENTS_DESCRIPTOR: RingBufDescriptor<{ bpf_api::EVENT_RINGBUF_CAPACITY_BYTES as usize }> =
+    RingBufDescriptor::new();
 
 #[cfg(target_arch = "bpf")]
 #[panic_handler]
@@ -22,18 +135,11 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-
-
-
 #[cfg(target_arch = "bpf")]
 #[unsafe(no_mangle)]
 pub extern "C" fn __bpf_trap() -> ! {
     loop {}
 }
-
-
-
-
 
 #[cfg(target_arch = "bpf")]
 type ExecAllowlistMap = Array<bpf_api::ExecAllowEntry>;
@@ -63,7 +169,6 @@ type EventsMap = RingBuf;
 #[map(name = "EXEC_ALLOWLIST")]
 static mut EXEC_ALLOWLIST: ExecAllowlistMap = EXEC_ALLOWLIST_DESCRIPTOR.bpf_map();
 
-
 #[cfg(target_arch = "bpf")]
 #[map(name = "EXEC_ALLOWLIST_LENGTH")]
 static mut EXEC_ALLOWLIST_LENGTH: LengthMap = EXEC_ALLOWLIST_LENGTH_DESCRIPTOR.bpf_map();
@@ -92,7 +197,6 @@ static mut FS_RULES: FsRulesMap = FS_RULES_DESCRIPTOR.bpf_map();
 #[map(name = "FS_RULES_LENGTH")]
 static mut FS_RULES_LENGTH: LengthMap = FS_RULES_LENGTH_DESCRIPTOR.bpf_map();
 
-
 #[cfg(target_arch = "bpf")]
 #[cfg(target_arch = "bpf")]
 #[map(name = "MODE_FLAGS")]
@@ -106,63 +210,40 @@ static mut WORKLOAD_UNITS: WorkloadUnitsMap = WORKLOAD_UNITS_DESCRIPTOR.bpf_map(
 #[map(name = "EVENTS")]
 static mut EVENTS: EventsMap = EVENTS_DESCRIPTOR.bpf_map();
 
-
-
-
-
-
-macro_rules! define_map_accessors {
-    (
-        $load_fn:ident,
-        $len_fn:ident,
-        $map:ident,
-        $len_map:ident,
-        $entry:ty,
-        $capacity:expr
-    ) => {
-        #[cfg(target_arch = "bpf")]
-        unsafe fn $load_fn(index: u32) -> Option<$entry> {
-            $map.get(index).copied()
-        }
-    };
+#[cfg(target_arch = "bpf")]
+fn clamp_len(len: u32, capacity: u32) -> u32 {
+    if len > capacity { capacity } else { len }
 }
 
-define_map_accessors!(
-    load_exec_allow_entry,
-    exec_allowlist_len,
-    EXEC_ALLOWLIST,
-    EXEC_ALLOWLIST_LENGTH,
-    bpf_api::ExecAllowEntry,
-    bpf_api::EXEC_ALLOWLIST_CAPACITY
-);
+#[cfg(target_arch = "bpf")]
+unsafe fn load_length(map: &LengthMap) -> u32 {
+    map.get(0).copied().unwrap_or(0)
+}
 
-define_map_accessors!(
-    load_net_rule,
-    net_rules_len,
-    NET_RULES,
-    NET_RULES_LENGTH,
-    bpf_api::NetRuleEntry,
-    bpf_api::NET_RULES_CAPACITY
-);
+#[cfg(target_arch = "bpf")]
+unsafe fn load_mode_flags() -> u32 {
+    MODE_FLAGS.get(0).copied().unwrap_or(0)
+}
 
-define_map_accessors!(
-    load_net_parent,
-    net_parents_len,
-    NET_PARENTS,
-    NET_PARENTS_LENGTH,
-    bpf_api::NetParentEntry,
-    bpf_api::NET_PARENTS_CAPACITY
-);
+#[cfg(target_arch = "bpf")]
+fn is_observe_mode() -> bool {
+    match unsafe { load_mode_flags() } {
+        bpf_api::MODE_FLAG_OBSERVE => true,
+        bpf_api::MODE_FLAG_ENFORCE => false,
+        _ => false,
+    }
+}
 
-define_map_accessors!(
-    load_fs_rule,
-    fs_rules_len,
-    FS_RULES,
-    FS_RULES_LENGTH,
-    bpf_api::FsRuleEntry,
-    bpf_api::FS_RULES_CAPACITY
-);
+#[cfg(target_arch = "bpf")]
+fn deny() -> i32 {
+    const EPERM: i32 = 1;
+    -EPERM
+}
 
+#[cfg(target_arch = "bpf")]
+fn deny_with_mode() -> i32 {
+    if is_observe_mode() { 0 } else { deny() }
+}
 
 #[cfg(target_arch = "bpf")]
 #[repr(C)]
@@ -195,60 +276,138 @@ struct SchedProcessExitArgs {
 }
 
 #[cfg(target_arch = "bpf")]
+fn find_c_string_len(bytes: &[u8]) -> usize {
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0 {
+            return i;
+        }
+        i += 1;
+    }
+    bytes.len()
+}
+
+#[cfg(target_arch = "bpf")]
+fn path_matches(a: &[u8; 256], b: &[u8; 256]) -> bool {
+    let mut i = 0;
+    while i < 256 {
+        if a[i] != b[i] {
+            return false;
+        }
+        if a[i] == 0 {
+            break;
+        }
+        i += 1;
+    }
+    true
+}
+
+#[cfg(target_arch = "bpf")]
+fn read_user_path_into(path_ptr: *const u8, buf: &mut [u8; 256]) -> bool {
+    if path_ptr.is_null() {
+        return false;
+    }
+
+    match unsafe { bpf_probe_read_user_str_bytes(path_ptr, buf) } {
+        Ok(bytes) => {
+            let n = bytes.len();
+            if n == 0 {
+                buf[0] = 0;
+            } else if n >= buf.len() {
+                buf[buf.len() - 1] = 0;
+            } else {
+                buf[n] = 0;
+            }
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+#[cfg(target_arch = "bpf")]
+fn classify_workload_unit(_path: &[u8], _args: &[&[u8]]) -> u32 {
+    bpf_api::UNIT_OTHER
+}
+
+#[cfg(target_arch = "bpf")]
+fn workload_unit_for_pid(pid: u32) -> u32 {
+    unsafe { WORKLOAD_UNITS.get(&pid).copied().unwrap_or(0) }
+}
+
+#[cfg(target_arch = "bpf")]
+fn set_workload_unit(pid: u32, unit: u32) {
+    let _ = unsafe { WORKLOAD_UNITS.insert(&pid, &unit, 0) };
+}
+
+#[cfg(target_arch = "bpf")]
+fn remove_workload_unit(pid: u32) {
+    let _ = unsafe { WORKLOAD_UNITS.remove(&pid) };
+}
+
+#[cfg(target_arch = "bpf")]
+fn fs_allowed(_path: &[u8; 256], _needed: u8) -> bool {
+    true
+}
+
+#[cfg(target_arch = "bpf")]
 fn classify_and_record_exec(ctx: &SysEnterExecveArgs) {
-    let pid = unsafe { (bpf_get_current_pid_tgid() >> 32) as u32 };
+    let pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+
     let filename_ptr = ctx.args[0] as *const u8;
     let argv_ptr = ctx.args[1] as *const u64;
+
     let mut path = [0u8; 256];
     let mut unit = bpf_api::UNIT_OTHER;
 
     if !filename_ptr.is_null() {
-        let read =
-            unsafe { bpf_probe_read_user_str(path.as_mut_ptr(), path.len() as u32, filename_ptr) };
-        if read >= 0 {
+        if unsafe { bpf_probe_read_user_str_bytes(filename_ptr, &mut path) }.is_ok() {
             let mut arg_buffers = [[0u8; MAX_ARG_LENGTH]; MAX_CAPTURED_ARGS];
-            let mut arg_refs: [&[u8]; MAX_CAPTURED_ARGS] = [&[]; MAX_CAPTURED_ARGS];
+            let mut arg_lens = [0usize; MAX_CAPTURED_ARGS];
             let mut captured = 0usize;
+
             if !argv_ptr.is_null() {
                 let mut idx = 0usize;
                 while idx < MAX_CAPTURED_ARGS {
-                    let mut arg_ptr_value: u64 = 0;
-                    let read_ptr = unsafe {
-                        bpf_probe_read_user(
-                            (&mut arg_ptr_value as *mut u64).cast(),
-                            core::mem::size_of::<u64>() as u32,
-                            argv_ptr.add(idx).cast(),
-                        )
+                    let arg_ptr_value: u64 = match unsafe { bpf_probe_read_user(argv_ptr.add(idx)) }
+                    {
+                        Ok(v) => v,
+                        Err(_) => break,
                     };
-                    if read_ptr < 0 || arg_ptr_value == 0 {
+
+                    if arg_ptr_value == 0 {
                         break;
                     }
-                    let mut captured_slice: Option<(*const u8, usize)> = None;
+
+                    let buffer = &mut arg_buffers[idx];
+                    if let Ok(bytes) =
+                        unsafe { bpf_probe_read_user_str_bytes(arg_ptr_value as *const u8, buffer) }
                     {
-                        let buffer = &mut arg_buffers[idx];
-                        let read_arg = unsafe {
-                            bpf_probe_read_user_str(
-                                buffer.as_mut_ptr(),
-                                MAX_ARG_LENGTH as u32,
-                                arg_ptr_value as *const u8,
-                            )
-                        };
-                        if read_arg >= 0 {
-                            let mut length = read_arg as usize;
-                            if length > 0 {
-                                length = length.saturating_sub(1).min(MAX_ARG_LENGTH - 1);
-                            }
-                            captured_slice = Some((buffer.as_ptr(), length));
+                        let mut len: usize = bytes.len();
+                        if len > 0 && buffer[len - 1] == 0 {
+                            len -= 1;
                         }
-                    }
-                    if let Some((ptr, length)) = captured_slice {
-                        let slice = unsafe { core::slice::from_raw_parts(ptr, length) };
-                        arg_refs[idx] = slice;
+                        if len > MAX_ARG_LENGTH {
+                            len = MAX_ARG_LENGTH;
+                        }
+
+                        arg_lens[idx] = len;
                         captured = idx + 1;
+                    } else {
+                        break;
                     }
+
                     idx += 1;
                 }
             }
+
+            let mut arg_refs: [&[u8]; MAX_CAPTURED_ARGS] = [&[]; MAX_CAPTURED_ARGS];
+            let mut j = 0usize;
+            while j < captured {
+                let len = arg_lens[j];
+                arg_refs[j] = &arg_buffers[j][..len];
+                j += 1;
+            }
+
             let path_len = find_c_string_len(&path);
             let command_path = &path[..path_len];
             unit = classify_workload_unit(command_path, &arg_refs[..captured]);
@@ -259,109 +418,54 @@ fn classify_and_record_exec(ctx: &SysEnterExecveArgs) {
 }
 
 #[cfg(target_arch = "bpf")]
-#[tracepoint(name = "sys_enter_execve", category = "syscalls")]
-pub fn sys_enter_execve(ctx: TracePointContext) -> u32 {
-    let _ = unsafe { try_sys_enter_execve(ctx) };
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "tracepoint/syscalls/sys_enter_execve")]
+pub extern "C" fn sys_enter_execve(ctx: *mut c_void) -> i32 {
+    let args = unsafe { &*(ctx as *const SysEnterExecveArgs) };
+    classify_and_record_exec(args);
     0
 }
 
 #[cfg(target_arch = "bpf")]
-unsafe fn try_sys_enter_execve(ctx: TracePointContext) -> Result<(), i64> {
-    let args: SysEnterExecveArgs = ctx.read_at(0)?;
-    classify_and_record_exec(&args);
-    Ok(())
-}
-
-#[cfg(target_arch = "bpf")]
-#[tracepoint(name = "sched_process_fork", category = "sched")]
-pub fn sched_process_fork(ctx: TracePointContext) -> u32 {
-    let _ = unsafe { try_sched_process_fork(ctx) };
-    0
-}
-
-#[cfg(target_arch = "bpf")]
-unsafe fn try_sched_process_fork(ctx: TracePointContext) -> Result<(), i64> {
-    let args: SchedProcessForkArgs = ctx.read_at(0)?;
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "tracepoint/sched/sched_process_fork")]
+pub extern "C" fn sched_process_fork(ctx: *mut c_void) -> i32 {
+    let args = unsafe { &*(ctx as *const SchedProcessForkArgs) };
     let parent = args.parent_tgid as u32;
     let child = args.child_tgid as u32;
     let unit = workload_unit_for_pid(parent);
     set_workload_unit(child, unit);
-    Ok(())
-}
-
-#[cfg(target_arch = "bpf")]
-#[tracepoint(name = "sched_process_exit", category = "sched")]
-pub fn sched_process_exit(ctx: TracePointContext) -> u32 {
-    let _ = unsafe { try_sched_process_exit(ctx) };
     0
 }
 
 #[cfg(target_arch = "bpf")]
-unsafe fn try_sched_process_exit(ctx: TracePointContext) -> Result<(), i64> {
-    let args: SchedProcessExitArgs = ctx.read_at(0)?;
+#[unsafe(no_mangle)]
+#[unsafe(link_section = "tracepoint/sched/sched_process_exit")]
+pub extern "C" fn sched_process_exit(ctx: *mut c_void) -> i32 {
+    let args = unsafe { &*(ctx as *const SchedProcessExitArgs) };
     let pid = args.pid as u32;
     remove_workload_unit(pid);
-    Ok(())
+    0
 }
-
-
 
 #[cfg(target_arch = "bpf")]
-#[inline(never)]
-fn unit_fs_allowed(unit: u32, path: &CStr, needed: u8) -> bool {
-    let len = fs_rules_len();
-    let mut i = 0;
-    while i < len {
-        if let Some(entry) = unsafe { FS_RULES.get(i) } {
-            if entry.unit == unit && fs_entry_allows(entry, path, needed) {
-                return true;
-            }
-        }
-        i += 1;
-    }
-    false
+fn exec_allowlist_len() -> u32 {
+    clamp_len(
+        unsafe { load_length(&EXEC_ALLOWLIST_LENGTH) },
+        bpf_api::EXEC_ALLOWLIST_CAPACITY,
+    )
 }
 
-
+#[allow(dead_code)]
 const FMODE_READ: u32 = 1;
+#[allow(dead_code)]
 const FMODE_WRITE: u32 = 2;
+#[allow(dead_code)]
 const MAY_WRITE: i32 = 2;
+#[allow(dead_code)]
 const MAY_READ: i32 = 4;
+#[allow(dead_code)]
 const MAY_APPEND: i32 = 8;
-
-
-#[cfg(target_arch = "bpf")]
-#[allow(non_camel_case_types)]
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct file {
-    f_path: path,
-    f_mode: u32,
-}
-
-#[cfg(target_arch = "bpf")]
-#[allow(non_camel_case_types)]
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct path {
-    dentry: *mut dentry,
-}
-
-#[cfg(target_arch = "bpf")]
-#[allow(non_camel_case_types)]
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct dentry {
-    d_name: qstr,
-}
-
-#[cfg(target_arch = "bpf")]
-#[allow(non_camel_case_types)]
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct qstr {
-    name: *const u8,
-}
 
 #[cfg(target_arch = "bpf")]
 fn read_kernel_value<T: Copy>(ptr: *const T) -> Option<T> {
@@ -404,197 +508,23 @@ fn file_mode_bits(file: *mut c_void) -> Option<u32> {
 }
 
 #[cfg(target_arch = "bpf")]
-fn dentry_path_ptr(dentry: *mut c_void) -> Option<*const u8> {
-    if dentry.is_null() {
-        return None;
-    }
-
-    unsafe {
-        let dentry_ptr = dentry as *const dentry;
-        let name = read_kernel_value(core::ptr::addr_of!((*dentry_ptr).d_name))?;
-        let name_ptr = name.name;
-        if name_ptr.is_null() {
-            None
-        } else {
-            Some(name_ptr)
-        }
-    }
-}
-
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn copy_c_string(dst: &mut [u8], src: &[u8]) {
-    if dst.is_empty() {
-        return;
-    }
-    let mut len = src.iter().position(|&b| b == 0).unwrap_or(src.len());
-    if len >= dst.len() {
-        len = dst.len() - 1;
-    }
-    dst[..len].copy_from_slice(&src[..len]);
-    dst[len] = 0;
-}
-
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn fs_needed_perm(access: u8) -> Option<&'static [u8]> {
-    if (access & bpf_api::FS_WRITE) != 0 {
-        Some(b"allow.fs.write_extra")
-    } else if (access & bpf_api::FS_READ) != 0 {
-        Some(b"allow.fs.read_extra")
-    } else {
-        None
-    }
-}
-
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn fs_event(action: u8, path: &[u8; 256], access: u8, allowed: bool) -> Event {
-    let pid_tgid = unsafe { bpf_get_current_pid_tgid() };
-    let mut event = Event {
-        pid: (pid_tgid >> 32) as u32,
-        tgid: pid_tgid as u32,
-        time_ns: unsafe { bpf_ktime_get_ns() },
-        unit: {
-            let unit = current_unit();
-            if unit > u8::MAX as u32 {
-                u8::MAX
-            } else {
-                unit as u8
-            }
-        },
-        action,
-        verdict: if allowed { 0 } else { 1 },
-        reserved: 0,
-        container_id: 0,
-        caps: 0,
-        path_or_addr: [0; 256],
-        needed_perm: [0; 64],
-    };
-
-    copy_c_string(&mut event.path_or_addr, path);
-    if !allowed && let Some(perm) = fs_needed_perm(access) {
-        copy_c_string(&mut event.needed_perm, perm);
-    }
-
-    event
-}
-
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-fn publish_event(event: &Event) {
-    let ringbuf_ptr = {
-        #[cfg(target_arch = "bpf")]
-        {
-            core::ptr::addr_of_mut!(EVENTS) as *mut c_void
-        }
-
-        #[cfg(any(test, feature = "fuzzing"))]
-        {
-            core::ptr::addr_of!(EVENTS) as *const _ as *mut c_void
-        }
-    };
-    unsafe {
-        bpf_ringbuf_output(
-            ringbuf_ptr,
-            event as *const _ as *const c_void,
-            size_of::<Event>() as u64,
-            0,
-        );
-    }
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-#[repr(C)]
-struct SockAddr {
-    user_ip4: u32,
-    user_ip6: [u32; 4],
-    user_port: u32,
-    family: u32,
-    protocol: u32,
-}
-
-#[cfg(target_arch = "bpf")]
-fn check4(ctx: SockAddrContext) -> i32 {
-    let ctx = unsafe { &*ctx.sock_addr };
-    let mut addr = [0u8; 16];
-    addr[..4].copy_from_slice(&ctx.user_ip4.to_be_bytes());
-    let port = u16::from_be(ctx.user_port as u16);
-    let proto = ctx.protocol as u8;
-    if net_allowed(&addr, port, proto) {
-        0
-    } else {
-        deny_with_mode()
-    }
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-fn check4(ctx: *mut c_void) -> i32 {
-    let ctx = unsafe { &*(ctx as *const SockAddr) };
-    let mut addr = [0u8; 16];
-    addr[..4].copy_from_slice(&ctx.user_ip4.to_be_bytes());
-    let port = u16::from_be(ctx.user_port as u16);
-    let proto = ctx.protocol as u8;
-    if net_allowed(&addr, port, proto) {
-        0
-    } else {
-        deny_with_mode()
-    }
-}
-
-#[cfg(target_arch = "bpf")]
-fn check6(ctx: SockAddrContext) -> i32 {
-    let ctx = unsafe { &*ctx.sock_addr };
-    let mut addr = [0u8; 16];
-    for (i, part) in ctx.user_ip6.iter().enumerate() {
-        addr[i * 4..(i + 1) * 4].copy_from_slice(&part.to_be_bytes());
-    }
-    let port = u16::from_be(ctx.user_port as u16);
-    let proto = ctx.protocol as u8;
-    if net_allowed(&addr, port, proto) {
-        0
-    } else {
-        deny_with_mode()
-    }
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-fn check6(ctx: *mut c_void) -> i32 {
-    let ctx = unsafe { &*(ctx as *const SockAddr) };
-    let mut addr = [0u8; 16];
-    for (i, part) in ctx.user_ip6.iter().enumerate() {
-        addr[i * 4..(i + 1) * 4].copy_from_slice(&part.to_be_bytes());
-    }
-    let port = u16::from_be(ctx.user_port as u16);
-    let proto = ctx.protocol as u8;
-    if net_allowed(&addr, port, proto) {
-        0
-    } else {
-        deny_with_mode()
-    }
-}
-
-#[cfg(any(target_arch = "bpf", test, feature = "fuzzing"))]
-unsafe extern "C" {
-    fn bpf_probe_read_user_str(dst: *mut u8, size: u32, src: *const u8) -> i32;
-    fn bpf_probe_read_user(dst: *mut c_void, size: u32, src: *const c_void) -> i32;
-    fn bpf_ringbuf_output(ringbuf: *mut c_void, data: *const c_void, len: u64, flags: u64) -> i64;
-    fn bpf_get_current_pid_tgid() -> u64;
-    fn bpf_ktime_get_ns() -> u64;
-}
-
-#[cfg(target_arch = "bpf")]
 #[unsafe(no_mangle)]
 #[unsafe(link_section = "lsm/bprm_check_security")]
 #[inline(never)]
 pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
     let filename_ptr = unsafe { *(ctx as *const *const u8) };
+    if filename_ptr.is_null() {
+        return deny_with_mode();
+    }
 
     let mut buf = [0u8; 256];
-    if unsafe { bpf_probe_read_user_str(buf.as_mut_ptr(), buf.len() as u32, filename_ptr) } < 0 {
+    if unsafe { bpf_probe_read_user_str_bytes(filename_ptr, &mut buf) }.is_err() {
         return deny_with_mode();
     }
 
     let len = exec_allowlist_len();
     let mut i = 0;
     while i < len {
-        // ключевая правка: доступ к EXEC_ALLOWLIST в unsafe
         let entry = unsafe { EXEC_ALLOWLIST.get(i) };
         if let Some(entry) = entry {
             if path_matches(&entry.path, &buf) {
@@ -603,82 +533,8 @@ pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
         }
         i += 1;
     }
+
     deny_with_mode()
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-#[unsafe(no_mangle)]
-#[unsafe(link_section = "lsm/bprm_check_security")]
-#[inline(never)]
-pub extern "C" fn bprm_check_security(ctx: *mut c_void) -> i32 {
-    let filename_ptr = unsafe { *(ctx as *const *const u8) };
-    let mut buf = [0u8; 256];
-    if unsafe { bpf_probe_read_user_str(buf.as_mut_ptr(), buf.len() as u32, filename_ptr) } < 0 {
-        return deny_with_mode();
-    }
-    let len = exec_allowlist_len();
-    let mut i = 0;
-    while i < len {
-        if let Some(entry) = unsafe { load_exec_allow_entry(i) }
-            && path_matches(&entry.path, &buf)
-        {
-            return 0;
-        }
-        i += 1;
-    }
-    deny_with_mode()
-}
-
-#[cfg(target_arch = "bpf")]
-#[cgroup_sock_addr(connect4)]
-pub fn connect4(ctx: SockAddrContext) -> i32 {
-    check4(ctx)
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-#[unsafe(no_mangle)]
-#[unsafe(link_section = "cgroup/connect4")]
-pub extern "C" fn connect4(ctx: *mut c_void) -> i32 {
-    check4(ctx)
-}
-
-#[cfg(target_arch = "bpf")]
-#[cgroup_sock_addr(connect6)]
-pub fn connect6(ctx: SockAddrContext) -> i32 {
-    check6(ctx)
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-#[unsafe(no_mangle)]
-#[unsafe(link_section = "cgroup/connect6")]
-pub extern "C" fn connect6(ctx: *mut c_void) -> i32 {
-    check6(ctx)
-}
-
-#[cfg(target_arch = "bpf")]
-#[cgroup_sock_addr(sendmsg4)]
-pub fn sendmsg4(ctx: SockAddrContext) -> i32 {
-    check4(ctx)
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-#[unsafe(no_mangle)]
-#[unsafe(link_section = "cgroup/sendmsg4")]
-pub extern "C" fn sendmsg4(ctx: *mut c_void) -> i32 {
-    check4(ctx)
-}
-
-#[cfg(target_arch = "bpf")]
-#[cgroup_sock_addr(sendmsg6)]
-pub fn sendmsg6(ctx: SockAddrContext) -> i32 {
-    check6(ctx)
-}
-
-#[cfg(any(test, feature = "fuzzing"))]
-#[unsafe(no_mangle)]
-#[unsafe(link_section = "cgroup/sendmsg6")]
-pub extern "C" fn sendmsg6(ctx: *mut c_void) -> i32 {
-    check6(ctx)
 }
 
 #[cfg(target_arch = "bpf")]
@@ -703,8 +559,6 @@ pub extern "C" fn file_open(file: *mut c_void, _cred: *mut c_void) -> i32 {
     let allowed = fs_allowed(&path, access);
     if allowed { 0 } else { deny_with_mode() }
 }
-
-
 
 #[cfg(target_arch = "bpf")]
 #[unsafe(no_mangle)]
@@ -733,9 +587,5 @@ pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
     }
 }
 
-
-
-
 #[cfg(test)]
 mod tests;
-

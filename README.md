@@ -1,36 +1,29 @@
 # cargo-warden
 
-## Overview
+## What this is
 
-cargo-warden hardens `cargo build` by loading eBPF programs that restrict
-filesystem access, process launches, and outbound network traffic. The CLI wraps
-`cargo` commands, enforces declarative policies, and emits actionable event
-logs.
+cargo-warden is a `cargo` subcommand that hardens **the Cargo build stage** for **untrusted Rust projects**.
 
-## Two build contexts (cargo-warden vs. target project)
+It loads eBPF programs (BPF LSM + cgroup hooks) to restrict:
 
-There are two distinct contexts:
+- outbound network connections
+- process launches
+- filesystem access
 
-- **Building cargo-warden itself** (this repository). This is a normal Rust
-  workspace build and does **not** activate the sandbox unless you explicitly
-  run `cargo warden <command>`.
-- **Using cargo-warden to build another Rust project**. This is the main use
-  case: run `cargo warden build` (or `cargo warden run -- <command>`) from
-  the target project's workspace to enforce or observe policy on its build
-  scripts, proc macros, and build-time tooling.
+The goal is practical: you should be able to clone a suspicious/test-assignment repository, run `cargo build/test/run` through cargo-warden, and get a fail-closed guardrail with clear violation reports.
 
-If your goal is to guard an untrusted project, ensure you are invoking
-`cargo-warden` as the wrapper around that project's build, not just compiling
-the cargo-warden binaries themselves.
+A single canonical problem statement lives in: `docs/SOURCE_OF_TRUTH.md`.
 
 ## Documentation
 
+- [Source of truth (problem, goals, current reality)](docs/SOURCE_OF_TRUTH.md)
 - [Installation Guide](docs/INSTALLATION.md)
+- [Policy cookbook](docs/POLICY_COOKBOOK.md)
 - [Release Process](docs/RELEASING.md)
 - [Project Specification](docs/SPEC.md)
 - [Contributing Guide](docs/CONTRIBUTING.md)
 
-## Quickstart
+## Quickstart (current supported path)
 
 1. Install the published CLI.
 
@@ -38,49 +31,49 @@ the cargo-warden binaries themselves.
    cargo install cargo-warden --locked
    ```
 
-   Prebuilt binaries for the eBPF programs are produced by the "Build BPF
-   Artifacts" GitHub workflow. Download the latest `prebuilt.tar.gz` bundle (or
-   reuse the copy from a release package) and place it under
+   Prebuilt binaries for the eBPF programs are produced by the "Build BPF Artifacts" GitHub workflow. Download the latest `prebuilt.tar.gz` bundle (or reuse the copy from a release package) and place it under
    `${XDG_DATA_HOME:-$HOME/.local/share}/cargo-warden/bpf`.
 
-2. Run any command in observe mode with the built-in starter policy (no
-   `warden.toml` required):
+2. Run in **observe** mode (audit only) with the built-in starter policy (no `warden.toml` required):
 
    ```bash
    cargo warden run -- cargo test
    ```
 
-   The default policy records violations without blocking execution. Switch to
-   `cargo warden build -- --release` to wrap `cargo build` directly.
+   Observe mode records violations without blocking execution.
 
-3. Review the active configuration and the collected audit trail.
+3. When evaluating untrusted code, switch to **enforce** with an explicit policy file:
+
+   ```bash
+   cargo warden init
+   # edit warden.toml
+   cargo warden --mode enforce build -- --release
+   ```
+
+4. Export reports:
 
    ```bash
    cargo warden status
    cargo warden report --format sarif --output warden.sarif
    ```
 
-4. When you are ready to enforce, bootstrap a policy file and tailor the
-   defaults.
+### Important: host isolation guardrail (today)
 
-   ```bash
-   cargo warden init
-   ```
+The CLI currently refuses to run directly on a host. The supported path is an isolated container or a throwaway VM with its own network namespace.
 
-   Edit the generated `warden.toml` to promote specific permissions to enforce
-   mode.
+A rootless `podman` example (deny network at the namespace boundary, then apply eBPF policy inside):
 
-### Building from source
+```bash
+podman run --rm -it   --cap-add=CAP_BPF --cap-add=CAP_SYS_ADMIN   --security-opt=no-new-privileges --network=none   --userns=keep-id -v "$PWD:/workspace":z -w /workspace   ghcr.io/qqrm/cargo-warden:latest cargo warden status
+```
 
-Install the required system dependencies before compiling the workspace. The
-installation guide in `docs/INSTALLATION.md` lists the full dependency set, and
-the root `Dockerfile` shows a working reference environment.
+This is a *safety default*, not a statement that eBPF enforcement requires containers. The roadmap is to add an explicit “host mode” flag while keeping safe defaults.
 
-## Setup Requirements
+## Setup requirements
 
 The project requires a Linux system with the following features:
 
-- **Kernel ≥5.13**
+- **Kernel ≥ 5.13**
 
 ```bash
 uname -r
@@ -106,69 +99,19 @@ capsh --print | grep -E 'cap_(bpf|sys_admin)'
 
 ### Least-privilege execution
 
-`cargo-warden` refuses to run as root or with an expanded capability set. Run it
-under a dedicated service account that has `CAP_SYS_ADMIN` and, when supported
-by the host, `CAP_BPF`:
+cargo-warden refuses to run as root or with an expanded capability set. Run it under a dedicated service account that has `CAP_SYS_ADMIN` and, when supported by the host, `CAP_BPF`.
 
-1. Create a locked-down user and its state directory.
+In hermetic CI where capabilities cannot be delegated, set `CARGO_WARDEN_SKIP_PRIVILEGE_CHECK=1` only for the test job to bypass the guardrail. Do not use this escape hatch on shared hosts.
 
-   ```bash
-   sudo useradd --system --home /var/lib/cargo-warden --shell /usr/sbin/nologin cargo-warden
-   sudo install -d -o cargo-warden -g cargo-warden /var/lib/cargo-warden
-   ```
-
-2. Grant only the required capabilities to the process. A systemd unit keeps the
-   bounding set narrow and avoids `--privileged` containers. Include `CAP_BPF`
-   when the platform exposes it in `CapEff`; otherwise `cargo-warden` will warn
-   and rely on `CAP_SYS_ADMIN` for eBPF operations:
-
-   ```ini
-   [Service]
-   User=cargo-warden
-   Group=cargo-warden
-   AmbientCapabilities=CAP_BPF CAP_SYS_ADMIN
-   CapabilityBoundingSet=CAP_BPF CAP_SYS_ADMIN
-   NoNewPrivileges=yes
-   PrivateTmp=yes
-   ProtectSystem=strict
-   ProtectHome=true
-   ```
-
-3. Run `cargo warden ...` from that unit or a rootless container with user
-   namespaces, isolated network namespace, and a minimal cgroup profile. Keep
-   workspace and `target` directories owned by the service user so no extra
-   capabilities are needed for filesystem access.
-
-In hermetic CI where capabilities cannot be delegated, set
-`CARGO_WARDEN_SKIP_PRIVILEGE_CHECK=1` only for the test job to bypass the
-guardrail. Do not use this escape hatch on shared hosts.
-
-### Isolation requirement
-
-`cargo-warden` refuses to run directly on a host; use an isolated container or
-throwaway VM with its own network namespace and a minimal cgroup profile. A
-rootless `podman` example that keeps the capability set narrow:
-
-```bash
-podman run --rm -it \
-  --cap-add=CAP_BPF --cap-add=CAP_SYS_ADMIN \
-  --security-opt=no-new-privileges --network=none \
-  --userns=keep-id -v "$PWD:/workspace":z -w /workspace \
-  ghcr.io/qqrm/cargo-warden:latest cargo warden status
-```
-
-For CI, prefer ephemeral containers or VMs with user namespaces and seccomp
-enabled; avoid `--privileged` runners.
-
-## CLI Commands
+## CLI commands
 
 | Command | Description |
 |---------|-------------|
-| `cargo warden build [-- <args>]` | Runs `cargo build` inside the sandbox, applying the merged policy set. |
-| `cargo warden run -- <command>` | Executes any command tree under warden's isolation. |
+| `cargo warden build [-- <args>]` | Runs `cargo build` under eBPF enforcement, applying the merged policy set. |
+| `cargo warden run -- <command>` | Executes any command tree under enforcement. |
 | `cargo warden init` | Creates a default `warden.toml` policy file. |
 | `cargo warden status` | Shows the effective policy, sandbox mode, and recent events. |
-| `cargo warden report --format <text\|json\|sarif>` | Writes the latest audit events in the selected format. |
+| `cargo warden report --format <text|json|sarif>` | Writes the latest audit events in the selected format. |
 
 Global flags apply to every subcommand:
 
@@ -176,11 +119,9 @@ Global flags apply to every subcommand:
 - `--policy <FILE>` – merge additional policy files into the execution context.
 - `--mode <observe|enforce>` – override the mode declared in the policy.
 
-## Policy Schema
+## Policy schema (current)
 
-`warden.toml` configures build permissions. Strict filesystem mode implicitly
-allows writes to the Cargo `target` directory (including `OUT_DIR`) and reads
-from the workspace root.
+`warden.toml` configures build permissions.
 
 ```toml
 mode = "enforce"
@@ -192,6 +133,7 @@ exec.default = "allowlist"
 allowed = ["rustc", "rustdoc"]
 
 [allow.net]
+# NOTE: currently socket addresses only (IP:port), not hostnames.
 hosts = ["127.0.0.1:1080"]
 
 [allow.fs]
@@ -205,227 +147,4 @@ read = ["HOME", "CARGO"]
 deny = ["clone"]
 ```
 
-### Field reference
-
-- `mode` – selects `observe` (audit only) or `enforce` (deny violations).
-- `fs.default` – `strict` restricts writes to `target` and reads to the
-  workspace; `unrestricted` disables filesystem enforcement.
-- `net.default` – `deny` blocks outbound network unless allowlisted; `allow`
-  keeps network open.
-- `exec.default` – `allowlist` limits execution to entries in
-  `allow.exec.allowed`; `allow` permits all executions.
-- `allow.exec.allowed` – executables permitted when `exec.default = "allowlist"`.
-- `allow.net.hosts` – host:port pairs allowed when `net.default = "deny"`.
-- `allow.fs.write_extra` – additional write paths when `fs.default = "strict"`.
-- `allow.fs.read_extra` – additional read paths when `fs.default = "strict"`.
-- `allow.env.read` – environment variables exposed to build scripts.
-- `syscall.deny` – extra syscalls denied via seccomp filters.
-
-### Workspace policies
-
-`workspace.warden.toml` lets you override rules per package.
-
-```toml
-[root]
-mode = "enforce"
-
-[members.pkg.exec]
-default = "allow"
-```
-
-The `root` table defines the base policy. Entries under `members.<name>` replace
-fields for that specific crate.
-
-## Logs and Reports
-
-The runtime writes JSONL events to `warden-events.jsonl`. Older tooling and
-examples may refer to the same file as `warden.log`; creating a symlink keeps
-existing scripts working:
-
-```bash
-ln -sf warden-events.jsonl warden.log
-tail -f warden-events.jsonl
-```
-
-The agent persists a rolling metrics snapshot to `warden-metrics.json` beside
-the event log. The `report` subcommand exports aggregated summaries in text,
-JSON, or SARIF.
-
-### Prometheus Metrics Export
-
-Expose the in-process Prometheus endpoint by passing `--metrics-port` to any
-command that launches the sandbox:
-
-```bash
-cargo warden build --metrics-port 9187 -- --release
-
-# scrape counters and gauges
-curl -s http://127.0.0.1:9187/metrics | grep '^violations_total'
-# fetch the last buffered events as JSON
-curl -s http://127.0.0.1:9187/events | jq '.[0]'
-```
-
-The HTTP endpoint publishes the metrics listed in [the specification](SPEC.md),
-including `violations_total`, `blocked_total`, `allowed_total`,
-`io_read_bytes_by_unit`, `io_write_bytes_by_unit`, `cpu_time_ms_by_unit`, and
-`page_faults_by_unit`. The metrics snapshot file mirrors the counters for
-offline analysis.
-
-### Sample `warden.log` Analysis Workflow
-
-Teams triaging violations can combine the JSONL log, metrics snapshot, and the
-`report` subcommand:
-
-```bash
-# summarize recent violations with human-readable hints
-cargo warden report --format text
-
-# focus on denied actions from the JSONL stream
-jq -r 'select(.verdict == 1) | "\(.time_ns) \(.path_or_addr) hint=\(.needed_perm)"' \
-  warden-events.jsonl | head
-
-# correlate with the persisted metrics snapshot
-jq '.denied_total as $denied | {denied: $denied, per_unit: .per_unit}' \
-  warden-metrics.json
-```
-
-The same workflow applies if the file is aliased to `warden.log`.
-
-### Event Log ABI
-
-The eBPF layer emits `Event` records through a ring buffer shared with
-userspace:
-
-```rust
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct Event {
-    pub pid: u32,
-    pub tgid: u32,
-    pub time_ns: u64,
-    pub unit: u8,        // 0 Other, 1 BuildRs, 2 ProcMacro, 3 Rustc, 4 Linker
-    pub action: u8,      // 0 Open, 1 Rename, 2 Unlink, 3 Exec, 4 Connect
-    pub verdict: u8,     // 0 Allowed, 1 Denied
-    pub reserved: u8,
-    pub container_id: u64,
-    pub caps: u64,
-    pub path_or_addr: [u8; 256],
-    pub needed_perm: [u8; 64],
-}
-```
-
-Each entry captures the process identifiers, workload classification, audited
-operation, verdict, and suggested permission needed to allow the action.
-
-## Security Model
-
-cargo-warden treats build scripts and procedural macros as untrusted code. They
-run inside the sandbox with restricted filesystem, network, and exec access.
-Policies should be tracked in version control (or signed) to prevent tampering.
-
-Threat considerations:
-
-- **Supply chain attacks** – malicious dependencies attempting exfiltration or
-  process spawning are denied unless explicitly allowed.
-- **Privilege escalation** – escaping via kernel exploits or privileged
-  capabilities is out of scope and relies on a hardened host.
-- **Denial of service** – overly strict policies can break legitimate builds;
-  iterate in observe mode before enforcing new rules.
-
-Future work includes additional kernel integrations (such as fanotify for deep
-filesystem auditing) and richer telemetry pipelines to help tune policies.
-
-## Building prebuilt BPF objects
-
-Generate the prebuilt BPF bundle with:
-
-```bash
-cargo build -p warden-bpf-core --release
-```
-
-The crate's build script invokes the nightly toolchain to cross-compile the
-eBPF program, writes architecture-specific copies, and emits a checksum
-manifest under `prebuilt/`. Set `WARDEN_BPF_USE_PREBUILT=1` to skip the compile
-step when you only want to consume existing artifacts.
-
-Artifacts live outside version control. Developers can point the runtime at the
-fresh build with:
-
-```bash
-WARDEN_BPF_DIST_DIR=$PWD/prebuilt cargo run --bin cargo-warden -- <args>
-```
-
-A GitHub Actions workflow (`Build BPF Artifacts`) rebuilds the bundle on every
-`main` push, uploading `prebuilt.tar.gz` and `manifest.json` as downloadable
-artifacts for downstream packagers.
-
-## Sandbox Hardening
-
-cargo-warden layers eBPF enforcement with a seccomp deny-list sourced from the
-active policy. When the policy runs in `enforce` mode, the runtime loads kernel
-filters (for example, `clone`, `execve`, or entries declared under
-`[syscall] deny`). Observability remains available in `observe` mode, allowing
-you to refine rules before enabling blocking.
-
-## Local CI parity
-
-Reproduce the GitHub Actions validation locally by running the same commands as the `cargo-checks` and `examples` jobs. Install
-the prerequisites first:
-
-- Debian packages: `pkg-config`, `libseccomp-dev`, `protobuf-compiler`, `jq`, `xxhash`.
-- Cargo tools: `bpf-linker`, `cargo-machete`, `cargo-audit`, `cargo-nextest`, `cargo-udeps`. Install them via [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall) to reuse prebuilt binaries:
-
-  ```bash
-  cargo install cargo-binstall --locked
-  cargo binstall bpf-linker cargo-machete cargo-audit cargo-nextest cargo-udeps --no-confirm --force
-  ```
-- Nightly toolchain with the `rustfmt`, `clippy`, `rust-src`, and `llvm-tools-preview` components.
-
-Rust toolchain updates are managed via Dependabot (`rust-toolchain`), and
-Dependabot PRs are configured for auto-merge once required checks pass.
-
-Then execute the CI-equivalent commands from the repository root:
-
-```bash
-./scripts/check_path_versions.sh
-cargo fmt --all -- --check
-cargo check --tests --benches
-cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run
-cargo test
-cargo machete
-cargo audit
-cargo +nightly udeps --all-targets --all-features
-WARDEN_FAKE_SANDBOX=1 cargo test --examples
-WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-network-build
-WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-spawn-bash
-WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-fs-outside-workspace
-WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-network-fs-demo
-WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-git-clone-https
-WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- env WARDEN_EXAMPLE_EXPECT_WARNING=1 cargo build -p warden-proc-macro-hog
-```
-
-For a byte-for-byte reproduction of the GitHub Actions workflow, run it through [wrkflw](https://github.com/bahdotsh/wrkflw):
-
-```bash
-wrkflw validate
-wrkflw run .github/workflows/CI.yml
-```
-
-## Releasing to crates.io
-
-Follow [RELEASING.md](RELEASING.md) when cutting a new version. The document covers:
-
-- preparing the workspace with aligned version numbers and changelog updates,
-- running the validation suite before packaging,
-- publishing crates to crates.io in dependency order,
-- verifying the release by installing it with `cargo install` and running smoke tests,
-- tagging the release and updating downstream distribution artifacts.
-
-Keep the release checklist under version control so every maintainer can repeat the process without tribal knowledge.
-
-## Repository Maintenance
-
-Use `scripts/prune_branches.sh` to list feature branches that have been inactive for more than 48 hours. Pass `--prune` to
-delete the remote branches once you have reviewed the list. Export `CARGO_WARDEN_PRUNE_AGE` (in seconds) to customise the age
-threshold.
+If you need “allow only crates.io/github.com” today, you must either run fully offline (`net.default = "deny"`) or manage IP allowlists (not stable for CDNs). See `docs/SOURCE_OF_TRUTH.md` for the roadmap options.

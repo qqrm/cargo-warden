@@ -1,104 +1,61 @@
 # CONTRIBUTING
 
-Thank you for helping us harden cargo-warden. This document explains how to set up your environment, propose changes, and keep the security posture intact.
+This project exists to make **untrusted Rust builds** safer to run. Contributions must preserve a conservative security posture and keep documentation truthful.
 
-## Getting Started
+If you are changing behavior, first read `docs/SOURCE_OF_TRUTH.md` and ensure your change aligns with the stated goal and non-goals.
 
-1. Install the required toolchain and system dependencies. Follow
-   `docs/INSTALLATION.md` for package lists, or use the root `Dockerfile` as a
-   reference environment.
+## Repo layout expectations
 
-2. Configure GitHub CLI access so you can inspect workflows and automation:
+- eBPF-side types live in `crates/bpf-api`.
+- eBPF programs live in `crates/bpf-core` and must depend only on `bpf-api` for shared ABI.
+- Policy parsing/validation lives in `crates/policy-core`.
+- Policy compilation (to BPF map layouts) lives in `crates/policy-compiler`.
+- The CLI (`crates/cli`) is wiring + UX. Avoid business logic there.
 
-```bash
-gh auth status
-gh run list --limit 5
-```
+## Local development
 
-3. Fetch the latest changes and create a fresh feature branch from `main` for every task. Branch names should be short, hyphenated English descriptions (for example, `policy-validator-fix`).
+1) Create a feature branch from `main`.
 
-## Development Workflow
-
-1. Keep commits focused and include descriptive English messages.
-2. Follow the project layout and module boundaries documented in `SPEC.md` and the crate-level READMEs.
-3. Write code in English, and prefer small, reviewable changes.
-4. Update or add tests whenever behaviour changes. Remove dead code instead of suppressing warnings.
-
-## Mandatory Checks
-
-Every contribution must pass the full validation suite before you submit it for review. Run all commands from the workspace root:
+2) Run the baseline checks (workspace root):
 
 ```bash
 ./scripts/check_path_versions.sh
 cargo fmt --all -- --check
-cargo check --tests --benches
 cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run
-cargo test
-cargo machete
-cargo audit
-cargo +nightly udeps --all-targets --all-features
-WARDEN_FAKE_SANDBOX=1 cargo test --examples
+cargo test --workspace
+```
+
+3) Integration checks for the CLI can be run without loading real eBPF by using the fake sandbox:
+
+```bash
+WARDEN_FAKE_SANDBOX=1 cargo test --workspace
+WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- status
 WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-network-build
-WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-spawn-bash
-WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-fs-outside-workspace
-WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-network-fs-demo
-WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- cargo build -p warden-git-clone-https
-WARDEN_FAKE_SANDBOX=1 cargo run --bin cargo-warden -- run -- env WARDEN_EXAMPLE_EXPECT_WARNING=1 cargo build -p warden-proc-macro-hog
 ```
 
-Resolve any failures before continuing. If you add new tooling, document it in this file and in the relevant crate README.
+Notes:
+- Some CI jobs may use `cargo nextest`. If you have it installed, it can replace `cargo test` locally.
+- If you modify the BPF build or distribution workflow, update `scripts/build-dist.sh` and `docs/INSTALLATION.md` together.
 
-Install the helper Cargo binaries via [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall) to reuse prebuilt artifacts:
+## Documentation standards
 
-```bash
-cargo install cargo-binstall --locked
-cargo binstall bpf-linker cargo-machete cargo-audit cargo-nextest cargo-udeps --no-confirm --force
-```
+- Documentation must match reality. When a feature is not implemented, label it explicitly as **Roadmap**.
+- `docs/SOURCE_OF_TRUTH.md` wins over every other document.
+- Provide copy-pastable examples. Keep them minimal and conservative.
 
-## Documentation Standards
+## Security posture rules
 
-- Markdown files use uppercase filenames with underscores (for example, `END_TO_END_TUTORIAL.md`).
-- Always start headings with `#` and specify the language for code blocks (` ```bash `, ` ```rust `, and so on).
-- Keep documentation in English and update references when APIs or CLI flows change.
+- Prefer deny-by-default behavior for anything that touches network, filesystem outside the workspace, and process execution.
+- If you introduce an escape hatch (env var / flag), it must be:
+  - explicit
+  - loudly documented
+  - visible in reports
+  - not the default
 
-## Workflow Automation
+## Submitting changes
 
-Mirror the CI pipelines locally to match GitHub Actions:
+- Keep PRs small and focused.
+- Include tests for behavior changes.
+- If you change CLI UX, update `README.md` and the policy cookbook (`docs/POLICY_COOKBOOK.md`).
 
-```bash
-wrkflw validate
-wrkflw run .github/workflows/ci.yml
-```
-
-Rust toolchain updates are handled by Dependabot (`rust-toolchain`), and
-Dependabot PRs are set to auto-merge once required checks pass.
-
-Refer to recent workflow history with:
-
-```bash
-gh run list --limit 5
-```
-
-Escalate flakes or infrastructure issues with logs so maintainers can triage quickly.
-
-## Repository Hygiene
-
-- Audit remote feature branches with `scripts/prune_branches.sh`. The script skips protected branches, tolerates `null`
-  timestamps in the API payload, and deletes candidates when you pass `--prune`.
-- Adjust the inactivity threshold by exporting `CARGO_WARDEN_PRUNE_AGE` (in seconds).
-
-## Reviewing and Merging
-
-1. Open draft pull requests early if you need feedback, but keep automated checks green before requesting review.
-2. Mention any deviations from the standard workflow and justify them in the PR description.
-3. Ensure your branch is rebased on top of the latest `main` before final review.
-4. After approval, maintainers will merge using the standard fast-forward workflow.
-
-## Communication
-
-- Use GitHub issues or discussions for feature requests and bug reports.
-- Keep discussions respectful and actionable.
-- For security-sensitive reports, follow the process documented in `SECURITY.md`.
-
-We appreciate every contribution that makes cargo-warden more reliable and secure.
+For sensitive issues, follow `SECURITY.md`.

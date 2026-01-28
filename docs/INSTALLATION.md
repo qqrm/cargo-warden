@@ -2,8 +2,9 @@
 
 ## Kernel prerequisites
 
-Ensure the host kernel satisfies the minimum requirements before attempting to
-run the sandbox:
+Ensure the kernel satisfies the minimum requirements before attempting to run cargo-warden.
+
+Note: the CLI currently refuses to run directly on a host; the supported path is an isolated container or throwaway VM. See `docs/SOURCE_OF_TRUTH.md`.
 
 ```bash
 uname -r

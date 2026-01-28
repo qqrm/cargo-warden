@@ -20,7 +20,9 @@ fn main() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("bpf-prebuilt") => build_prebuilt_artifacts(),
-        _ => Err(anyhow!("Usage: cargo xtask bpf-prebuilt")),
+        Some("bpf-check") => bpf_check(),
+        Some("bpf-build") => bpf_build(),
+        _ => Err(anyhow!("Usage: cargo xtask bpf-prebuilt | bpf-check | bpf-build")),
     }
 }
 
@@ -44,11 +46,7 @@ struct ManifestArtifact {
     sha256: String,
 }
 
-fn workspace_root() -> Result<std::path::PathBuf> {
-    use anyhow::{Context, Result, anyhow};
-    use std::fs;
-    use std::path::{Path, PathBuf};
-
+fn workspace_root() -> Result<PathBuf> {
     fn is_workspace_root(dir: &Path) -> Result<bool> {
         let toml = dir.join("Cargo.toml");
         if !toml.is_file() {
@@ -69,9 +67,62 @@ fn workspace_root() -> Result<std::path::PathBuf> {
         }
     }
 
-    Err(anyhow!(
-        "failed to locate workspace root from CARGO_MANIFEST_DIR"
-    ))
+    Err(anyhow!("failed to locate workspace root from CARGO_MANIFEST_DIR"))
+}
+
+fn cargo_bpf_env(cmd: &mut Command, add_basic_block_sections_none: bool) {
+    cmd.env(
+        "CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER",
+        env::var("CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER")
+            .unwrap_or_else(|_| "bpf-linker".into()),
+    );
+
+    if add_basic_block_sections_none {
+        let mut rustflags = env::var("RUSTFLAGS").unwrap_or_default();
+        if !rustflags.is_empty() {
+            rustflags.push(' ');
+        }
+        rustflags.push_str("-C llvm-args=-basic-block-sections=none");
+        cmd.env("RUSTFLAGS", rustflags);
+    }
+}
+
+fn run_cargo_bpf(
+    workspace_root: &Path,
+    verb: &str,
+    release: bool,
+    add_basic_block_sections_none: bool,
+) -> Result<()> {
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(workspace_root);
+
+    cmd.arg(verb)
+        .args(["-p", PACKAGE_NAME])
+        .args(["--target", TARGET])
+        .args(["-Z", "build-std=core,compiler_builtins"]);
+
+    if release {
+        cmd.arg("--release");
+    }
+
+    cargo_bpf_env(&mut cmd, add_basic_block_sections_none);
+
+    let status = cmd.status().with_context(|| format!("failed to invoke cargo {verb}"))?;
+    if !status.success() {
+        return Err(anyhow!("cargo {verb} for {PACKAGE_NAME} failed"));
+    }
+
+    Ok(())
+}
+
+fn bpf_check() -> Result<()> {
+    let workspace_root = workspace_root()?;
+    run_cargo_bpf(&workspace_root, "check", false, false)
+}
+
+fn bpf_build() -> Result<()> {
+    let workspace_root = workspace_root()?;
+    run_cargo_bpf(&workspace_root, "build", true, true)
 }
 
 fn build_prebuilt_artifacts() -> Result<()> {
@@ -84,42 +135,16 @@ fn build_prebuilt_artifacts() -> Result<()> {
     fs::create_dir_all(&prebuilt_dir)
         .with_context(|| format!("failed to create {}", prebuilt_dir.display()))?;
 
-    // Disable basic block sections to avoid `.text.unlikely.*` sections in the BPF object.
-    let mut rustflags = env::var("RUSTFLAGS").unwrap_or_default();
-    if !rustflags.is_empty() {
-        rustflags.push(' ');
-    }
-    rustflags.push_str("-C llvm-args=-basic-block-sections=none");
-
-    let status = Command::new("cargo")
-        .current_dir(&workspace_root)
-        .args([
-            "build",
-            "-p",
-            PACKAGE_NAME,
-            "--release",
-            "--target",
-            TARGET,
-            "-Z",
-            "build-std=core,compiler_builtins",
-        ])
-        .env("RUSTFLAGS", rustflags)
-        .env(
-            "CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER",
-            env::var("CARGO_TARGET_BPFEL_UNKNOWN_NONE_LINKER")
-                .unwrap_or_else(|_| "bpf-linker".into()),
-        )
-        .status()
-        .context("failed to invoke cargo build")?;
-
-    if !status.success() {
-        return Err(anyhow!("cargo build for {PACKAGE_NAME} failed"));
-    }
+    run_cargo_bpf(&workspace_root, "build", true, true)?;
 
     let target_dir = workspace_root.join("target").join(TARGET).join("release");
     let built_object = locate_artifact(&target_dir)?;
 
-    let arch = env::consts::ARCH;
+    let arch = match env::consts::ARCH {
+        "x86_64" => "x86_64",
+        "aarch64" => "aarch64",
+        other => other,
+    };
 
     let dest_rel_path = PathBuf::from(arch).join(OBJECT_NAME);
     let dest_path = prebuilt_dir.join(&dest_rel_path);

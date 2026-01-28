@@ -13,7 +13,7 @@ Status: Draft for public OSS release
 | Agent, metrics, and event export | ✅ Complete | `crates/agent-lite` and `crates/event-reporting` process ring-buffer events, publish Prometheus metrics, and generate SARIF logs. |
 | Test harness and fake sandbox | ✅ Complete | `crates/testkits` and the fake sandbox runtime back CLI integration tests and layout assertions. |
 | Example workspaces | ✅ Complete | Example crates cover network, process launch, filesystem, proc-macro resource abuse, and git clone scenarios. |
-| Documentation set | ✅ Complete | README, security model, contributing guide, security policy, CODEOWNERS, and PR templates are available. |
+| Documentation set | ⚠️ Partial | Docs exist, but some sections describe planned behavior. `docs/SOURCE_OF_TRUTH.md` is the canonical reference for current behavior and roadmap. |
 
 Author: Alex + contributors
 Core project license: MIT or Apache-2.0
@@ -21,7 +21,9 @@ Target platform: Linux kernel >= 5.13 with BPF LSM and cgroup v2 enabled
 
 ## 1. Introduction
 
-The goal of cargo-warden is to provide Rust developers with a secure sandbox for the Cargo build stage without patching cargo or rustc. The tool restricts network access, arbitrary executable launches, and file system access during `cargo build`. The permission model is declarative and transparent. The project focuses on modularity and agent-oriented development. Each module has a small scope, clear boundaries, and stable contracts.
+The goal of cargo-warden is to provide Rust developers with a kernel-enforced guardrail for the Cargo build stage (especially for untrusted repositories) without patching cargo or rustc. The tool restricts network access, arbitrary executable launches, and file system access during `cargo build`.
+
+**Current safety default**: the CLI refuses to run directly on a host; the supported path today is an isolated container or throwaway VM. This is a guardrail, not a fundamental eBPF limitation. The roadmap is to add an explicit host mode flag. The permission model is declarative and transparent. The project focuses on modularity and agent-oriented development. Each module has a small scope, clear boundaries, and stable contracts.
 
 ## 2. Problem Statement and Goals
 
@@ -55,8 +57,11 @@ The goal of cargo-warden is to provide Rust developers with a secure sandbox for
 | Filesystem Abuse (write)        | `build.rs` writes outside `target`/`OUT_DIR` | modifying `$HOME/.ssh`, `/etc` | LSM `file_open`, `inode_unlink/rename` |
 | Filesystem Abuse (read)         | `build.rs` reads `/etc`, `~/.ssh`   | stealing passwords and private data | LSM `file_open` (read deny) |
 | Persistence / Sabotage          | `build.rs` alters `.git/`, `.bashrc` | backdoors, sabotage                | LSM `file_open` + workspace write deny |
-| Proc-macro Resource Hog (DoS)   | derive macro loads entire tree     | long builds, OOM crashes           | `sched/trace` + metrics agent |
-| Time/Env Abuse                  | `build.rs` reads time/env          | nondeterministic builds            | control env-read, time deny/allow |
+
+The following risks are tracked but are not fully mitigated by the current OSS implementation:
+
+- Proc-macro resource DoS (CPU/RAM): **Roadmap** (requires robust resource accounting/limits)
+- Time sources / nondeterminism controls: **Roadmap**
 
 **Not covered**
 
@@ -218,6 +223,7 @@ exec.default = "allowlist"   # list of tool binaries
 allowed = ["rustc", "rustdoc", "ar", "ld", "cc", "pkg-config"]
 
 [allow.net]
+# NOTE: currently socket addresses only (IP:port), not hostnames.
 hosts = ["127.0.0.1:1080"]  # example local proxy
 
 [allow.fs]

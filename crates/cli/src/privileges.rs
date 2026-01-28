@@ -3,7 +3,9 @@ use std::fmt;
 use std::fs;
 
 const CAP_SYS_ADMIN: u8 = 21;
+const CAP_PERFMON: u8 = 38;
 const CAP_BPF: u8 = 39;
+const CAP_CHECKPOINT_RESTORE: u8 = 40;
 
 const CAP_NAMES: [&str; 41] = [
     "CAP_CHOWN",
@@ -70,6 +72,7 @@ const CONTAINER_CGROUP_MARKERS: [&str; 6] = [
     "lxc",
 ];
 
+
 #[derive(Debug)]
 pub(crate) enum PrivilegeError {
     RunningAsRoot,
@@ -86,7 +89,7 @@ impl fmt::Display for PrivilegeError {
         match self {
             PrivilegeError::RunningAsRoot => write!(
                 f,
-                "cargo-warden must run under a dedicated non-root user; running under sudo/root is rejected. Drop to an account with CAP_SYS_ADMIN and optional CAP_BPF (see README for setup guidance)."
+                "cargo-warden must run under a dedicated non-root user; drop to an account with CAP_SYS_ADMIN and optional CAP_BPF"
             ),
             PrivilegeError::MissingContainerIsolation => write!(
                 f,
