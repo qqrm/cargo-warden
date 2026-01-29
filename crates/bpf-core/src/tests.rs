@@ -4,7 +4,7 @@ use crate::host_shims::{
     fs::{TestDentry, TestFile},
     net::resolve_host,
 };
-use bpf_api::{FS_READ, FS_WRITE};
+use bpf_api::{Event, FS_READ, FS_WRITE};
 use core::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr;
