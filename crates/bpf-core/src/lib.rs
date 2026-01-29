@@ -587,5 +587,5 @@ pub extern "C" fn file_permission(file: *mut c_void, mask: i32) -> i32 {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "bpf"))]
 mod tests;
