@@ -1,0 +1,38 @@
+[workspace]
+members = [
+    "crates/bpf-api",
+    "crates/bpf-core",
+    "crates/bpf-host",
+    "crates/cli",
+    "crates/sandbox-runtime",
+    "crates/agent-lite",
+    "crates/policy-core",
+    "crates/policy-compiler",
+    "crates/testkits",
+    "examples/network-build",
+    "examples/spawn-bash",
+    "examples/fs-outside-workspace",
+    "examples/network-fs-demo",
+    "examples/proc-macro-hog",
+    "examples/proc-macro-hog/proc-macro-hog-macro",
+    "examples/git-clone-https",
+    "crates/event-reporting",
+    "crates/policy-orchestrator",
+    "crates/xtask",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.91"
+
+[workspace.dependencies]
+cargo_metadata = "0.18"
+
+[patch.crates-io]
+aya = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf" }
+aya-obj = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf" }
+aya-ebpf = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf", package = "aya-ebpf" }
+aya-ebpf-bindings = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf", package = "aya-ebpf-bindings" }
+aya-ebpf-cty = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf", package = "aya-ebpf-cty" }
+aya-ebpf-macros = { git = "https://github.com/aya-rs/aya", rev = "30182463bdb6cce592477e66659d5f66f846cfcf", package = "aya-ebpf-macros" }

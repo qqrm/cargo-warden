@@ -1,0 +1,41 @@
+name: Build BPF Artifacts
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: bpf-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ARTIFACT_NAME: warden-bpf-core-${{ github.sha }}
+
+jobs:
+  build:
+    name: Build BPF artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build prebuilt objects
+        run: nix build -L .#bpf-prebuilt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            result/prebuilt.tar.gz
+            result/manifest.json
+          retention-days: 7

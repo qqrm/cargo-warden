@@ -1,0 +1,179 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    name: Actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run actionlint via reviewdog
+        uses: reviewdog/action-actionlint@v1
+        with:
+          reporter: github-check
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  cargo-checks:
+    name: Cargo checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt, clippy, rust-src, llvm-tools-preview
+
+      - name: Enable Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libseccomp-dev \
+            protobuf-compiler \
+            jq \
+            xxhash
+
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-binstall
+
+      - name: Install bpf-linker
+        uses: taiki-e/install-action@v2
+        with:
+          tool: bpf-linker
+
+      - name: Install cargo tools via cargo-binstall
+        run: |
+          cargo binstall cargo-machete --no-confirm --force
+          cargo binstall cargo-audit --no-confirm --force
+          cargo binstall cargo-udeps --no-confirm --force
+          cargo binstall cargo-nextest --no-confirm --force
+
+      - name: Check path versions
+        run: ./scripts/check_path_versions.sh
+
+      - name: Run cargo fmt --all -- --check
+        run: cargo fmt --all -- --check
+
+      - name: Run cargo check --tests --benches
+        run: cargo check --tests --benches
+
+      - name: Run cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --exclude warden-bpf-core -- -D warnings
+
+      - name: Run cargo nextest run
+        run: cargo nextest run
+
+      - name: Run cargo test
+        run: cargo test
+
+      - name: Run cargo machete
+        run: cargo machete
+
+      - name: Run cargo audit
+        run: cargo audit
+
+      - name: Run cargo +nightly udeps --all-targets --all-features
+        run: cargo +nightly udeps --all-targets --all-features
+
+  examples:
+    name: Examples
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libseccomp-dev \
+            protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Enable Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install bpf-linker
+        uses: taiki-e/install-action@v2
+        with:
+          tool: bpf-linker
+
+      - name: Build BPF artifacts
+        run: cargo build -p warden-bpf-core --release
+
+      - name: Run cargo test --examples
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: cargo test --examples
+
+      - name: Run example network-build
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-network-build
+
+      - name: Run example spawn-bash
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-spawn-bash
+
+      - name: Run example fs-outside-workspace
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-fs-outside-workspace
+
+      - name: Run example network-fs-demo
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: >-
+          cargo run --bin cargo-warden -- run -- cargo build -p
+          warden-network-fs-demo
+
+      - name: Run example git-clone-https
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: |
+          set -euo pipefail
+          output=$(cargo run --bin cargo-warden -- run -- cargo build -p warden-git-clone-https 2>&1)
+          echo "$output"
+          echo "$output" | grep -q "git clone blocked as expected"
+
+      - name: Run example proc-macro-hog
+        env:
+          WARDEN_FAKE_SANDBOX: "1"
+        run: >-
+          cargo run --bin cargo-warden -- run -- env WARDEN_EXAMPLE_EXPECT_WARNING=1
+          cargo build -p warden-proc-macro-hog

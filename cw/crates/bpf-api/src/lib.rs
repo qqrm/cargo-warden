@@ -1,0 +1,115 @@
+#![no_std]
+
+/// Bit flag for read access.
+pub const FS_READ: u8 = 1;
+/// Bit flag for write access.
+pub const FS_WRITE: u8 = 2;
+
+/// Maximum number of exec allowlist entries supported by the eBPF map.
+pub const EXEC_ALLOWLIST_CAPACITY: u32 = 64;
+/// Maximum number of network rules supported by the eBPF map.
+pub const NET_RULES_CAPACITY: u32 = 256;
+/// Maximum number of parent relationships supported by the eBPF map.
+pub const NET_PARENTS_CAPACITY: u32 = 256;
+/// Maximum number of filesystem rules supported by the eBPF map.
+pub const FS_RULES_CAPACITY: u32 = 256;
+/// Size of the event ring buffer in bytes.
+pub const EVENT_RINGBUF_CAPACITY_BYTES: u32 = 4096;
+/// Number of entries in the mode flags map.
+pub const MODE_FLAGS_CAPACITY: u32 = 1;
+/// Maximum number of workload-to-unit mappings supported by the eBPF map.
+pub const WORKLOAD_UNITS_CAPACITY: u32 = 256;
+/// Unit identifier for commands that do not match a specialized category.
+pub const UNIT_OTHER: u32 = 0;
+/// Unit identifier for Cargo build script binaries.
+pub const UNIT_BUILD_SCRIPT: u32 = 1;
+/// Unit identifier for procedural macro compilers and hosts.
+pub const UNIT_PROC_MACRO: u32 = 2;
+/// Unit identifier for `rustc` compilation jobs.
+pub const UNIT_RUSTC: u32 = 3;
+/// Unit identifier for linker processes spawned by the toolchain.
+pub const UNIT_LINKER: u32 = 4;
+/// Flag value stored in the mode map when running in observe mode.
+pub const MODE_FLAG_OBSERVE: u32 = 0;
+/// Flag value stored in the mode map when running in enforce mode.
+pub const MODE_FLAG_ENFORCE: u32 = 1;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ExecAllowEntry {
+    pub path: [u8; 256],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct NetRule {
+    pub addr: [u8; 16],
+    pub protocol: u8,
+    pub prefix_len: u8,
+    pub port: u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct NetRuleEntry {
+    pub unit: u32,
+    pub rule: NetRule,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct NetParentEntry {
+    pub child: u32,
+    pub parent: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FsRule {
+    pub access: u8,
+    pub reserved: [u8; 3],
+    pub path: [u8; 256],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FsRuleEntry {
+    pub unit: u32,
+    pub rule: FsRule,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+/// Event emitted by BPF programs.
+pub struct Event {
+    /// Thread identifier (kernel PID).
+    pub pid: u32,
+    /// Process identifier (thread group ID).
+    pub tgid: u32,
+    /// Monotonic timestamp captured at emission time (nanoseconds).
+    pub time_ns: u64,
+    /// Workload category that produced the event.
+    pub unit: u8,
+    /// Operation being monitored.
+    pub action: u8,
+    /// Allow (0) or deny (1).
+    pub verdict: u8,
+    /// Reserved for future use and alignment.
+    pub reserved: u8,
+    /// Identifier of the container or sandbox.
+    pub container_id: u64,
+    /// Bitmask of Linux capabilities held by the process.
+    pub caps: u64,
+    /// Null-terminated path or network address.
+    pub path_or_addr: [u8; 256],
+    /// Suggested policy entry required to permit the operation.
+    pub needed_perm: [u8; 64],
+}
+
+const _: [(); 256] = [(); core::mem::size_of::<ExecAllowEntry>()];
+const _: [(); 20] = [(); core::mem::size_of::<NetRule>()];
+const _: [(); 24] = [(); core::mem::size_of::<NetRuleEntry>()];
+const _: [(); 8] = [(); core::mem::size_of::<NetParentEntry>()];
+const _: [(); 260] = [(); core::mem::size_of::<FsRule>()];
+const _: [(); 264] = [(); core::mem::size_of::<FsRuleEntry>()];
+const _: [(); 360] = [(); core::mem::size_of::<Event>()];

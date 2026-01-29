@@ -1,0 +1,23 @@
+name: Cargo Geiger
+
+on:
+  workflow_dispatch:
+
+jobs:
+  geiger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-geiger
+      - name: cargo geiger
+        run: |
+          set -euo pipefail
+          for manifest in $(cargo metadata --format-version 1 --no-deps | jq -r '.packages[].manifest_path'); do
+            cargo geiger --manifest-path "$manifest" --all-features --output-format GitHubMarkdown || true
+          done

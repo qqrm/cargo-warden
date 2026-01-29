@@ -1,0 +1,124 @@
+name: Publish crates to crates.io
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_interval:
+        description: "Seconds to wait between crate publishes (0 disables the wait)"
+        required: false
+        default: "60"
+        type: string
+      release_prefix:
+        description: "Optional <major>.<minor> override for the release tag"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: publish-crates
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish crates
+    runs-on: ubuntu-latest
+    environment: prod
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      PUBLISH_INTERVAL: ${{ inputs.publish_interval || '60' }}
+      RELEASE_PREFIX: ${{ inputs.release_prefix || '' }}
+      PUBLISH_PLAN_PATH: target/publish-plan.log
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install cargo-workspaces
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-workspaces
+
+      - name: Configure crates.io token
+        env:
+          PRIMARY: ${{ secrets.CRATES_IO_TOKEN }}
+          FALLBACK: ${{ secrets.CRATES_IO_API_KEY }}
+          LEGACY: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          token=""
+          for candidate in "${PRIMARY}" "${FALLBACK}" "${LEGACY}"; do
+            if [[ -n "${candidate}" ]]; then
+              token="${candidate}"
+              break
+            fi
+          done
+
+          if [[ -z "${token}" ]]; then
+            echo "::error::No crates.io token found in secrets CRATES_IO_TOKEN, CRATES_IO_API_KEY, or CARGO_REGISTRY_TOKEN." >&2
+            exit 1
+          fi
+
+          echo "::add-mask::${token}"
+
+          {
+            echo "CARGO_REGISTRY_TOKEN=${token}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Sanity checks
+        run: |
+          cargo --version
+          cargo workspaces --version
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "CRATES_IO_TOKEN is not set"
+            exit 1
+          fi
+
+      - name: Resolve and show publish plan
+        id: publish_plan
+        run: bash scripts/ci/resolve_publish_plan.sh
+
+      - name: Upload publish plan
+        if: ${{ steps.publish_plan.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-plan
+          path: ${{ steps.publish_plan.outputs['plan-path'] }}
+          retention-days: 7
+
+      - name: Determine release tag
+        id: release_tag
+        run: bash scripts/ci/determine_release_tag.sh
+
+      - name: Publish crates
+        timeout-minutes: 45
+        run: bash scripts/ci/run_publish.sh
+
+      - name: Create release tag
+        run: bash scripts/ci/create_release_tag.sh
+
+      - name: Post-publish summary
+        if: ${{ success() }}
+        run: bash scripts/ci/post_publish_summary.sh

@@ -1,0 +1,17 @@
+[package]
+name = "warden-policy-compiler"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+license = "MIT OR Apache-2.0"
+description = "Compile cargo-warden policies into eBPF-friendly representations."
+repository = "https://github.com/warden/cargo-warden"
+homepage = "https://github.com/warden/cargo-warden"
+documentation = "https://docs.rs/warden-policy-compiler"
+readme = "../../README.md"
+
+[dependencies]
+policy-core = { package = "warden-policy-core", version = "0.1.0", path = "../policy-core" }
+bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
+thiserror = "1.0"
+arrayvec = "0.7"

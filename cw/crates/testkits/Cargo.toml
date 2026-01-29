@@ -1,0 +1,21 @@
+[package]
+name = "warden-testkits"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+license = "MIT OR Apache-2.0"
+description = "Testing utilities for cargo-warden sandbox components."
+repository = "https://github.com/warden/cargo-warden"
+homepage = "https://github.com/warden/cargo-warden"
+documentation = "https://docs.rs/warden-testkits"
+readme = "../../README.md"
+
+[dependencies]
+assert_cmd = "2"
+event-reporting = { version = "0.1.0", path = "../event-reporting" }
+policy-core = { package = "warden-policy-core", version = "0.1.0", path = "../policy-core" }
+sandbox-runtime = { package = "warden-sandbox-runtime", version = "0.1.0", path = "../sandbox-runtime" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "1"

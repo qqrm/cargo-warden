@@ -1,0 +1,20 @@
+[package]
+name = "event-reporting"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+license = "MIT OR Apache-2.0"
+description = "Shared event reporting utilities for the cargo-warden workspace."
+repository = "https://github.com/warden/cargo-warden"
+homepage = "https://github.com/warden/cargo-warden"
+documentation = "https://docs.rs/event-reporting"
+readme = "../../README.md"
+
+[dependencies]
+sarif = { package = "sarif_rust", version = "0.3" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+jsonschema = "0.17"
+tempfile = "3"
