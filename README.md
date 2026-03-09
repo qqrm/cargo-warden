@@ -43,6 +43,18 @@ the cargo-warden binaries themselves.
    reuse the copy from a release package) and place it under
    `${XDG_DATA_HOME:-$HOME/.local/share}/cargo-warden/bpf`.
 
+   Alternatively, install the bundle into the correct location with:
+
+   ```bash
+   cargo warden setup --bundle prebuilt.tar.gz
+   ```
+
+   If you're unsure what's missing on the host/container, run:
+
+   ```bash
+   cargo warden doctor
+   ```
+
 2. Run any command in observe mode with the built-in starter policy (no
    `warden.toml` required):
 
@@ -65,6 +77,12 @@ the cargo-warden binaries themselves.
 
    ```bash
    cargo warden init
+   ```
+
+   To generate a starter policy from the most recent denied events:
+
+   ```bash
+   cargo warden init --from-last-run --policy-mode enforce
    ```
 
    Edit the generated `warden.toml` to promote specific permissions to enforce
@@ -169,6 +187,8 @@ enabled; avoid `--privileged` runners.
 | `cargo warden init` | Creates a default `warden.toml` policy file. |
 | `cargo warden status` | Shows the effective policy, sandbox mode, and recent events. |
 | `cargo warden report --format <text\|json\|sarif>` | Writes the latest audit events in the selected format. |
+| `cargo warden doctor` | Checks kernel/LSM/cgroup prerequisites, bundle installation, and privilege isolation. |
+| `cargo warden setup --bundle <prebuilt.tar.gz>` | Installs the prebuilt eBPF bundle into the default search path. |
 
 Global flags apply to every subcommand:
 

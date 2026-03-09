@@ -23,12 +23,15 @@ event-reporting = { version = "0.1.0", path = "../event-reporting" }
 itertools = "0.12"
 warden-policy-orchestrator = { version = "0.1.0", path = "../policy-orchestrator" }
 libc = "0.2"
+flate2 = "1"
+tar = "0.4"
+tempfile = "3"
+bpf-host = { package = "warden-bpf-host", version = "0.1.0", path = "../bpf-host" }
 
 
 [dev-dependencies]
 serial_test = "3"
 assert_cmd = "2"
-tempfile = "3"
 bpf-api = { package = "warden-bpf-api", version = "0.1.0", path = "../bpf-api" }
 warden-testkits = { package = "warden-testkits", version = "0.1.0", path = "../testkits" }
 

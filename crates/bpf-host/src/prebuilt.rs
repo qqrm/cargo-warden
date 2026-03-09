@@ -204,6 +204,20 @@ impl PrebuiltObject {
     }
 }
 
+/// Returns the default installation directory under XDG data home.
+///
+/// This matches the search path used by [`PrebuiltObject::locate_default`].
+pub fn default_install_dir() -> Option<PathBuf> {
+    data_home().map(|home| home.join(XDG_SUBDIR))
+}
+
+/// Returns the full list of directories searched by [`PrebuiltObject::locate_default`].
+///
+/// Useful for diagnostics and setup tooling.
+pub fn default_search_directories() -> Vec<PathBuf> {
+    candidate_directories()
+}
+
 fn candidate_directories() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
