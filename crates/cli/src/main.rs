@@ -154,7 +154,20 @@ enum Commands {
         cmd: Vec<String>,
     },
     /// Initialize warden configuration.
-    Init,
+    Init {
+        /// Generate a policy from the default events log (warden-events.jsonl).
+        #[arg(long = "from-last-run", conflicts_with = "from_events")]
+        from_last_run: bool,
+        /// Generate a policy from a specific events log.
+        #[arg(long = "from-events", value_name = "FILE")]
+        from_events: Option<String>,
+        /// Mode written into the generated policy (defaults to enforce).
+        #[arg(long = "policy-mode", value_enum, default_value_t = CliMode::Enforce)]
+        policy_mode: CliMode,
+        /// Output path for the generated policy (defaults to warden.toml).
+        #[arg(long = "output", value_name = "FILE", default_value = "warden.toml")]
+        output: String,
+    },
     /// Show active policy and recent events.
     Status,
     /// Export events in text, JSON, or SARIF format.
@@ -166,6 +179,20 @@ enum Commands {
         #[arg(long = "output", value_name = "FILE")]
         output: Option<String>,
     },
+    /// Diagnose host prerequisites and configuration.
+    Doctor,
+    /// Install a prebuilt eBPF bundle into the default search path.
+    Setup {
+        /// Path to prebuilt.tar.gz bundle.
+        #[arg(long = "bundle", value_name = "FILE")]
+        bundle: Option<String>,
+        /// Destination directory (defaults to XDG data dir cargo-warden/bpf).
+        #[arg(long = "dest", value_name = "DIR")]
+        dest: Option<String>,
+        /// Replace an existing installation.
+        #[arg(long = "force")]
+        force: bool,
+    },
 }
 
 fn main() {
@@ -174,13 +201,6 @@ fn main() {
         args.remove(1);
     }
     let cli = Cli::parse_from(args);
-    if let Err(err) = privileges::enforce_least_privilege() {
-        eprintln!("privilege check failed: {err}");
-        eprintln!(
-            "Use a dedicated service user with CAP_SYS_ADMIN and, when available, CAP_BPF (see README for setup instructions)."
-        );
-        exit(1);
-    }
     let Cli {
         allow,
         policy,
@@ -188,6 +208,18 @@ fn main() {
         metrics_port,
         command,
     } = cli;
+
+    let needs_privileges = matches!(command, Commands::Build { .. } | Commands::Run { .. });
+    if needs_privileges {
+        if let Err(err) = privileges::enforce_least_privilege() {
+            eprintln!("privilege check failed: {err}");
+            eprintln!(
+                "Use a dedicated service user with CAP_SYS_ADMIN and, when available, CAP_BPF (see README for setup instructions)."
+            );
+            exit(1);
+        }
+    }
+
     let mode_override = mode.map(Mode::from);
     let agent_config = sandbox_runtime::AgentConfig {
         metrics_port,
@@ -210,8 +242,24 @@ fn main() {
                 exit(1);
             }
         }
-        Commands::Init => {
-            if let Err(e) = commands::init::exec() {
+        Commands::Init {
+            from_last_run,
+            from_events,
+            policy_mode,
+            output,
+        } => {
+            let out = std::path::Path::new(&output);
+            if from_last_run || from_events.is_some() {
+                let events = from_events.as_deref().unwrap_or("warden-events.jsonl");
+                if let Err(e) = commands::init::exec_from_events(
+                    std::path::Path::new(events),
+                    out,
+                    Mode::from(policy_mode),
+                ) {
+                    eprintln!("init failed: {e}");
+                    exit(1);
+                }
+            } else if let Err(e) = commands::init::exec_to(out) {
                 eprintln!("init failed: {e}");
                 exit(1);
             }
@@ -225,6 +273,27 @@ fn main() {
         Commands::Report { format, output } => {
             if let Err(e) = commands::report::exec(format.into(), output.as_deref()) {
                 eprintln!("report failed: {e}");
+                exit(1);
+            }
+        }
+        Commands::Doctor => {
+            if let Err(e) = commands::doctor::exec() {
+                eprintln!("doctor failed: {e}");
+                exit(1);
+            }
+        }
+        Commands::Setup {
+            bundle,
+            dest,
+            force,
+        } => {
+            let args = commands::setup::SetupArgs {
+                bundle: bundle.map(std::path::PathBuf::from),
+                dest: dest.map(std::path::PathBuf::from),
+                force,
+            };
+            if let Err(e) = commands::setup::exec(args) {
+                eprintln!("setup failed: {e}");
                 exit(1);
             }
         }
@@ -354,6 +423,6 @@ mod tests {
     #[test]
     fn parse_init_command() {
         let cli = Cli::parse_from(["cargo-warden", "init"]);
-        assert!(matches!(cli.command, Commands::Init));
+        assert!(matches!(cli.command, Commands::Init { .. }));
     }
 }

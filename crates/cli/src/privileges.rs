@@ -148,6 +148,30 @@ pub(crate) fn enforce_least_privilege() -> Result<(), PrivilegeError> {
     validate_capabilities(effective_caps)
 }
 
+pub(crate) fn is_privilege_check_skipped() -> bool {
+    std::env::var_os(SKIP_ENV).is_some()
+}
+
+pub(crate) fn is_isolated() -> Result<bool, PrivilegeError> {
+    detect_isolation()
+}
+
+pub(crate) fn effective_capabilities() -> Result<u64, PrivilegeError> {
+    read_effective_capabilities()
+}
+
+pub(crate) fn required_cap_mask() -> u64 {
+    REQUIRED_CAP_MASK
+}
+
+pub(crate) fn allowed_cap_mask() -> u64 {
+    ALLOWED_CAP_MASK
+}
+
+pub(crate) fn describe_cap_mask(mask: u64) -> String {
+    describe_capabilities(mask)
+}
+
 fn validate_capabilities(effective_caps: u64) -> Result<(), PrivilegeError> {
     if effective_caps & REQUIRED_CAP_MASK != REQUIRED_CAP_MASK {
         let missing = REQUIRED_CAP_MASK & !effective_caps;
