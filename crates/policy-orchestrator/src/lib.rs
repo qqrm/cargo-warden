@@ -357,7 +357,7 @@ fn apply_trust_permissions(policy: &mut Policy, metadata: &Metadata) -> io::Resu
                     .version_range
                     .as_deref()
                     .map(str::trim)
-                    .and_then(|s| if s.is_empty() { None } else { Some(s) }),
+                    .filter(|s| !s.is_empty()),
             };
             apply_permission_list(
                 policy,

@@ -210,14 +210,12 @@ fn main() {
     } = cli;
 
     let needs_privileges = matches!(command, Commands::Build { .. } | Commands::Run { .. });
-    if needs_privileges {
-        if let Err(err) = privileges::enforce_least_privilege() {
-            eprintln!("privilege check failed: {err}");
-            eprintln!(
-                "Use a dedicated service user with CAP_SYS_ADMIN and, when available, CAP_BPF (see README for setup instructions)."
-            );
-            exit(1);
-        }
+    if needs_privileges && let Err(err) = privileges::enforce_least_privilege() {
+        eprintln!("privilege check failed: {err}");
+        eprintln!(
+            "Use a dedicated service user with CAP_SYS_ADMIN and, when available, CAP_BPF (see README for setup instructions)."
+        );
+        exit(1);
     }
 
     let mode_override = mode.map(Mode::from);

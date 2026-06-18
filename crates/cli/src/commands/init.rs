@@ -6,12 +6,14 @@ use event_reporting::EventRecord;
 use policy_core::Mode;
 use serde_jsonlines::JsonLinesReader;
 
+#[allow(dead_code)]
 pub(crate) fn exec() -> io::Result<()> {
     let mut input = io::stdin().lock();
     let mut output = io::stdout();
     exec_with(&mut input, &mut output)
 }
 
+#[allow(dead_code)]
 pub(crate) fn exec_with<R: BufRead, W: Write>(input: &mut R, output: &mut W) -> io::Result<()> {
     exec_with_path(input, output, Path::new("warden.toml"))
 }
