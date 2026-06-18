@@ -88,7 +88,7 @@ fn install_bundle(bundle: &Path, dest: &Path, force: bool) -> io::Result<()> {
     // Validate manifest + object checksum before installing.
     let obj = PrebuiltObject::from_directory(tmp.path())?;
 
-    let extracted = tmp.into_path();
+    let extracted = tmp.keep();
     fs::rename(&extracted, dest)?;
 
     println!(
